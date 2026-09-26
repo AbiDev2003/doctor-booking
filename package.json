@@ -1,0 +1,8 @@
+{
+  "name": "doctor-booking",
+  "private": true,
+  "scripts": {
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev"
+  }
+}
