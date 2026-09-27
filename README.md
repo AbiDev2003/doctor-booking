@@ -17,7 +17,20 @@ Check the server is alive: `http://localhost:3000/api/v1/health`
 
 `npm install` in `client/` and `server/`.
 
-Environment variables are not wired up yet — see `code-plan.md` Day 2.
+Copy `server/.env.example` to `server/.env` and fill it in. The server validates its
+environment with Zod at startup and exits with a list of every problem it found, so a
+missing or malformed variable fails immediately instead of surfacing later as a null
+dereference. `server/.env` is gitignored; only `.env.example` is committed.
+
+## Checks
+
+Run both before every commit:
+
+```bash
+npm run lint
+npm run typecheck
+```
+
 
 ## Docs
 

@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "dev:client": "npm --prefix client run dev",
-    "dev:server": "npm --prefix server run dev"
+    "dev:server": "npm --prefix server run dev",
+    "lint": "npm --prefix client run lint && npm --prefix server run lint",
+    "typecheck": "npm --prefix client run typecheck && npm --prefix server run typecheck"
   }
 }
