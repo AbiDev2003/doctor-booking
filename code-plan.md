@@ -42,25 +42,50 @@ The goal of this phase: the two existing apps install, talk to a real database, 
 - **DoD:** both `npm run dev` processes start with no errors.
 
 ### Day 2 — Environment config + server foundation
+- `[S]` `npm i zod cors pino pino-http dotenv` and `npm i -D @types/cors`.
 - `server/.env` + `server/.env.example`: `DATABASE_URL`, `PORT`, `JWT_ACCESS_SECRET`,
   `JWT_REFRESH_SECRET`, `ACCESS_TOKEN_TTL`, `RESEND_API_KEY`, `RAZORPAY_KEY_ID`,
   `RAZORPAY_KEY_SECRET`, `CLIENT_URL`, `APP_TIMEZONE` (§35).
 - Add a tiny config module in `server/src/config.ts` that reads and **validates** env with
   Zod and crashes fast on a missing var. Never read `process.env` ad-hoc elsewhere.
-- Add CORS for `http://localhost:5173`; add Pino logger; add global error-handler +
-  not-found middleware; add `/api/v1/health` doing a **real** `SELECT 1` (needs Day 3 DB).
-- **DoD:** `/api/v1/health` returns `200 {status:"ok", db:"up"}`; a missing env var stops
-  the server with a clear message.
+- `server/src/lib/logger.ts` — the Pino instance. `server/src/middleware/requestId.ts` —
+  one request ID per request, carried in every log line and echoed in error responses
+  (§19, §32). Doing it now means no later retrofit.
+- Split the entry point: `server/src/app.ts` builds the Express app and does **not** listen;
+  `server/src/server.ts` only calls `listen`. Phase 9's Supertest tests import `app.ts`.
+- Add CORS restricted to `CLIENT_URL` (`http://localhost:5173`); `express.json()`;
+  `middleware/errorHandler.ts` + `middleware/notFound.ts`; `/api/v1/health` scaffolded
+  (the DB check lands on Day 3).
+- Server lint/typecheck: add ESLint + `lint` and `typecheck` scripts, and set
+  `"types": ["node"]` in `server/tsconfig.json` — it is currently `[]`, so `process` and
+  the Prisma client will not typecheck.
+- **DoD:** `npm run lint` + typecheck green; the server boots; a missing env var stops it
+  with a clear message; `/api/v1/health` returns `200`.
 
 ### Day 3 — PostgreSQL + Prisma connect
-- Create the local DB and role: `CREATE DATABASE doctor_booking;`.
-- Install Prisma in `server/`: `npm i prisma @prisma/client`; `npx prisma init`.
-- Paste `datasource.url = env("DATABASE_URL")`; run `npx prisma db pull` on an empty DB to
-  confirm connectivity, or just `npx prisma migrate dev --name init` with a placeholder
-  model.
-- `npx prisma generate`; call `prisma.$queryRaw` from the health route for a real check.
-- **DoD:** health endpoint proves DB up; `prisma studio` opens the DB.
-- **Phase 0 complete.** Tag the milestone.
+- Create a **non-superuser** role and the database, so `DATABASE_URL` never points at
+  `postgres`: `CREATE ROLE doctor_booking LOGIN PASSWORD '…';` then
+  `CREATE DATABASE doctor_booking OWNER doctor_booking;`.
+- `[S]` Prisma 7 is ESM-only, so convert `server/` to ESM: `"type": "module"`,
+  tsconfig `module: ESNext` / `moduleResolution: bundler`, and `.js` extensions on
+  relative imports. Stay on **7.x**; 8.x is still RC.
+- `npm i @prisma/client @prisma/adapter-pg` and `npm i -D prisma`; hand-write
+  `prisma/schema.prisma` with a placeholder model. The generator is
+  `provider = "prisma-client"` with a **required** `output` (e.g. `../src/generated/prisma`,
+  gitignored) — v7 no longer generates into `node_modules`.
+- `server/prisma.config.ts` with `import "dotenv/config"` and
+  `defineConfig({ schema, migrations, datasource: { url: env("DATABASE_URL") } })`. v7 does
+  **not** auto-load `.env` and deprecates `datasource.url` in the schema; this file is the
+  source of truth for the CLI.
+- `server/src/lib/prisma.ts` — `new PrismaClient({ adapter: new PrismaPg({ connectionString:
+  config.DATABASE_URL }) })`. v7 requires a driver adapter (node-pg); the old
+  `datasources: { db: { url } }` form is gone.
+- `npx prisma migrate dev --name init`, then `npx prisma generate` — **explicitly**: v7
+  removed `--skip-generate`/`--skip-seed` and no longer generates or seeds on its own.
+- Health route runs a real `SELECT 1` via `$queryRaw`; unreachable DB → `503 {db:"down"}`.
+- **DoD:** `/api/v1/health` returns `200 {status:"ok", db:"up"}`; `prisma studio` opens the
+  DB; `dropdb → migrate dev → generate` reproduces it from scratch.
+- **Phase 0 complete.** Merge `feature/foundation` → `develop` and tag the milestone.
 
 ---
 
