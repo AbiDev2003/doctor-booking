@@ -1,18 +1,9 @@
-import express from "express";
+import { createApp } from "./app.js";
+import { config } from "./config.js";
+import { logger } from "./lib/logger.js";
 
-const app = express();
+const app = createApp();
 
-const PORT = 3000;
-
-app.use(express.json());
-
-app.get("/api/v1/health", (_req, res) => {
-  res.json({
-    status: "OK",
-    message: "Doctor booking api is running",
-  });
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+app.listen(config.PORT, () => {
+  logger.info({ port: config.PORT, env: config.CLIENT_URL }, "server listening");
 });
