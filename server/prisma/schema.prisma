@@ -1,0 +1,23 @@
+// Prisma schema — Day 3 placeholder.
+//
+// The Placeholder model exists only so `prisma migrate dev --name init` has
+// something to migrate and `prisma studio` has something to show. Day 4
+// replaces this file with the real domain schema (Clinic, User,
+// PatientProfile, DoctorProfile) and drops this model. Do not build on it.
+//
+// The connection string deliberately does NOT live here. Prisma 7 deprecated
+// `url` in the datasource block and moved it to prisma.config.ts, so the
+// schema stays free of environment concerns.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Placeholder {
+  id String @id @default(uuid())
+}
