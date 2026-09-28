@@ -4,6 +4,10 @@
   "scripts": {
     "dev:client": "npm --prefix client run dev",
     "dev:server": "npm --prefix server run dev",
+    "db:bootstrap": "npm --prefix server run db:bootstrap",
+    "db:studio": "npm --prefix server run db:studio",
+    "db:migrate": "npm --prefix server run db:migrate",
+    "db:generate": "npm --prefix server run db:generate",
     "lint": "npm --prefix client run lint && npm --prefix server run lint",
     "typecheck": "npm --prefix client run typecheck && npm --prefix server run typecheck"
   }

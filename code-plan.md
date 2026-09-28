@@ -64,11 +64,24 @@ The goal of this phase: the two existing apps install, talk to a real database, 
 
 ### Day 3 — PostgreSQL + Prisma connect
 - Create a **non-superuser** role and the database, so `DATABASE_URL` never points at
-  `postgres`: `CREATE ROLE doctor_booking LOGIN PASSWORD '…';` then
-  `CREATE DATABASE doctor_booking OWNER doctor_booking;`.
-- `[S]` Prisma 7 is ESM-only, so convert `server/` to ESM: `"type": "module"`,
-  tsconfig `module: ESNext` / `moduleResolution: bundler`, and `.js` extensions on
-  relative imports. Stay on **7.x**; 8.x is still RC.
+  `postgres`: `CREATE ROLE doctor_booking LOGIN CREATEDB PASSWORD '…';` then
+  `CREATE DATABASE doctor_booking OWNER doctor_booking;`. The role needs `CREATEDB`
+  because `migrate dev` provisions a shadow database, and stays non-superuser so
+  `DATABASE_URL` remains least-privilege.
+- `[S]` The bootstrap SQL is gitignored (`prisma/bootstrap.local.sql`) and holds **no
+  password**. `server/scripts/db-bootstrap.ts` reads the password out of
+  `DATABASE_URL`, `decodeURIComponent`s it, and passes it to psql through
+  `BOOTSTRAP_DB_PASSWORD` (`\getenv` + `:'var'`, which escapes it as a SQL literal).
+  Two traps recorded here: WHATWG `URL` does **not** percent-decode userinfo for
+  `postgresql:` (a non-special scheme), so the decode must be explicit; and psql's
+  `\quit <n>` is ignored on PG 18, so the "is the password set" check that must affect
+  the exit code lives in the Node wrapper, not the SQL. Run via `npm run db:bootstrap`.
+
+- `[S]` Prisma 7 is ESM-only. The `server/` ESM conversion (`"type": "module"` plus `.js`
+  extensions on relative imports) landed on Day 2. Keep tsconfig at `module: nodenext` /
+  `moduleResolution: nodenext` — **not** `bundler`: the generated client emits `.js` import
+  specifiers, which `tsc` only accepts under `nodenext`, and `tsx` does resolve `.js` to the
+  on-disk `.ts` (both verified). Stay on **7.x**; 8.x is still RC.
 - `npm i @prisma/client @prisma/adapter-pg` and `npm i -D prisma`; hand-write
   `prisma/schema.prisma` with a placeholder model. The generator is
   `provider = "prisma-client"` with a **required** `output` (e.g. `../src/generated/prisma`,
