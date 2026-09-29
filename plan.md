@@ -134,6 +134,8 @@ This is an internal clinic system, not a multi-clinic SaaS. There is exactly one
 
 **Timezone rule:** all timestamps are stored in **UTC**. The clinic-local timezone (the single `Clinic.timezone` config value) is used **only for display** — slot picker, confirmations, reminders — through one shared conversion helper. This avoids DST / server-location clock bugs entirely.
 
+**One helper, and it is the only place a local time is converted (locked).** A single module performs every local-time → UTC conversion, formats an instant in clinic-local time, and normalises a phone number to E.164. Nothing else in the codebase does arithmetic on a clinic-local wall clock. The helper must **reject a local time that does not exist** (the spring-forward gap, e.g. 02:30 on a transition day) rather than silently shifting it, and must take the **first** occurrence of an ambiguous one (the fall-back hour). This clinic's timezone has no DST, so the rule will never fire here — but the timezone is configuration, and the failure mode is a slot that quietly moves by an hour, which surfaces weeks later as "the appointment was at the wrong time". Slot generation skips and logs a rejected window rather than creating it.
+
 **Default configuration (single source):** all clinic numbers live in the one Clinic config record, seeded with sensible defaults and read through a single settings module — no magic numbers scattered through code. Locked defaults: booking horizon **60 days** (§10), cancel cutoff **1 h** (§8.5), payment hold **10 min** (released at slot start, §8.6), **min lead time 0** (bookable until the slot starts, §8.5), one reminder **2 h before slot start** (§18), max active bookings per patient **3** (§15), default consultation fee + `currency = INR` (§24, §17), access-token TTL **15 min** (§6.3). Optional per-doctor overrides (e.g. horizon) are nullable now so a future per-doctor setting needs no schema migration.
 
 Conceptually:
@@ -458,6 +460,7 @@ The user chooses **one of two methods** to verify ownership before resetting:
 Rules (backend-enforced):
 
 - Both the link and the OTP are sent only to the **registered email on file** (no SMS/phone reset in MVP).
+- Each request is one `AuthToken` row (§24) — the single mechanic shared with §5.1's invite claim, §6.3's registration verification and §6.1's email change — so there is one issue/verify/expiry/rate-limit path, not four.
 - OTP/token expiry is short (default: 15 minutes, configurable) and **single-use** — invalidated after a successful reset or on resend.
 - Rate limiting on reset requests (prevents email-bombing / enumeration); responses are generic ("if the account exists, an email was sent") so account existence is never leaked.
 - The reset-password portal (reached via link **or** OTP) accepts the new password, hashed with bcrypt.
@@ -488,9 +491,9 @@ Rules (backend-enforced):
 
 **Registration verification (email-only):**
 
-- New patient accounts start as `EMAIL_UNVERIFIED`; a one-time email link or OTP (via Resend) verifies the account, and **booking is blocked until verified** — prevents fake/squatting accounts.
+- New patient accounts start as `EMAIL_UNVERIFIED`; a one-time email link or OTP (via Resend) verifies the account, and **booking is blocked until verified** — prevents fake/squatting accounts. Verified state is the single `User.emailVerifiedAt` timestamp (§24), not a per-profile flag.
 - **Phone is collected at registration but stays `phone_unverified` in MVP — no SMS channel.** Phone verification is added later only if an SMS/WhatsApp channel is introduced (§42 future).
-- Reuses the same generic OTP/link service as §6.2 (issue, verify, single-use, expiry, rate-limited).
+- Reuses the same generic OTP/link service as §6.2 (issue, verify, single-use, expiry, rate-limited) — the same `AuthToken` row, differing only in `purpose` (§24).
 - Doctors/staff/admin need no registration verification — they are provisioned per §5.1 (bootstrap for the first admin; ADMIN or STAFF invites the rest).
 
 ## 6.4 Email uniqueness (all entry points — locked)
@@ -627,14 +630,14 @@ Online bookings reserve capacity with a temporary hold before payment (see also 
 - Hold duration: **10 minutes** (configurable).
 - **A hold never extends into a running slot:** the effective expiry is stored on the row as `expiresAt = min(now + 10 min, slot.startAt)`, so the slot-start release needs no separate rule. An abandoned online booking started shortly before the slot simply becomes an unsold seat (§8.5).
 - Capacity rule: `booked + held < maxPatients`.
-- **Release is a state transition, never a deletion:** expiry, abandonment, payment failure and successful conversion all write `releasedAt` + `releaseReason` (`EXPIRED` / `ABANDONED` / `PAYMENT_FAILED` / `CONVERTED` / `DELETED_WITH_ACCOUNT` — §6.1). A seat is free exactly when `releasedAt IS NULL AND expiresAt > now()`, which is a property of the row itself.
-- **Correctness of a hold is enforced in code, not by a cleanup job.** Every path that consumes a hold re-checks `releasedAt IS NULL AND expiresAt > now()` inside its own transaction (§15, §17), and the booking path re-counts the live rows (`WHERE releasedAt IS NULL AND expiresAt > now()`) inside the same `SELECT … FOR UPDATE` transaction instead of trusting the stored counter or the hold's own copy. So an expired-but-unreleased hold can never consume a seat, even if no process ever runs.
-- **`releasedAt IS NULL` is deliberately NOT a time-aware predicate, so the stored counters are repaired, not trusted.** `expiresAt > now()` cannot appear in a SQL partial index, so `UNIQUE (patientId) WHERE releasedAt IS NULL` and the "active booking" lookups read a state that only *becomes* false when something writes it. Two consequences, both accepted in MVP:
+- **Release is a state transition, never a deletion:** expiry, abandonment, payment failure and successful conversion all write `releasedAt` + `releaseReason` (`EXPIRED` / `ABANDONED` / `PAYMENT_FAILED` / `CONVERTED` / `DELETED_WITH_ACCOUNT` — §6.1). A seat is free exactly when `released_at IS NULL AND expires_at > now()` (`releasedAt IS NULL AND expiresAt > now()` in Prisma), which is a property of the row itself.
+- **Correctness of a hold is enforced in code, not by a cleanup job.** Every path that consumes a hold re-checks `released_at IS NULL AND expires_at > now()` inside its own transaction (§15, §17), and the booking path re-counts the live rows (`WHERE released_at IS NULL AND expires_at > now()`) inside the same `SELECT … FOR UPDATE` transaction instead of trusting the stored counter or the hold's own copy. So an expired-but-unreleased hold can never consume a seat, even if no process ever runs.
+- **`released_at IS NULL` is deliberately NOT a time-aware predicate, so the stored counters are repaired, not trusted.** `expires_at > now()` cannot appear in a SQL partial index, so `UNIQUE (patient_id) WHERE released_at IS NULL` and the "active booking" lookups read a state that only *becomes* false when something writes it. Two consequences, both accepted in MVP:
   - A **hold-expiry sweep** releases overdue holds on an interval **and once at startup before traffic is served** (part of the in-process jobs, §18). It is the only job whose absence has user-visible effect, and that effect is bounded and self-healing: until it runs, an expired hold keeps counting toward `heldCount` and keeps occupying the one-hold-per-patient slot.
-  - Therefore **`heldCount` is authoritative only immediately after the sweep**, and no correctness decision may be made from a cached or denormalized value. Read the live rows (`SELECT count(*) ... WHERE releasedAt IS NULL AND expiresAt > now()`) whenever a decision must not be stale; `heldCount` is maintained for fast availability lists and is a lower bound on the true free-seat count, never an upper one.
+  - Therefore **`heldCount` is authoritative only immediately after the sweep**, and no correctness decision may be made from a cached or denormalized value. Read the live rows (`SELECT count(*) ... WHERE released_at IS NULL AND expires_at > now()`) whenever a decision must not be stale; `heldCount` is maintained for fast availability lists and is a lower bound on the true free-seat count, never an upper one.
   - This is precisely why an appointment is never modelled as a hold-like `PENDING` row: a `CONFIRMED` appointment's seat is protected by the appointment row itself, so the only "self-healing needed" state in the system is an unsold seat, which is harmless.
 - Late payment after expiry → no valid hold → the booking is rejected and the payment is auto-refunded (§17).
-- Max **1 active hold per patient** (prevents seat squatting), enforced by `UNIQUE (patientId) WHERE releasedAt IS NULL` on `SeatHold` **plus** the in-transaction time re-check above — the index stops a patient taking two holds in the same instant, the time check is what makes the rule correct after expiry.
+- Max **1 active hold per patient** (prevents seat squatting), enforced by `UNIQUE (patient_id) WHERE released_at IS NULL` on `SeatHold` **plus** the in-transaction time re-check above — the index stops a patient taking two holds in the same instant, the time check is what makes the rule correct after expiry.
 
 ---
 
@@ -859,12 +862,12 @@ Zero rows affected ⇒ the slot is full, surfaced as a clean "slot full" error. 
 
 A **database CHECK constraint** (`booked_count + held_count <= max_patients`) is added as a final safety net so even a code bug cannot overbook.
 
-**Same-slot duplicate rule:** a patient can have at most **one active booking per slot** — enforced with a partial unique index `UNIQUE (patientId, slotId) WHERE status IN (CONFIRMED, ARRIVED)` (`PENDING` is absent because no appointment is ever written as `PENDING` — §13, §8.6). Cancelled / REJECTED / COMPLETED / NO_SHOW rows never count.
+**Same-slot duplicate rule:** a patient can have at most **one active booking per slot** — enforced with a partial unique index `UNIQUE (patient_id, slot_id) WHERE status IN ('CONFIRMED', 'ARRIVED')` (`PENDING` is absent because no appointment is ever written as `PENDING` — §13, §8.6). Cancelled / REJECTED / COMPLETED / NO_SHOW rows never count.
 
 **The per-patient cap counts holds too (locked — this is the rule):** a patient may hold at most `maxActiveBookingsPerPatient` (default **3**, §3.2) **seats in total across confirmed bookings and live holds**:
 
 ```
-activeBookings (CONFIRMED + ARRIVED) + activeHolds (SeatHold where releasedAt IS NULL AND expiresAt > now())
+activeBookings (CONFIRMED + ARRIVED) + activeHolds (SeatHold where released_at IS NULL AND expires_at > now())
     < maxActiveBookingsPerPatient
 ```
 
@@ -948,9 +951,9 @@ For online payment, the seat is reserved first, the money is taken second:
 1. Patient picks a slot → server atomically reserves the seat by creating a **`SeatHold`** (§8.6) and a local `PENDING` payment order, in one transaction. The transaction checks the per-patient cap **with that hold included** (§15) **and the same-slot rule** (§15) — a patient who already has an active booking in that slot is rejected up front with "you already have a booking in this slot", rather than discovering it after paying. **No appointment row is created here.**
 2. Client completes the Razorpay flow.
 3. Backend verifies the payment signature (order id + payment id + secret) server-side.
-4. Backend re-checks that the hold is still valid (`releasedAt IS NULL AND expiresAt > now()`).
+4. Backend re-checks that the hold is still valid (`released_at IS NULL AND expires_at > now()`).
 5. **Hold valid → one transaction converts the hold into a booking:** the guarded seat update below, `releasedAt = now() / CONVERTED` on the hold, the `Appointment` row **created** as `CONFIRMED` (its queue position is a rank computed from booking time, §8.1 — not a counter returned by the update, which only moves seat counts), and the payment marked `PAID`. All of it commits together or not at all.
-6. **Any rejection in step 5 → no appointment is created and the payment is fully auto-refunded**, with a clear message to the patient. This covers *every* failure cause, not only an expired hold: the guarded update affecting zero rows, the same-slot partial unique index (§15), the `booked + held <= maxPatients` CHECK (§15), or a serialization failure. Step 5 is all-or-nothing, so a rolled-back conversion means the money is captured but no seat was consumed — leaving that money un-refunded would be a real loss to the patient, and the hold's own expiry does **not** help, because the money has already left their account. The refund path is therefore the single handler for every step-5 rejection, and each one is covered by a §33 test.
+6. **Any rejection in step 5 → no appointment is created and the payment is fully auto-refunded**, with a clear message to the patient. This covers *every* failure cause, not only an expired hold: the guarded update affecting zero rows, the same-slot partial unique index (§15), the `booked_count + held_count <= max_patients` CHECK (§15), or a serialization failure. Step 5 is all-or-nothing, so a rolled-back conversion means the money is captured but no seat was consumed — leaving that money un-refunded would be a real loss to the patient, and the hold's own expiry does **not** help, because the money has already left their account. The refund path is therefore the single handler for every step-5 rejection, and each one is covered by a §33 test.
 
 The conversion statement in step 5 is the same last-seat guard as §15, moving a seat from *held* to *booked* in one shot:
 
@@ -1118,7 +1121,9 @@ Required notification events include:
 **Deferred (post-MVP, §42):**
 - Walk-in / phone patient claim email — a provisional desk record does not need a login in MVP (§16), so there is nothing to claim until that is wanted.
 
-**Every send is recorded, once.** A `Notification` row is written per send with `type`, `recipient`, `appointmentId?`, `status` (`PENDING | SENT | FAILED`), `sentAt`, and the provider error if it failed. Two things follow, and they are the only reliability requirements in MVP: a reminder is **never sent twice** for the same appointment (the row's existence is the dedupe key, so a job re-run cannot double-send), and a failed send is **visible** to a human instead of vanishing. There is no retry queue, no backoff and no attempt counter — a job queue is post-MVP (§42) — because a single-clinic app can re-send by hand from the row, and a send that failed twice will not succeed on the tenth try.
+**Every send is recorded, once.** A `Notification` row is written per send with `type`, `recipient`, `appointmentId?`, `slotId?`, `status` (`PENDING | SENT | FAILED`), `sentAt`, and the provider error if it failed. Two things follow, and they are the only reliability requirements in MVP: a reminder is **never sent twice** for the same appointment (the row's existence is the dedupe key, so a job re-run cannot double-send), and a failed send is **visible** to a human instead of vanishing. There is no retry queue, no backoff and no attempt counter — a job queue is post-MVP (§42) — because a single-clinic app can re-send by hand from the row, and a send that failed twice will not succeed on the tenth try.
+
+**The reminder dedupe key is `(appointment, slot)` — not the appointment alone (locked).** The database enforces it as `UNIQUE (appointment_id, slot_id) WHERE type = 'REMINDER'` (§23). The slot is part of the key because §14 moves the appointment to a new slot on a reschedule: a key of `(type, appointment_id)` would then block the reminder for the new time, and the patient would silently stop being reminded about a booking they had just moved. No other notification type is constrained — repeated events (a second unavailability overlapping the first) legitimately send more than one email, and only the reminder is required to be once-only.
 
 ## Appointment reminders
 
@@ -1282,15 +1287,47 @@ Database design should include appropriate:
 - Audit relationships
 - Documented `pg_dump` backup / restore commands maintained as part of local operations (§38)
 
-**Constraints Prisma cannot express, so hand-written SQL migration is required (locked).** Three of the correctness rules in this plan are constraints Prisma's schema language has no syntax for, and they must not be quietly dropped because the ORM cannot express them:
+**Column naming convention (locked).** Prisma model fields are `camelCase`; **every** field is `@map`ped to `snake_case` in PostgreSQL (`bookedCount` → `booked_count`, `doctorName` → `doctor_name`). TypeScript therefore always reads `slot.bookedCount`, while every raw SQL statement, hand-written migration, psql session and database-level `CHECK` uses `booked_count`. The two spellings are not interchangeable, and this is the single most likely place for a silent mistake: a `CHECK` written against a camelCase name does not exist, so the rule it was meant to enforce is simply not in the database. Fixing the convention on the first real schema (Day 4) is what keeps every later migration consistent; renaming afterwards would mean rewriting all of them.
+
+**Constraints Prisma cannot express, so a hand-written SQL migration is required (locked).** Five of the correctness rules in this plan are constraints Prisma's schema language has no syntax for, and they must not be quietly dropped because the ORM cannot express them:
 
 | Constraint | Where it is specified |
 |---|---|
-| `UNIQUE (patientId) WHERE releasedAt IS NULL` on `SeatHold` — one live hold per patient | §8.6, §15 |
-| `UNIQUE (patientId, slotId) WHERE status IN ('CONFIRMED','ARRIVED')` on `Appointment` — one active booking per patient per slot | §15 |
-| `CHECK (bookedCount + heldCount <= maxPatients)` on `Slot`, plus `CHECK (maxPatients > 0)` | §8.1, §15 |
+| `UNIQUE (patient_id) WHERE released_at IS NULL` on `SeatHold` — one live hold per patient | §8.6, §15 |
+| `UNIQUE (patient_id, slot_id) WHERE status IN ('CONFIRMED','ARRIVED')` on `Appointment` — one active booking per patient per slot | §15 |
+| `UNIQUE (appointment_id, slot_id) WHERE type = 'REMINDER'` on `Notification` — a reminder is sent once per appointment per slot | §18 |
+| `CHECK (booked_count + held_count <= max_patients)` on `Slot`, plus `CHECK (max_patients > 0)` | §8.1, §15 |
+| `CHECK (amount_paise > 0)` on `Payment` | §17 |
 
-These are written as an edited, hand-reviewed SQL migration after `prisma migrate dev` generates the base tables, and §33's test cases assert the database actually rejects the violating write — a passing ORM migration is not evidence that these three rules exist. Everything else stays in the Prisma schema.
+These are written as a reviewed, hand-written SQL migration after `prisma migrate dev` generates the base tables, and §33's test cases assert the database actually rejects the violating write — a passing ORM migration is not evidence that these rules exist. Everything else stays in the Prisma schema.
+
+**How the partial indexes are created is decided by a spike, not assumed (locked).** The plan used to say "append the SQL to a generated migration", and that instruction is **no longer safe**. Since Prisma 7.4 the migration engine reads index predicates back from the database; a partial index with no matching declaration in `schema.prisma` is therefore treated as **drift**, and `prisma migrate dev` emits `DROP INDEX` for it on every run — even when the schema has not changed ([#29220](https://github.com/prisma/prisma/issues/29220), [#29289](https://github.com/prisma/prisma/issues/29289), [#29263](https://github.com/prisma/prisma/issues/29263)). Codified as-is, the next unrelated migration would silently delete the double-booking guard, and nothing would fail. So:
+
+- **Preferred:** declare the three partial unique indexes in the Prisma schema behind the `partialIndexes` preview feature, with the exact predicates above, so Prisma owns them and can never drop them. This is documented Prisma 7 behaviour, with full PostgreSQL support for both migration and introspection, and the syntax is a `where` argument on `@unique` / `@@unique` / `@@index`:
+
+  ```prisma
+  generator client {
+    provider        = "prisma-client"
+    output          = "../src/generated/prisma"
+    previewFeatures = ["partialIndexes"]
+  }
+
+  model Appointment {
+    patientId String
+    slotId    String
+    status    AppointmentStatus
+
+    // `raw()` is required here: the object-literal form only expresses equality
+    // (and `IS NULL` / `IS NOT NULL`), never an `IN (…)` list.
+    @@unique([patientId, slotId], where: raw("status IN ('CONFIRMED','ARRIVED')"), map: "appointments_active_booking_per_patient_slot_unique")
+  }
+  ```
+
+- **The spike therefore verifies the predicate *round-trip*, not the feature's existence.** A partial index is declared, `migrate dev` is run three times with no schema change, and then `prisma db pull` is used to see what PostgreSQL reports back. The failure mode to look for is a **normalised predicate**: introspection returns the database's canonical form, so `raw("status = 'active'")` comes back as `raw("(status = 'active'::text)")`, and if the canonical form of our `IN (…)` predicate differs from the string we hand-wrote, `migrate dev` will keep proposing a change to an index that is already correct. If it round-trips, ship it. If it does not, either write the predicate in PostgreSQL's normalised form or take the fallback below — a no-op migration loop is the same silent-guard-removal bug wearing a different hat.
+- **Fallback:** if the preview feature cannot express these predicates stably, express the rule without one — a maintained `active_marker` column (NULL when released, a constant when live) with `@@unique([patientId, activeMarker])` and `NULLS NOT DISTINCT`, which PostgreSQL 18 supports natively. It has no predicate, so the drift problem cannot occur.
+- **In both cases:** the `CHECK` constraints are always raw SQL (Prisma has no `CHECK` support at all), and the spike confirms they are neither introspected nor dropped.
+
+The DoD for the constraints is not "the migration applied" — it is that each violating write is **rejected by the database**, and that a second `migrate dev` with no schema change produces **no** migration at all.
 
 Avoid over-normalization or unnecessary abstraction.
 
@@ -1300,28 +1337,56 @@ Avoid over-normalization or unnecessary abstraction.
 
 The exact schema must be designed and reviewed before implementation.
 
+**Schema-wide conventions, so no entity is designed against a different set of assumptions (locked):** every id is a **`uuid(7)`** — a time-ordered v7 uuid generated by Prisma Client, so it is unguessable but keeps index locality on the high-write tables (`appointments`, `audit_log`, `notifications`) where random uuid v4 fragments the index. Client-generated rather than database-generated on purpose: Prisma's `dbgenerated()` defaults are a documented source of phantom migrations ([#24240](https://github.com/prisma/prisma/issues/24240), [#9823](https://github.com/prisma/prisma/issues/9823)), and PostgreSQL 18's native `uuidv7()` buys nothing here because every insert in this application goes through Prisma. Ids being client-generated is safe because no raw SQL in this plan ever inserts a row — the hand-written SQL is DDL, `CHECK`s and guarded `UPDATE`s only; every instant is `timestamptz`, which makes "all timestamps are UTC" (§3.2) a database guarantee rather than a convention; clinic-local calendar dates and wall-clock times are `date` and `time`, never timestamps; money is `int` paise (§17) and never `bigint`, which would break JSON serialisation at the API edge; enum types are `snake_case` but enum **values are stored exactly as written** (uppercase), because §23's hand-written SQL compares them that way; referential actions are `Restrict` everywhere and never `Cascade` on appointment, payment, history or audit rows, because deletion in this system is deactivation and anonymisation, never a row delete (§6.1, §5.1).
+
+**Every enum, in one place (locked).** Enum values are the most-transcribed part of a schema, and a single mistyped or invented value becomes a migration plus hand-written SQL that no longer matches the ORM. So the complete set is fixed here, once, rather than inferred per model:
+
+| Prisma enum | PostgreSQL type (`@@map`) | Values — stored uppercase, exactly as written | Source |
+|---|---|---|---|
+| `UserRole` | `user_role` | `PATIENT`, `DOCTOR`, `STAFF`, `ADMIN` | §4 |
+| `DoctorVerificationStatus` | `doctor_verification_status` | `INVITED`, `PENDING_VERIFICATION`, `VERIFIED`, `REJECTED`, `ARCHIVED` | §5 — one lifecycle enum; suspension is `suspendedAt?`, never a value |
+| `Weekday` | `weekday` | `MON`, `TUE`, `WED`, `THU`, `FRI`, `SAT`, `SUN` | naming convention: the plan fixes the `weekday` field, not its spelling |
+| `AuthTokenPurpose` | `auth_token_purpose` | `EMAIL_VERIFICATION`, `PASSWORD_RESET`, `ACCOUNT_CLAIM`, `EMAIL_CHANGE` | §6.2/§6.3/§6.1/§5.1 |
+| `AuthAttemptPurpose` | `auth_attempt_purpose` | `LOGIN`, `OTP_SEND`, `OTP_VERIFY` | §6.3 |
+| `AppointmentStatus` | `appointment_status` | `CONFIRMED`, `ARRIVED`, `COMPLETED`, `CANCELLED`, `REJECTED`, `NO_SHOW`, `PENDING` (declared for forward compatibility, **never written** — §13) | §13 |
+| `AppointmentEventType` | `appointment_event_type` | `BOOKED`, `PAID`, `RESCHEDULED`, `CANCELLED`, `REJECTED`, `ARRIVED`, `COMPLETED`, `NO_SHOW` | §13's timeline, §14's `RESCHEDULED`, §17's hold→booking conversion |
+| `SeatHoldReleaseReason` | `seat_hold_release_reason` | `EXPIRED`, `ABANDONED`, `PAYMENT_FAILED`, `CONVERTED`, `DELETED_WITH_ACCOUNT` | §8.6 |
+| `PaymentStatus` | `payment_status` | `PENDING`, `PAID`, `FAILED`, `VOIDED` | §17 |
+| `PaymentMethod` | `payment_method` | `CASH`, `CARD`, `UPI` — `CARD` is collection-only; a desk hand-back refund (§17) never records it | §17 |
+| `RefundStatus` | `refund_status` | `PENDING`, `SUCCESS`, `FAILED` | §17 |
+| `NotificationStatus` | `notification_status` | `PENDING`, `SENT`, `FAILED` | §18 |
+| `NotificationType` | `notification_type` | one value per §18 event, none grouped and no catch-all bucket. **`REMINDER` is the only value the plan names literally**, because §23's constraint SQL quotes it — every other member is the builder's `SCREAMING_SNAKE` name for one §18 line item | §18 |
+
+Four traps this table exists to prevent:
+
+- **`RESCHEDULED` is an `AppointmentEventType`, never an `AppointmentStatus`** (§13, §14). As a status it would describe a row with no slot, which nothing else in this plan can handle. For the same reason `AppointmentEventType` has **no `CONFIRMED` value**: the row is born `CONFIRMED` and §18 has no separate confirm step, so `BOOKED` is that event.
+- **`PENDING` stays in `AppointmentStatus` and nothing may write it** (§13). It is retained for forward compatibility only; a `PENDING` appointment would look active to the same-slot index and the per-patient cap while not being one.
+- **`SUCCESS` is refund vocabulary.** `RefundStatus` has it; `PaymentStatus` never does — `PAID` is the only success value for a payment (§17).
+- **Not enums, and must not become enums:** `AuditLog.action` is a `String` in `SCREAMING_SNAKE` (e.g. `APPOINTMENT_CAPACITY_CHANGE`) because §20 lists *examples*, and a closed enum would turn every new audited action into a migration. Every `reason` field is free text (§8.4 requires a reason, never a reason *code*; §30). `AuthAttempt.succeeded` is a `Boolean`.
+
 Likely entities include:
 
-- Clinic (single record holding configuration)
-- User (`role`; `email` — **UNIQUE across every account type**, nullable only for provisional desk patients, §6.4/§16; `passwordHash` — **nullable**, because §5.1 forbids a temporary password and the first admin plus every doctor/staff account is claimed via the §6.2 reset flow, so a null hash is the normal "not yet claimed" state and must always fail login)
-- PatientProfile (with unique normalized phone — the identity key, §16; `isProvisional` for desk-created patients; email / emailVerified / phoneVerified flags)
-- RefreshToken (`userId`, `tokenHash` unique, `expiresAt`, `revokedAt` — no `familyId`, §6.3)
-- AuthAttempt
+- Clinic (single record holding **every** clinic number, §3.2: `timezone`, `currency`, `defaultConsultationFee`, booking horizon, cancellation cutoff, hold duration, minimum lead time, reminder lead time, max active bookings per patient — so no value is a magic constant in code. The access-token TTL is the exception and stays in the `ACCESS_TOKEN_TTL` env var: in a single-clinic app it has no user-visible effect, and duplicating it into the database would give one setting two sources that can disagree.)
+- User (`role`; `email` — **UNIQUE across every account type**, nullable only for provisional desk patients, §6.4/§16; `passwordHash` — **nullable**, because §5.1 forbids a temporary password and the first admin plus every doctor/staff account is claimed via the §6.2 reset flow, so a null hash is the normal "not yet claimed" state and must always fail login; `emailVerifiedAt?` — the one email-verification flag, shared by all roles, §6.3; `pendingEmail?` — an unverified email change held until the link is opened, so there is never a half-changed identity, §6.1; `isDeactivated` — staff offboarding, §5.1. **No `phone` on `User`**: the phone number is patient identity data and lives on `PatientProfile`, so exactly one copy exists and §16's desk lookup has a single key to hit.)
+- PatientProfile (`fullName`; `phone` — **unique and not null**, the identity key, E.164-normalized by the same helper at registration, at the desk and on change, §6.1/§16; `isProvisional` for desk-created patients, §16; `phoneVerified` — always `false` in MVP, there is no SMS channel, §6.1. Deliberately **no `email`/`emailVerified` here**: the email lives on `User` and §6.4's uniqueness rule is global, so a second copy would be a second source of truth for the same identity.)
+- RefreshToken (`userId`, `tokenHash` unique, `expiresAt`, `revokedAt`, `ip?`, `userAgent?` — no `familyId`, §6.3)
+- AuthToken (`userId`, `purpose` = `EMAIL_VERIFICATION | PASSWORD_RESET | ACCOUNT_CLAIM | EMAIL_CHANGE`, `tokenHash` unique, `expiresAt`, `consumedAt?`, `createdAt`, `ip?`) — the **one** generic single-use email token behind §6.2 password reset (link *or* OTP), §6.3 registration verification, the §5.1 invite claim, and §6.1's email change. Four purposes and one model, because it is the same mechanic four times; the token is stored **hashed (SHA-256)**, as with refresh tokens, and the low-entropy case (a 6-digit OTP) is covered by §6.3's `auth_attempts` send/try limits rather than by the hash. It is modelled now rather than in Phase 2 because the schema is the contract from Phase 1 onward (§37).
+- AuthAttempt (`identifierKey` — the §6.3 identity key, the normalised email; `ipKey`; `purpose` = login / otp-send / otp-verify; `succeeded`; `createdAt`), indexed for the lookup §6.3's lockout, rate cap and escalating-window rules query against
 - DoctorProfile (`verificationStatus` = `INVITED | PENDING_VERIFICATION | VERIFIED | REJECTED | ARCHIVED` plus **orthogonal** `suspendedAt?` / `suspendReason?` — never an `ACTIVE`/`SUSPENDED` enum value, §5; `qualification`, `licenseNumber`, `experience`, `clinicAssociation`, and `specialization` — **free text, §30** — which are the verification-impacting fields that force re-verification when edited, §5.2; `consultationFee` — nullable, falling back to the Clinic default — required by the §14 reschedule delta)
-- Staff relationship
-- Schedule (weekly availability template; materializes concrete dated Slots across the booking horizon, §10/§11)
-- Slot (one availability window: `slotDate` + `startTime`/`endTime` + `startAt`/`endAt` (derived from date + time and stored, §8.1), `maxPatients`, `bookedCount`, `heldCount`; a slot = one doctor session, not a sub-interval — §8.1)
-- **SeatHold** (`id`, `slotId`, `patientId`, `paymentOrderId?`, `appointmentId?`, `createdAt`, `expiresAt` = `min(now + holdDuration, slot.startAt)`, `releasedAt?`, `releaseReason?`) — the **single source of truth for "seat reserved, not yet booked"** and the only trace of an unfinished online booking (§8.6, §13, §17). Constraints: `UNIQUE (slotId, patientId) WHERE releasedAt IS NULL` (one live hold per patient per slot) and `UNIQUE (patientId) WHERE releasedAt IS NULL` (the §8.6 one-hold rule). `heldCount` on the Slot must always equal the number of rows with `releasedAt IS NULL`.
-- Appointment (with partial unique index: one active booking per patient per slot — §15; plus booking-time snapshots `doctorName` and `feeAmount` so later fee/name changes never rewrite what the patient saw or agreed to pay — §14; `status` per the §13 transition matrix)
-- AppointmentHistory (append-only per-appointment event timeline: eventType, from/to, actor, metadata — §13, §17)
-- Payment (`status` = `PENDING | PAID | FAILED | VOIDED`, amount as integer paise, `currency` = INR, `orderId?`/`paymentId?`, `method`, `paidAt?` — enum declared in §17)
-- Refund (`paymentId`, `amount`, `status` = `PENDING | SUCCESS | FAILED`, `reason`, `actor`, `timestamp`, `gatewayRefundId?` — also the **offline hand-back record** for pay-at-clinic money, §17)
-- Notification (one row per send: `type`, `recipient`, `appointmentId?`, `status` = `PENDING | SENT | FAILED`, `sentAt?`, error — also the reminder dedupe key, §18)
-- AuditLog (append-only, §20)
-- DoctorUnavailability
-- DoctorHistory (append-only per-doctor lifecycle/profile timeline: eventType, from/to, actor, metadata — §5.2)
+- Staff — **no separate entity.** STAFF is a `User.role` value with no staff-specific attributes in MVP (§4); "who did what" is answered by the audit row's actor name snapshot (§5.2, §20), and a staff relationship adds no column the `User` row does not already carry.
+- Schedule (**one row per availability window**, not one record per doctor: `doctorId`, `weekday`, `startTime`, `endTime`, `maxPatients`, unique on doctor + weekday + start time; materializes concrete dated Slots across the booking horizon, §10/§11). Per-window granularity is required, because a doctor can have two windows in a day (§8.1) and §11 makes a template change affect only dates not yet generated. No effective-dating: the generated slots are the record of what was applied
+- Slot (one availability window: `slotDate` + `startTime`/`endTime` + `startAt`/`endAt` (derived from date + time by the one conversion helper and stored, §8.1), `maxPatients`, `bookedCount`, `heldCount`, `isDisabled`/`disabledReason?`; a slot = one doctor session, not a sub-interval — §8.1)
+- **SeatHold** (`id`, `slotId`, `patientId`, `paymentOrderId?`, `appointmentId?`, `createdAt`, `expiresAt` = `min(now + holdDuration, slot.startAt)`, `releasedAt?`, `releaseReason?` = `EXPIRED | ABANDONED | PAYMENT_FAILED | CONVERTED | DELETED_WITH_ACCOUNT`) — the **single source of truth for "seat reserved, not yet booked"** and the only trace of an unfinished online booking (§8.6, §13, §17). Constraints: `UNIQUE (slot_id, patient_id) WHERE released_at IS NULL` (one live hold per patient per slot) and `UNIQUE (patient_id) WHERE released_at IS NULL` (the §8.6 one-hold rule) — written in snake_case, because these are raw SQL against the mapped columns (§23). `heldCount` on the Slot must always equal the number of rows with `releasedAt IS NULL`.
+- Appointment (`doctorId`, `patientId`, `slotId`, `status` per the §13 matrix, with the partial unique index for one active booking per patient per slot — §15; plus booking-time snapshots `doctorName` and `feeAmount` so later fee/name changes never rewrite what the patient saw or agreed to pay — §14; `bookingTime`, from which the queue position is ranked rather than counted — §8.1; and `doctorUnavailabilityId?` — the §12 clinic-caused marker that refund classification (§17) and the audit both key off. **No `isClinicCaused` boolean:** that fact is derived from `doctorUnavailabilityId IS NOT NULL`, so the two representations can never disagree, and a disagreement there is a wrongly-refunded or un-refunded patient)
+- AppointmentHistory / DoctorHistory (append-only per-parent timelines: `eventType` (the enum table above — `RESCHEDULED` lives here and nowhere else), from/to, `metadata` — §13, §17, §5.2. **No `target` columns** — the parent row *is* the target — and the shared actor block below, with `createdAt` only and never `updatedAt`)
+- Payment (`status` = `PENDING | PAID | FAILED | VOIDED`, `amount` as `int` paise with `CHECK (amount_paise > 0)`, `currency` = INR, `orderId?` — **UNIQUE**, the §17 idempotency key enforced by the database and not just by code — `paymentId?` (stored for reconciliation, §17), `method`, `paidAt?`)
+- Refund (`paymentId` — **UNIQUE**, the §17 unique refund key that makes a retried refund or a double-clicked approval unable to double-refund; `amount`, `status` = `PENDING | SUCCESS | FAILED`, `reason`, `actor`, `timestamp`, `gatewayRefundId?` (null for a desk hand-back), `method` — also the **offline hand-back record** for pay-at-clinic money, §17)
+- Notification (one row per send: `type`, `recipient`, `appointmentId?`, `slotId?`, `status` = `PENDING | SENT | FAILED`, `sentAt?`, error — and the reminder dedupe key, which is `(appointment, slot)` and not the appointment alone, §18)
+- AuditLog (append-only, §20: the shared actor block, plus `action` — a `String`, **not** an enum, for the reason given above — a polymorphic `targetType` + `targetId` rather than a nullable foreign key to a dozen tables, and a mandatory `reason` on the audited actions)
+- DoctorUnavailability (`doctorId`, `startAt`, `endAt`, `reason`, `createdById` — the window the booking transaction re-checks inside its own transaction, §11, and that drives the §12 cascade and auto-cancel)
+- **The shared actor block, identical on `AuditLog`, `AppointmentHistory` and `DoctorHistory` (locked):** `actorId` (foreign key to `User`, `Restrict`) + `actorRole` + **`actorName` snapshot captured at action time** + `reason` + `ip` + `requestId`, with `before`/`after` as JSON columns rather than two text columns, because §20 records arbitrary field sets. The name is a plain column, never a join, because that is precisely what stops a later rename or deactivation from rewriting attribution (§5.1, §5.2, §20)
 
-DB constraints include a CHECK on Slot: `booked_count + held_count <= max_patients` (§15).
+DB constraints include a CHECK on Slot: `booked_count + held_count <= max_patients` (§15), plus `max_patients > 0` (§23). Field names quoted in this list are Prisma fields; their PostgreSQL column names are the snake_case mappings (§23).
 
 Do not blindly implement every entity. Confirm whether each entity is required after mapping actual relationships.
 
@@ -1558,6 +1623,7 @@ Test:
 - Login/OTP rate limiting: lockout after repeated failures (identity + IP keyed)
 - Refresh-token rotation: the previous token is invalid after use; revoking every session logs the account out everywhere immediately (§6.3)
 - Registration email verification: unverified account cannot book
+- An unclaimed account (`passwordHash IS NULL` — every provisioned admin/doctor/staff row, §5.1) **cannot log in at all**; the §6.2 reset link is the only way in, and setting the password through it is what turns `null` into a real hash. A "reset" for an account that has never had a password is a normal, supported case, not an error (§5.1)
 
 ### Authorization
 - Patient cannot access another patient's data
@@ -1626,7 +1692,7 @@ Test:
 - Deliberate `maxPatients` raise (with audited reason, §8.4)
 - DB CHECK constraint prevents overbooking even on code bug
 - Same-slot duplicate: second active booking for patient+slot rejected (partial unique index)
-- One live hold per patient: a second hold is rejected by `UNIQUE (patientId) WHERE releasedAt IS NULL`, and an **expired-but-unreleased** hold is rejected by the in-transaction time re-check rather than by the index (both asserted against the real database, §23)
+- One live hold per patient: a second hold is rejected by `UNIQUE (patient_id) WHERE released_at IS NULL`, and an **expired-but-unreleased** hold is rejected by the in-transaction time re-check rather than by the index (both asserted against the real database, §23)
 - Active-booking cap per patient (maxActiveBookingsPerPatient) enforced
 - **The cap counts holds as well as bookings:** 3 confirmed + 1 live hold is rejected; the check runs inside the hold/booking transaction and holds a `FOR UPDATE` lock on the patient's row so two concurrent attempts cannot both pass (§15)
 - **An expired hold leaves no trace:** after expiry the slot's `held_count` is back, the patient can book that same slot again, and their active-booking count is restored — because no appointment row was ever created (§8.6, §13, §17)
@@ -1686,6 +1752,7 @@ Test:
 - Appointment events
 - Reminder eligibility (slot-anchored: exactly one reminder 2 h before slot start; optional queue position in content)
 - **Exactly one** `Notification` row and one send per appointment reminder; re-running the reminder job does not re-send (the row is the dedupe key, §18)
+- **The reminder dedupe survives a reschedule:** after a §14 reschedule the appointment points at a new slot, and a reminder is still sent for that new slot — asserted against the real database, because the key is `(appointment, slot)` and an appointment-only key would reject it (§18, §23)
 - A send that fails records `FAILED` + the provider error on the row instead of vanishing
 - A provisional desk patient receives no reminder (no email on file, §16)
 
@@ -1737,6 +1804,7 @@ Expected categories:
 - Razorpay credentials
 - Frontend/backend URLs
 - Other service configuration
+- **Bootstrap and seed inputs (§5.1, §24):** `CLINIC_OWNER_EMAIL` — the clinic owner's address, which the setup/seed command creates the first admin against, and the optional `SEED_PATIENT_PASSWORD` — the password for the seeded *patient* accounts. Both are required by the seed but optional in `.env.example`, and neither may be hardcoded in a fixture: a hardcoded address becomes the first admin of whoever runs the seed. The seeded **admin/doctor/staff** accounts get `passwordHash = null` and claim their password through the §6.2 flow, so there is deliberately **no** seeded staff password and no dev-only password path (§5.1)
 
 Provide:
 

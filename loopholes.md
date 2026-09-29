@@ -81,7 +81,7 @@ that the first sweep had introduced or left behind; the final pass was clean.
 | 21 | Missing §42 entries for six deferred features | §42 | A "Deferred out of MVP by explicit decision" list now covers all six |
 | 22 | `§41` cited for GRANT/REVOKE hardening, which §41 never mentions | §5.2, §20 | Repointed to §42 |
 | 23 | `specialization` on `User` | §24 | On `DoctorProfile` |
-| 24 | `User.passwordHash` "nullable for Google users" | §6.1, §24 | Non-nullable — there are no OAuth users |
+| 24 | `User.passwordHash` "nullable for Google users" | §5.1, §24 | **Nullable — but never for OAuth.** There are no OAuth users (§6); the null hash is the normal "provisioned but not yet claimed" state, because §5.1 forbids a temporary password and every admin/doctor/staff account claims its password through the §6.2 reset flow. A null hash must always fail login (§24) |
 | 25 | `DoctorVerification` entity | §24 | Removed; the decision is a `verificationStatus` + `DoctorHistory` + `AuditLog` |
 | 26 | Scope-cuts and one-refund/simplified-reminders recorded as pending decisions | §42, §30, §18 | Applied; recorded here as decisions taken |
 
@@ -97,7 +97,7 @@ These were investigated and dismissed. They are listed so nobody re-raises them.
 | Suspending and un-suspending a doctor "needs thought" | Now fully specified: orthogonal `suspendedAt`, restore-preserves-lifecycle, and one transaction (§5) |
 | Refresh token vs JWT choice | Not a design question; both are used, each for its purpose (§6.3) |
 | "Simple hash instead of bcrypt" | A quality decision, not an ambiguity; bcrypt is locked (§45) |
-| Unique constraint on `PatientProfile.email` | Already specified (§6.4) |
+| Unique constraint on `PatientProfile.email` | Not a loophole, but the premise was wrong: there is no `PatientProfile.email` — the email (and its verification flag) lives once on `User`, and §6.4's uniqueness rule is global. `PatientProfile` holds only the unique normalized `phone` (§24) |
 | Login attempt lockout/rate-limiting | MVP accepts the risk; no rule is left undefined (§42) |
 | Patient cannot re-register and orphan their history | Blocked by the global unique email (§6.4) |
 | Booking twice in the same slot | Blocked by a partial unique index plus a pre-payment check (§15) |
@@ -149,3 +149,40 @@ chosen, and each is now stated in `plan.md`:
   SQL migration, with §33 asserting each one against the real database.
 
 **Nothing is outstanding. `plan.md` is the specification; this file is history.**
+
+---
+
+## 6. Addendum — schema decisions locked at the Phase 1 kickoff (Days 4–6)
+
+Six questions surfaced while reading Day 4 of `code-plan.md` against `plan.md`, and nine more
+while specifying Days 5 and 6. None was a loophole in the plan — they were places where the
+execution guide and the specification disagreed, or where the plan was silent. Each is now stated
+in `plan.md` (§3.2, §18, §23, §24) and in `code-plan.md` Days 4–6.
+
+### 6a. Identity and clinic (Day 4)
+
+| Question | Decision | Why |
+|---|---|---|
+| Is `User.passwordHash` nullable? | **Yes** | §5.1 forbids a temporary password, so a provisioned account has no password until it is claimed through the §6.2 reset flow. `null` *means* "not claimed yet" and must always fail login. The earlier "non-nullable because there are no OAuth users" resolution (item 24) reasoned from the wrong premise and is corrected above |
+| Where does the phone number live? | **`PatientProfile.phone` only** | It is patient identity data (§16). `User` has no `phone`, so the desk lookup has one key instead of two columns that can disagree |
+| Where does email verification live? | **`User.emailVerifiedAt` only** | §6.3's verification applies to one account, and §6.4's uniqueness rule is global, so a per-profile `email`/`emailVerified` pair would be a duplicate source of truth. `pendingEmail` holds an unverified change (§6.1) |
+| Is there a model for the email OTP/link tokens? | **Yes — one `AuthToken`** | §6.2, §6.3, §5.1 and §6.1 are the same mechanic four times, and the plan listed no entity for it. It is added in Phase 1 because the schema is the contract from here on; finding out in Phase 2 would mean a migration to add a table everything already depends on |
+| How are columns spelled? | **Prisma `camelCase`, PostgreSQL `snake_case` via `@map`** | The plan already wrote the guarded `UPDATE slots SET booked_count …` in snake_case (§15) but the index definitions in camelCase, so a hand-written `CHECK` written against a camelCase name would create no constraint at all. Fixed once, on the first real schema, before the Day 6 SQL migrations inherit it |
+| Is there a `StaffProfile` table? | **No** | STAFF has no attributes beyond its `User` row, and attribution is answered by the audit actor-name snapshot (§5.2, §20) |
+
+### 6b. Domain, money and constraints (Days 5–6)
+
+| Question | Decision | Why |
+|---|---|---|
+| How are the partial unique indexes created? | **Declared in the schema behind the `partialIndexes` preview feature, after a spike verifies the predicate round-trip** | Since Prisma 7.4, a partial index with no `schema.prisma` declaration is drift, so `migrate dev` emits `DROP INDEX` for it on every run ([#29220](https://github.com/prisma/prisma/issues/29220)). The previously documented "append the SQL to a generated migration" workflow would have silently deleted the double-booking guard on the next unrelated migration. `where` on `@unique`/`@@unique`/`@@index` is documented in Prisma 7 with full PostgreSQL introspection, so the mechanism is known — but the spike still exists, because introspection returns PostgreSQL's *normalised* predicate (`status = 'active'` comes back as `status = 'active'::text`), and a non-round-tripping predicate produces a no-op migration loop on an index that is already correct. `raw()` is required for the `IN (…)` predicate; the object-literal form only expresses equality and `IS NULL`. Fallback if it does not round-trip: an `active_marker` column with `@@unique([patientId, activeMarker])` + `NULLS NOT DISTINCT` (PostgreSQL 18 has it, and no predicate means no drift). `CHECK`s are always raw SQL |
+| What are the ids? | **`@default(uuid(7))`, generated by Prisma Client** | Time-ordered, so the high-write tables (`appointments`, `audit_log`, `notifications`) do not fragment their indexes; still unguessable, so nothing is sequential. The plan originally said "PostgreSQL 18's native `uuidv7()`", which exists and was verified on the 18.3 server in use — but Prisma's `dbgenerated()` defaults are a documented source of phantom migrations, because the string in the schema and the value the database returns can disagree and `migrate dev` then wants a migration on every run ([#24240](https://github.com/prisma/prisma/issues/24240), [#9823](https://github.com/prisma/prisma/issues/9823)). Client-side `uuid(7)` removes that class of churn entirely, and the native function buys nothing because every insert goes through Prisma — the only hand-written SQL is DDL, `CHECK`s and guarded `UPDATE`s |
+| How are enum values stored? | **Uppercase, exactly as written; only the type name is mapped** | §23's hand-written SQL compares `status IN ('CONFIRMED','ARRIVED')`. Mapping the values to lowercase would make that SQL wrong the day it is written |
+| How are instants stored? | **`timestamptz` everywhere; `date`/`time` for clinic-local values** | It makes §3.2's "all timestamps are UTC" a database guarantee rather than a convention a session timezone could reinterpret |
+| What is `Schedule`? | **One row per availability window** | A per-doctor record cannot express two windows in a day (§8.1), and §11's "a template change affects only ungenerated dates" needs per-window granularity. The generated slots are the record of what was applied, so no effective-dating is needed |
+| Is there an `isClinicCaused` flag on `Appointment`? | **No — derived from `doctorUnavailabilityId IS NOT NULL`** | §12's cascade, §17's refund classification and the audit all key off this fact. Two representations of one fact eventually disagree, and the disagreeing case is a wrongly-refunded or un-refunded patient |
+| What is the reminder dedupe key? | **`(appointment, slot)`, enforced by `UNIQUE (appointment_id, slot_id) WHERE type = 'REMINDER'`** | §18 requires the reminder to be once-only, and a key of `(type, appointment_id)` alone breaks after a §14 reschedule: the appointment's slot changes, the index rejects the reminder for the new time, and the patient silently stops being reminded. No other notification type is constrained — repeated events legitimately send more than one email |
+| What is the money column type? | **`int` paise, plus `CHECK (amount_paise > 0)`** | `bigint` would break `JSON.stringify` at the API edge — a Phase 6 bug with a Phase 1 cause |
+| Where do the enum values come from? | **One table in `plan.md` §24, and nowhere else** | Enum values are the most-transcribed part of a schema: a single mistyped or invented value becomes a migration plus hand-written SQL that no longer matches the ORM, and §23's raw SQL compares these values by string. The table also pins the four traps that are real bugs, not style: `RESCHEDULED` is an event type and not a status, `PENDING` is declared but never written, `SUCCESS` is refund-only, and `AuditLog.action` + every `reason` are text rather than enums |
+| What password do the seeded admin/doctors/staff get? | **None — `passwordHash = null`, and no dev-only seed password** | §5.1's rule is that no one ever hands over a credential, so the seeded staff log in through the §6.2 claim link (Day 7's stub prints it) — which also means the claim flow is exercised daily instead of being found broken at hand-off. A "dev password" is a second door into an authenticated account, and second doors are how a seeded `admin/admin123` reaches a real clinic. The two seeded **patients** are the exception: they get a real hash from `SEED_PATIENT_PASSWORD`, because a self-registered account always has a password and a patient with a null hash could never log in |
+| How does the seed know the clinic owner's email? | **`CLINIC_OWNER_EMAIL` in the environment**, added to `.env.example` and the config schema on Day 4 | §5.1 says the bootstrap reads the owner's email from environment configuration, but no day ever named the variable, so the seed would otherwise have had to hardcode an address — which becomes the first admin of whoever runs it |
+| How does the app handle a local time that does not exist? | **The one conversion helper rejects it, and takes the first occurrence of an ambiguous one** (§3.2) | The clinic's timezone has no DST, so this never fires — but the timezone is configuration, and the failure mode is a slot that quietly moves by an hour, discovered weeks later as "the appointment was at the wrong time" |
