@@ -16,6 +16,10 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL: z
     .string()
     .regex(/^\d+[smhd]$/, "must look like 30s, 15m, 2h or 7d"),
+  // Seed inputs, read by prisma/seed.ts from Day 6. Optional so the app boots
+  // without them — nothing in the request path needs either one.
+  CLINIC_OWNER_EMAIL: z.email().optional(),
+  SEED_PATIENT_PASSWORD: optionalSecret,
   RESEND_API_KEY: optionalSecret,
   RAZORPAY_KEY_ID: optionalSecret,
   RAZORPAY_KEY_SECRET: optionalSecret,

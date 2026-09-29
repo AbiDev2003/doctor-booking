@@ -245,12 +245,13 @@ the contract and an unstated field is a migration later.
   `expiresAt` (= `min(now + holdDuration, slot.startAt)`, §8.6), `releasedAt?`, `releaseReason?`
   (`EXPIRED|ABANDONED|PAYMENT_FAILED|CONVERTED|DELETED_WITH_ACCOUNT`). The only trace of an
   unfinished online booking; **never** an `Appointment` row (§8.6, §13).
-- `Payment` — `appointmentId?`, `patientId`, `amount` `Int` paise, `currency`, `status` enum
+- `Payment` — `appointmentId?`, `patientId`, `amountPaise` `Int` paise (field `amountPaise` → column
+  `amount_paise`, which is the name the raw `CHECK` must use), `currency`, `status` enum
   `PENDING|PAID|FAILED|VOIDED` (never `SUCCESS` — §17), `method`, `orderId?` **UNIQUE** (the §17
   idempotency key, enforced by the database rather than by code), `paymentId?` (kept for
   reconciliation), `paidAt?` (§17).
 - `Refund` — `paymentId` **UNIQUE** (the §17 unique refund key: a retried refund or a double-clicked
-  approval cannot refund twice), `amount`, `status` enum `PENDING|SUCCESS|FAILED`, `reason`, `actor`,
+  approval cannot refund twice), `amountPaise`, `status` enum `PENDING|SUCCESS|FAILED`, `reason`, `actor`,
   `gatewayRefundId?` (null for a desk hand-back), plus the offline hand-back record for pay-at-clinic
   money (§17).
 - `AppointmentHistory` / `DoctorHistory` — append-only per-parent timelines (`eventType`, from the
