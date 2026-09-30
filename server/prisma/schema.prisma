@@ -1,7 +1,6 @@
 // Prisma schema — Phase 1, Day 4: identity + clinic.
-//
-// Conventions, applied to every model in this file and every model after it
-// (plan.md §23, §24):
+
+// Conventions, applied to every model in this file and every model after it (plan.md §23, §24):
 //
 //   * Prisma field names are camelCase; every column is @map'd to snake_case.
 //     TypeScript never sees the snake_case form, raw SQL and psql always do.
@@ -21,9 +20,7 @@
 //   * Referential actions are Restrict, never Cascade. Deletion in this system
 //     is deactivation and anonymisation, never a row delete (§6.1, §5.1).
 //
-// The connection string does NOT live here: Prisma 7 deprecated `url` in the
-// datasource block and moved it to prisma.config.ts, so this file stays free of
-// environment concerns.
+// The connection string does NOT live here: Prisma 7 deprecated `url` in the datasource block and moved it to prisma.config.ts, so this file stays free of environment concerns.
 
 generator client {
   provider = "prisma-client"
@@ -77,12 +74,10 @@ model Clinic {
   timezone String @map("timezone") // IANA zone, e.g. Asia/Kolkata — display only
   currency String @default("INR") @map("currency")
 
-  // Paise. Never a float, never BigInt — BigInt breaks JSON.stringify at the
-  // API edge, which surfaces in Phase 6 far from the cause.
+  // Paise. Never a float, never BigInt — BigInt breaks JSON.stringify at the API edge, which surfaces in Phase 6 far from the cause.
   defaultConsultationFee Int @map("default_consultation_fee")
 
-  // Every locked §3.2 default lives here, so no value is a magic constant in
-  // code. Seeded on Day 6.
+  // Every locked §3.2 default lives here, so no value is a magic constant in code. Seeded on Day 6.
   bookingHorizonDays          Int @default(60) @map("booking_horizon_days")
   cancelCutoffMinutes         Int @default(60) @map("cancel_cutoff_minutes")
   holdDurationMinutes         Int @default(10) @map("hold_duration_minutes")
@@ -90,9 +85,7 @@ model Clinic {
   reminderLeadMinutes         Int @default(120) @map("reminder_lead_minutes")
   maxActiveBookingsPerPatient Int @default(3) @map("max_active_bookings_per_patient")
 
-  // accessTokenTtlMinutes is deliberately NOT a column: ACCESS_TOKEN_TTL is the
-  // single source. Duplicating one setting into the database gives it two
-  // sources that can disagree.
+  // accessTokenTtlMinutes is deliberately NOT a column: ACCESS_TOKEN_TTL is the single source. Duplicating one setting into the database gives it two sources that can disagree.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -108,25 +101,17 @@ model User {
 
   role UserRole @map("role")
 
-  // Unique and nullable on purpose: PostgreSQL's unique index ignores NULLs, so
-  // any number of provisional desk patients can have no email (§16) while every
-  // real address stays globally unique across every role (§6.4). Uniqueness is
-  // enforced here rather than only in code so two entry points cannot both
-  // decide an address is free.
+  // Unique and nullable on purpose: PostgreSQL's unique index ignores NULLs, so any number of provisional desk patients can have no email (§16) while every real address stays globally unique across every role (§6.4). Uniqueness is enforced here rather than only in code so two entry points cannot both decide an address is free.
   email String? @unique @map("email")
 
-  // Nullable because §5.1 forbids a temporary password. null MEANS "provisioned,
-  // not yet claimed" — the §6.2 reset link is the only way in — so every login
-  // path must treat it as cannot-authenticate rather than comparing it.
+  // Nullable because §5.1 forbids a temporary password. null MEANS "provisioned, not yet claimed" — the §6.2 reset link is the only way in — so every login path must treat it as cannot-authenticate rather than comparing it.
   // Patient self-registration writes a real hash at once.
   passwordHash String? @map("password_hash")
 
-  // The one email-verification flag, shared by every role (§6.3). There is no
-  // per-profile emailVerified: that would be a second source of truth.
+  // The one email-verification flag, shared by every role (§6.3). There is no per-profile emailVerified: that would be a second source truth.
   emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(3)
 
-  // An unverified email change waits here until the link is opened, so an
-  // identity is never half-changed (§6.1).
+  // An unverified email change waits here until the link is opened, so an identity is never half-changed (§6.1).
   pendingEmail String? @map("pending_email")
 
   isDeactivated Boolean @default(false) @map("is_deactivated")
@@ -134,9 +119,7 @@ model User {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  // There is deliberately no `phone` on User: the phone number is patient
-  // identity data and lives on PatientProfile, so exactly one copy exists and
-  // the desk lookup has a single key to hit (§16).
+  // There is deliberately no `phone` on User: the phone number is patient identity data and lives on PatientProfile, so exactly one copy exists and the desk lookup has a single key to hit (§16).
   patientProfile PatientProfile?
   doctorProfile  DoctorProfile?
   authTokens     AuthToken[]
@@ -157,8 +140,7 @@ model PatientProfile {
 
   fullName String @map("full_name")
 
-  // The desk's identity key: unique, non-null, E.164 — normalised by the single
-  // helper at registration, at the desk and on change.
+  // The desk's identity key: unique, non-null, E.164 — normalised by the single helper at registration, at the desk and on change.
   phone String @unique @map("phone")
 
   // Always false in MVP — there is no SMS channel to verify with (§6.1).
@@ -167,9 +149,7 @@ model PatientProfile {
   // A desk-created walk-in record: usable for booking without a login (§16).
   isProvisional Boolean @default(false) @map("is_provisional")
 
-  // Deliberately no `email`/`emailVerified` here. The email is on User and
-  // §6.4's uniqueness rule is global, so a second copy would be a second source
-  // of truth for the same identity.
+  // Deliberately no `email`/`emailVerified` here. The email is on User and §6.4's uniqueness rule is global, so a second copy would be a second source of truth for the same identity.
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -187,26 +167,20 @@ model DoctorProfile {
   userId String @unique @map("user_id") @db.Uuid
   user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
 
-  // One lifecycle enum (§5). Suspension is deliberately NOT an enum value: it is
-  // these two orthogonal nullable columns, so un-suspending returns the doctor
-  // to whatever lifecycle value they already held instead of destroying it.
+  // One lifecycle enum (§5). Suspension is deliberately NOT an enum value: it is these two orthogonal nullable columns, so un-suspending returns the doctor to whatever lifecycle value they already held instead of destroying it.
   verificationStatus DoctorVerificationStatus @default(INVITED) @map("verification_status")
   suspendedAt        DateTime?                @map("suspended_at") @db.Timestamptz(3)
   suspendReason      String?                  @map("suspend_reason")
 
-  // Free text (§30), and the verification-impacting set: editing one of these
-  // resets verification to PENDING_VERIFICATION without clearing suspendedAt
-  // (§5.2). Specialization is free text on purpose — no taxonomy is imposed on
-  // the clinic.
+  // Free text (§30), and the verification-impacting set: editing one of these resets verification to PENDING_VERIFICATION without clearing suspendedAt
+  // (§5.2). Specialization is free text on purpose — no taxonomy is imposed on the clinic.
   qualification     String? @map("qualification")
   licenseNumber     String? @map("license_number")
   experience        String? @map("experience")
   clinicAssociation String? @map("clinic_association")
   specialization    String? @map("specialization")
 
-  // Paise. null falls back to the Clinic default; the §14 reschedule price delta
-  // is computed against this, so it is required from day one even though the
-  // field is optional.
+  // Paise. null falls back to the Clinic default; the §14 reschedule price delta is computed against this, so it is required from day one even though the field is optional.
   consultationFee Int? @map("consultation_fee")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -216,12 +190,7 @@ model DoctorProfile {
 }
 
 // ---------------------------------------------------------------------------
-// AuthToken — the ONE generic single-use email token (plan.md §6.1, §6.2, §6.3,
-// §5.1). Four flows, one mechanic: password reset (link or OTP), registration
-// verification, the invite claim, and the email change. Modelled now rather
-// than in Phase 2 because from here the schema is the contract; discovering the
-// missing table in Phase 2 would mean a migration for something everything
-// already depends on.
+// AuthToken — the ONE generic single-use email token (plan.md §6.1, §6.2, §6.3, §5.1). Four flows, one mechanic: password reset (link or OTP), registration verification, the invite claim, and the email change. Modelled now rather than in Phase 2 because from here the schema is the contract; discovering the missing table in Phase 2 would mean a migration for something everything already depends on.
 // ---------------------------------------------------------------------------
 
 model AuthToken {
@@ -232,9 +201,7 @@ model AuthToken {
 
   purpose AuthTokenPurpose @map("purpose")
 
-  // SHA-256 hex of the token, exactly as refresh tokens are stored — a leaked
-  // database must not hand out live reset links. The low-entropy case (a 6-digit
-  // OTP) is covered by §6.3's auth_attempts send/try limits, not by the hash.
+  // SHA-256 hex of the token, exactly as refresh tokens are stored — a leaked database must not hand out live reset links. The low-entropy case (a 6-digit OTP) is covered by §6.3's auth_attempts send/try limits, not by the hash.
   tokenHash String @unique @map("token_hash") @db.VarChar(64)
 
   expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
@@ -245,8 +212,7 @@ model AuthToken {
   // No updatedAt: a token is consumed once and then never edited.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  // Backs "invalidate everything outstanding for this user and purpose", and
-  // the latest-token lookup on resend.
+  // Backs "invalidate everything outstanding for this user and purpose", and the latest-token lookup on resend.
   @@index([userId, purpose], map: "auth_tokens_user_id_purpose_idx")
   @@map("auth_tokens")
 }
