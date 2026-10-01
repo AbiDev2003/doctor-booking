@@ -1,10 +1,13 @@
 {
-  // Build-time-only TypeScript: the Prisma CLI config, the operational
-  // scripts, and the test suite, all of which live outside src/ so the main
-  // tsconfig (rootDir ./src, emitting to dist/) ignores them. Checked with
-  // --noEmit because none of these files are bundled or shipped. Tests are here
-  // rather than in src/ for the same reason: a test file is not something the
-  // server should emit into dist/.
+  // Build-time-only TypeScript: the Prisma CLI config, the seed, the
+  // operational scripts, and the test suite, all of which live outside src/ so
+  // the main tsconfig (rootDir ./src, emitting to dist/) ignores them. Checked
+  // with --noEmit because none of these files are bundled or shipped. Tests are
+  // here rather than in src/ for the same reason: a test file is not something
+  // the server should emit into dist/. The seed is here for the same reason —
+  // it is a build-time entrypoint invoked by the Prisma CLI, not part of the
+  // running server, and shipping it in dist/ would put seed credentials and
+  // fixture data in the build output.
   "compilerOptions": {
     "module": "nodenext",
     "moduleResolution": "nodenext",
@@ -22,5 +25,5 @@
 
     "noEmit": true
   },
-  "include": ["prisma.config.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+  "include": ["prisma.config.ts", "prisma/seed.ts", "scripts/**/*.ts", "tests/**/*.ts"]
 }

@@ -25,6 +25,12 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+
+  // Unlocks `where:` on @@unique/@@index — the only way to express the three
+  // partial unique indexes that ARE the double-booking guard (§8.6, §15, §18).
+  // Prisma has no CHECK support at all, so the capacity and money CHECKs in
+  // Step 2 are hand-written SQL regardless of this flag.
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -608,12 +614,29 @@ model Appointment {
   @@index([slotId, bookingTime], map: "appointments_slot_id_booking_time_idx")
   // §17 refund classification and the §12 audit both key off this column.
   @@index([doctorUnavailabilityId], map: "appointments_doctor_unavailability_id_idx")
-  @@map("appointments")
 
-  // Day 6 adds the double-booking guard, which Prisma can only express behind the
-  // partialIndexes preview feature:
-  //   UNIQUE (patient_id, slot_id) WHERE status IN ('CONFIRMED','ARRIVED')
-  // PENDING is absent because nothing ever writes it (§13).
+  // THE DOUBLE-BOOKING GUARD (§15), and the single most important constraint in
+  // this schema: one patient may hold at most one seat per slot, and only while
+  // the appointment is in a seat-holding status.
+  //
+  // `raw()` is required for the status list — the object-literal form
+  // (`where: { status: { in: [...] } }`) only expresses equality / IS NULL, not
+  // the list of statuses that makes this index partial.
+  //
+  // The predicate is written in PostgreSQL's NORMALISED form, deliberately, and
+  // that is not a style preference. PostgreSQL rewrites `status IN ('CONFIRMED',
+  // 'ARRIVED')` into `status = ANY (ARRAY['CONFIRMED'::appointment_status,
+  // 'ARRIVED'::appointment_status])`, and Prisma compares the string it reads
+  // back from introspection against this one literally. Written the readable
+  // way, the two never match and `migrate dev` proposes DROP + CREATE on every
+  // single run — a no-op migration loop that would silently delete the
+  // double-booking guard. Day 6's spike caught exactly this.
+  //
+  // The surrounding parentheses are part of that: `db pull` returns the
+  // predicate wrapped in its own pair, so this string is written to be
+  // byte-identical to the introspection output rather than merely equivalent.
+  @@unique([patientId, slotId], where: raw("(status = ANY (ARRAY['CONFIRMED'::appointment_status, 'ARRIVED'::appointment_status]))"), map: "appointments_active_booking_per_patient_slot_unique")
+  @@map("appointments")
 
   // There is deliberately no `slotStartAt`/`slotEndAt` copy. The appointment reads
   // its time from the slot, and §8.4 forbids moving a slot that holds a seat, so
@@ -661,14 +684,33 @@ model SeatHold {
   releaseReason SeatHoldReleaseReason? @map("release_reason")
 
   // No updatedAt: a hold is released once and then never edited.
+
+  // THE §8.6 ONE-HOLD RULE. A patient may hold at most one seat across the WHOLE
+  // clinic at a time, so a second concurrent payment attempt on another slot
+  // cannot quietly reserve a second seat while the first is still in flight.
   //
-  // No plain @@index here either. Day 6's partial indexes are
-  //   UNIQUE (patient_id) WHERE released_at IS NULL          (one live hold)
-  //   UNIQUE (slot_id, patient_id) WHERE released_at IS NULL (Day 6 spike decides)
-  // and the leading columns cover the live-hold lookups. Correctness never depends
-  // on an index anyway: every path that consumes a hold re-checks the predicate
-  // inside its own transaction and re-counts live rows rather than trusting
-  // heldCount (§8.6).
+  // `released_at IS NULL` is what makes it partial: released holds are ordinary
+  // history and must not constrain anything, so a patient who books, cancels and
+  // rebooks is not blocked by their own earlier hold.
+  @@unique([patientId], where: raw("(released_at IS NULL)"), map: "seat_holds_one_live_hold_per_patient_unique")
+
+  // Shipped alongside the index above, which is where the spike of Day 6 settled
+  // the §24 open question. Correctness-wise this one IS implied — a patient has
+  // at most one live hold in total, so a duplicate (slot_id, patient_id) pair
+  // would need two live holds, which the index above already forbids.
+  //
+  // It earns its place on COST, not safety. §8.6 requires every path that must
+  // not act on a stale heldCount to re-count live rows inside its own
+  // transaction, and that re-count is `WHERE slot_id = ? AND released_at IS
+  // NULL`. The index above leads with patient_id, so it cannot serve a slot_id
+  // filter at all — this one can, and without it that re-count is a sequential
+  // scan of seat_holds on the hottest write path in the booking flow.
+  @@unique([slotId, patientId], where: raw("(released_at IS NULL)"), map: "seat_holds_one_live_hold_per_slot_patient_unique")
+
+  // Correctness never depends on either index anyway: every path that consumes a
+  // hold re-checks the predicate inside its own transaction and re-counts live
+  // rows rather than trusting heldCount (§8.6). These make the violation
+  // impossible rather than merely unlikely.
   @@map("seat_holds")
 }
 
@@ -959,6 +1001,22 @@ model Notification {
   // requirements in MVP, and the query behind it is a status filter.
   @@index([status, createdAt], map: "notifications_status_created_at_idx")
   @@index([recipient, createdAt], map: "notifications_recipient_created_at_idx")
+
+  // ONCE-ONLY REMINDER (§18). Exactly one reminder per (appointment, slot). The
+  // slot is part of the key because after a §14 reschedule the appointment moves
+  // to a different slot: a key on appointment alone would reject the reminder for
+  // the new time and the patient would silently stop being reminded.
+  //
+  // No other notification type is constrained: repeated events legitimately send
+  // more than one email (e.g. overlapping unavailability). Only the reminder is
+  // once-only.
+  //
+  // The `::notification_type` cast is PostgreSQL's normalisation, not decoration
+  // — written without it the predicate and the introspected form differ and
+  // `migrate dev` proposes DROP + CREATE every run. The reminder is one of only
+  // two MVP reliability requirements, so a silently deleted dedupe index means
+  // patients are emailed twice for one appointment.
+  @@unique([appointmentId, slotId], where: raw("(type = 'REMINDER'::notification_type)"), map: "notifications_reminder_once_per_appointment_slot_unique")
   @@map("notifications")
 
   // No other type is constrained: repeated events legitimately send more than
