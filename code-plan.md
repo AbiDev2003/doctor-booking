@@ -285,7 +285,15 @@ the contract and an unstated field is a migration later.
   (spring-forward gap) and take the **first** occurrence of an ambiguous one (fall-back), so a
   02:30 window can never silently become 03:30 or an invalid instant. India has no DST, so this
   will never fire in this clinic — but `APP_TIMEZONE` is configurable, which is exactly how such a
-  bug arrives late and unexplained.
+  bug arrives late and unexplained. Implemented by round-trip verification rather than offset
+  arithmetic: for every offset the zone could be using, subtract it, format the result back into
+  the zone, and keep the candidate that reproduces the requested wall clock — zero matches is a
+  gap, two is ambiguous, one is ordinary. **`timeZone` is a required argument with no default**,
+  deliberately: this codebase has two timezone values (`APP_TIMEZONE` and `Clinic.timezone`) and
+  silently defaulting to one is precisely how a slot gets written in one zone and displayed in
+  another. Note that only a leading `+` or `00` marks an international phone number; a bare
+  `91-…` is treated as national rather than guessed at, because guessing which reading was meant is
+  how one person becomes two rows.
 - **DoD:** every entity from `plan.md` §24 exists with the locked enums; `prisma validate` and
   `migrate reset` are clean; the generated SQL is reviewed line by line; `db:generate`,
   `npm run typecheck` and `npm run lint` are green.
