@@ -108,39 +108,292 @@ Goal: the whole domain fits in the schema, and the DB can be thrown away and reb
 migrations alone. From here on, the schema is the contract.
 
 ### Day 4 — Prisma schema: identity + clinic
-- `Clinic` (single row, config record, `defaultConsultationFee`, `currency`, `timezone`).
-- `User` (`role` enum `PATIENT|DOCTOR|STAFF|ADMIN`, `email` **unique**, `passwordHash`
-  non-null, `phone`, `emailVerifiedAt`, `isDeactivated`). No OAuth, no `Department`.
-- `PatientProfile` (1:1 `User`, `isProvisional`, `fullName`, `phone`).
+
+**Naming convention, locked for every model from here on:** Prisma fields are `camelCase` and
+**every** field is `@map`ped to `snake_case` in PostgreSQL (`bookedCount` → `booked_count`).
+It is fixed on the first real schema because every later migration — including the hand-written
+SQL ones in Day 6 — inherits the spelling, and renaming afterwards means rewriting all of them.
+TypeScript never sees the snake_case form; raw SQL and psql always do.
+
+**Three more conventions, locked with it:**
+
+- **Ids:** `@default(uuid(7))` on every model, with `@db.Uuid` on the column. Prisma Client generates
+  a time-ordered v7 uuid, so it is unguessable but keeps index locality on the high-write tables
+  (`appointments`, `audit_log`, `notifications`) where random uuid v4 fragments the index. Table names
+  are plural via `@@map` (`Appointment` → `appointments`).
+  - **Client-generated, not `dbgenerated("uuidv7()")`**, even though PostgreSQL 18.3 has a native
+    `uuidv7()`. Prisma's `dbgenerated()` defaults are a documented source of phantom migrations — the
+    string you write and the value the DB returns can disagree, and `migrate dev` then wants a
+    migration on every run ([#24240](https://github.com/prisma/prisma/issues/24240),
+    [#9823](https://github.com/prisma/prisma/issues/9823)). The native function buys nothing here
+    because every insert goes through Prisma; the only hand-written SQL in this plan is DDL, `CHECK`s
+    and guarded `UPDATE`s, none of which inserts a row.
+- **Enums:** the enum *type* is mapped to `snake_case` (`@@map("appointment_status")`) but the
+  *values are stored exactly as written* — uppercase, no per-value `@@map`. §23's hand-written SQL
+  is literally `status IN ('CONFIRMED','ARRIVED')`; lowercasing the stored values would make that
+  SQL wrong on the day it is written.
+- **Column types:** every instant is `@db.Timestamptz(3)`, so "all timestamps are UTC" (§3.2) is a
+  database guarantee rather than a convention that a session timezone could reinterpret. Local
+  calendar/wall-clock values use `@db.Date` and `@db.Time(0)`. Money is `Int` paise (§17) — never
+  `BigInt`, which would break `JSON.stringify` at the API edge in Phase 6, far from the cause.
+- **Referential actions:** `Restrict` everywhere (Prisma's default), never `Cascade` on
+  appointment / payment / history / audit rows. `SetNull` only where a nullable link must survive
+  its parent. Deletion is deactivation/anonymisation, never a row delete (§6.1, §5.1).
+
+**Enum values: transcribe, do not invent (locked).** `plan.md` §24 now carries **one table of every
+enum in the system** — Prisma enum name, `@@map` type name, values, and the section each came from.
+That table is the single source; nothing in this guide restates it, because a second copy is a second
+thing to drift. Read it, write each enum from it, and do not add a value the plan does not have. Four
+traps it exists to prevent, each of which is a real bug rather than a style question:
+
+- `RESCHEDULED` belongs to `AppointmentEventType`, **not** to `AppointmentStatus` (§13, §14), and
+  `AppointmentEventType` has no `CONFIRMED` value — the row is born `CONFIRMED` (§13), so `BOOKED`
+  is that event. §13's timeline prose lists "confirmed", but adding a `CONFIRMED` event would
+  duplicate `BOOKED`.
+- `PENDING` stays declared in `AppointmentStatus` and **nothing may ever write it** (§13). It is kept
+  only for forward compatibility.
+- `PaymentStatus` never gets `SUCCESS` — `PAID` is the only payment success value; `SUCCESS` is
+  `RefundStatus` vocabulary (§17).
+- `AuditLog.action` is a `String` (`SCREAMING_SNAKE`, e.g. `APPOINTMENT_CAPACITY_CHANGE`) and every
+  `reason` field is free text — neither is an enum (§20 gives *examples*, and a closed enum would
+  make every new audited action a migration; §8.4 requires a reason, not a reason code).
+- `NotificationType` is the one open list: one `SCREAMING_SNAKE` value per §18 event, no grouping, no
+  catch-all. Only `REMINDER` is named by the plan, because §23's constraint SQL quotes it.
+
+- `Clinic` (single row, config record). §3.2 puts **every clinic number** in this one record so
+  nothing is a magic constant in code, so it is created here and not extended in Phase 4:
+  `timezone`, `currency`, `defaultConsultationFee`, `bookingHorizonDays` (60), `cancelCutoffMinutes`
+  (60), `holdDurationMinutes` (10), `minLeadMinutes` (0), `reminderLeadMinutes` (120),
+  `maxActiveBookingsPerPatient` (3). The defaults above are the locked §3.2 values, seeded in
+  Day 6. `accessTokenTtlMinutes` is **not** a Clinic column — the `ACCESS_TOKEN_TTL` env var
+  from Day 2 is the single source for it in a single-clinic app, and duplicating it into the DB
+  would give the same setting two places that can disagree.
+- `User` (`role` enum `PATIENT|DOCTOR|STAFF|ADMIN`; `email` **unique and nullable** — null only
+  for a provisional desk patient, §6.4/§16; `passwordHash` **nullable**; `emailVerifiedAt?`;
+  `pendingEmail?`; `isDeactivated`). No OAuth, no `Department`.
+  - `passwordHash` is nullable on purpose (§5.1). The first admin and every doctor/staff account
+    are created **without** a password — the person claims the account through the §6.2 reset
+    email, and no temporary password is ever generated or handed over. `null` therefore *means*
+    "account exists, not claimed yet", and every login path must treat it as **cannot
+    authenticate** rather than comparing it. Patient self-registration writes a real hash at once.
+  - `pendingEmail?` holds an unverified email change (§6.1). The active `email` only changes when
+    the link is opened, so there is never a half-changed identity.
+  - **No `phone` on `User`.** The phone number is patient identity data (§16) and lives on
+    `PatientProfile`, so exactly one copy of it exists and the desk lookup has one key to hit.
+- **Two seed inputs added to `.env.example` and the config schema on this day**, because Day 6's
+  seed cannot invent them: `CLINIC_OWNER_EMAIL` (§5.1 already requires the bootstrap owner email to
+  come from environment configuration, and no day had ever named the variable) and the optional
+  `SEED_PATIENT_PASSWORD` (the two seeded patients are self-registered accounts and need a real
+  hash — see Day 6). Both are seed-only inputs, optional, and never hardcoded in a fixture: a
+  hardcoded address becomes the first admin of whoever runs the seed.
+- `PatientProfile` (1:1 `User`, `fullName`, `phone` **unique and not null**, E.164-normalized by
+  the same helper at registration, at the desk, and on change — §6.1/§16; `isProvisional`;
+  `phoneVerified` — always `false` in MVP, there is no SMS channel, §6.1). Deliberately **no
+  `email`/`emailVerified` here**: the email is on `User` (§6.4 is one global uniqueness rule), so
+  a second copy would be a second source of truth for the same identity.
 - `DoctorProfile` (1:1 `User`, `verificationStatus` enum
   `INVITED|PENDING_VERIFICATION|VERIFIED|REJECTED|ARCHIVED`, `suspendedAt?`,
   `suspendReason?`, qualification/license/experience/clinicAssociation, free-text
-  `specialization`, `consultationFee?`).
-- Migrate + review the generated SQL.
-- **DoD:** migration applies cleanly on a fresh DB.
+  `specialization`, `consultationFee?` — null falls back to the Clinic default, §3.2/§14).
+- `AuthToken` — the **one** generic single-use email token behind §6.2 password reset (link **or**
+  OTP), §6.3 registration verification, the §5.1 invite claim, and the §6.1 email change:
+  `userId`, `purpose` enum (`EMAIL_VERIFICATION|PASSWORD_RESET|ACCOUNT_CLAIM|EMAIL_CHANGE`),
+  `tokenHash` **unique**, `expiresAt`, `consumedAt?`, `createdAt`, `ip?`. Four purposes, one
+  model, because it is literally the same mechanic four times; the token is stored **hashed
+  (SHA-256)** as with refresh tokens, and the low-entropy case (a 6-digit OTP) is covered by
+  §6.3's `auth_attempts` send/try limits, not by the hash.
+- **No `StaffProfile` table.** STAFF is a `User.role` value with no staff-specific attributes in
+  MVP (§4), and "who did what" is answered by the audit row's actor name snapshot (§5.2, §20).
+  A missing table is cheap to add later; attributes scattered into the wrong one are not.
+- Migrate + review the generated SQL — including the `Placeholder` table this drops.
+- **DoD:** `prisma validate` passes; `prisma migrate reset` on a fresh DB applies cleanly; the
+  generated SQL is read line by line (nullability and indexes in particular, since those are the
+  parts Prisma expresses indirectly); `db:generate`, `npm run typecheck` and `npm run lint` stay
+  green, since regenerating the client touches the types in `src/lib/prisma.ts`.
 
 ### Day 5 — Prisma schema: scheduling, appointments, money, audit
-- `Schedule` (weekly template: doctor, working days, `maxPatients`).
-- `Slot` (`doctorId`, `slotDate`, `startTime`/`endTime`, derived `startAt`/`endAt`, `maxPatients`,
-  `bookedCount`, `heldCount`).
-- `Appointment` (`doctorId`, `patientId`, `slotId`, status enum
-  `CONFIRMED|ARRIVED|COMPLETED|NO_SHOW|CANCELLED|REJECTED`, snapshot `doctorName` +
-  `feeAmount`, `bookingTime` for queue rank). No `PENDING` status.
-- `AppointmentHistory` (append-only: from/to, eventType, actor, metadata).
-- `SeatHold`, `Payment`, `Refund` (enums exactly per §17), `Notification`, `AuditLog`,
-  `DoctorHistory`, `DoctorUnavailability`, `AuthAttempt`, `RefreshToken`.
-- **DoD:** every entity from `plan.md` §24 exists with the locked enums.
 
-### Day 6 — The three hand-written constraints + seed
-- The 2 partial unique indexes + the `CHECK (bookedCount + heldCount <= maxPatients)` that
-  Prisma can't express — write them as a reviewed SQL migration after `migrate dev`
-  (§23). This is **not optional**; they are the double-booking guard.
-- `[T]` Assert in a scratch script that the DB rejects a violating write (over-capacity
-  update, second active same-slot booking, second live hold per patient).
-- Seed script: clinic config, one admin, two verified doctors, one staff, two patients,
-  this week's slots. Idempotent (safe to re-run).
-- **DoD:** `dropdb → migrate → seed` reproduces a working DB; all three constraints proven
-  by a failing write.
+Same standard as Day 4: every model written out field by field, because from here the schema is
+the contract and an unstated field is a migration later.
+
+- `Schedule` — the weekly template is **one row per window**, not one blob per doctor:
+  `doctorId`, `weekday` enum `MON|TUE|WED|THU|FRI|SAT|SUN` (spelling is a convention — §24 fixes the
+  field, not the values), `startTime` `@db.Time(0)`,
+  `endTime` `@db.Time(0)`, `maxPatients`, unique `(doctor_id, weekday, start_time)`. No
+  `effectiveFrom` — §11 makes the **generated slots** the record of what was applied, so a
+  template edit touches only dates not yet materialised. No `isActive` — delete the row and audit
+  it with the §8.4 reason. A per-doctor blob cannot express two windows in a day.
+- `Slot` — `doctorId`, `slotDate` `@db.Date` (clinic-local calendar date, §8.1),
+  `startTime`/`endTime` `@db.Time(0)` (clinic-local wall clock), `startAt`/`endAt`
+  `@db.Timestamptz(3)` (the same window as UTC instants, **written once at creation** through the
+  shared helper — §8.1: every time comparison in the system reads these two fields, never
+  server-local time and never the wall-clock columns), `maxPatients`, `bookedCount`, `heldCount`
+  (stored counters, never derived — §8.1), `isDisabled` + `disabledReason?`. Unique
+  `(doctor_id, slot_date, start_time)` so slot generation and bulk week-create are idempotent
+  (§11). The two `CHECK`s and the capacity guard are Day 6, not here.
+- `Appointment` — `doctorId`, `patientId` (both → `User`), `slotId`, `status` enum
+  `CONFIRMED|ARRIVED|COMPLETED|NO_SHOW|CANCELLED|REJECTED|PENDING` — **`PENDING` is declared for
+  forward compatibility and never written** (§13; the §24 enum table is the source for these
+  values), snapshots
+  `doctorName` + `feeAmount` taken at booking time so a later rename or fee change never rewrites
+  what the patient saw or agreed to pay (§14), `bookingTime` (queue position is a **rank** by
+  booking time, not a stored counter — §8.1), and `doctorUnavailabilityId?`. That last column is
+  the §12 clinic-caused marker — refund classification (§17) and the audit both key off it.
+  **No `isClinicCaused` boolean:** it is derived as `doctor_unavailability_id IS NOT NULL`, so the
+  two can never disagree — and a disagreement there is a wrongly-refunded or un-refunded patient.
+- `SeatHold` — `slotId`, `patientId`, `paymentOrderId?`, `appointmentId?`, `createdAt`,
+  `expiresAt` (= `min(now + holdDuration, slot.startAt)`, §8.6), `releasedAt?`, `releaseReason?`
+  (`EXPIRED|ABANDONED|PAYMENT_FAILED|CONVERTED|DELETED_WITH_ACCOUNT`). The only trace of an
+  unfinished online booking; **never** an `Appointment` row (§8.6, §13).
+- `Payment` — `appointmentId?`, `patientId`, `amountPaise` `Int` paise (field `amountPaise` → column
+  `amount_paise`, which is the name the raw `CHECK` must use), `currency`, `status` enum
+  `PENDING|PAID|FAILED|VOIDED` (never `SUCCESS` — §17), `method`, `orderId?` **UNIQUE** (the §17
+  idempotency key, enforced by the database rather than by code), `paymentId?` (kept for
+  reconciliation), `paidAt?` (§17).
+- `Refund` — `paymentId` **UNIQUE** (the §17 unique refund key: a retried refund or a double-clicked
+  approval cannot refund twice), `amountPaise`, `status` enum `PENDING|SUCCESS|FAILED`, `reason`, `actor`,
+  `gatewayRefundId?` (null for a desk hand-back), plus the offline hand-back record for pay-at-clinic
+  money (§17).
+- `AppointmentHistory` / `DoctorHistory` — append-only per-parent timelines (`eventType`, from the
+  §24 enum table — `RESCHEDULED` lives here and is **not** an appointment status; `fromStatus`/`toStatus`, `metadata` `Json`). **No `target` columns:** the parent row is the
+  target. The shared actor block is the same on both, and on `AuditLog`:
+  `actorId` (FK → `User`, `Restrict`) + `actorRole` + `actorName` **snapshot** + `reason` + `ip` +
+  `requestId`, with `before`/`after` as `Json` (jsonb) rather than two text columns, because §20
+  records arbitrary field sets. The name snapshot is a plain column on purpose: it is what makes a
+  later rename or deactivation unable to rewrite attribution (§5.1, §5.2). Append-only tables get
+  `createdAt` only, never `updatedAt`.
+- `AuditLog` — the actor block above plus `action` as a **`String`** in `SCREAMING_SNAKE`
+  (`APPOINTMENT_CAPACITY_CHANGE`), *not* an enum — §20 lists examples, and a closed enum would make
+  every new audited action a migration; `targetType` + `targetId` (a polymorphic target, so one table
+  covers slot/doctor/appointment/refund writes without a nullable FK to a dozen tables), and a
+  mandatory `reason` on the audited actions (§20).
+- `Notification` — one row per send: `type` (one value per §18 event, `REMINDER` the only
+  plan-named one), `recipient`, `appointmentId?`, **`slotId?`**, `status`
+  enum `PENDING|SENT|FAILED`, `sentAt?`, `error?`. `slotId` is required by §18's dedupe key, not
+  decoration — see Day 6.
+- `DoctorUnavailability` — `doctorId`, `startAt`/`endAt` `@db.Timestamptz(3)`, `reason`,
+  `createdById` (→ `User`), audited. The booking transaction re-checks for an overlap inside its
+  own transaction (§11), and the §12 cascade and auto-cancel read it.
+- `AuthAttempt` — `identifierKey` (the §6.3 identity key: normalised email), `ipKey`,
+  `purpose` enum `LOGIN|OTP_SEND|OTP_VERIFY` (§24 table), `succeeded` `Boolean`, `createdAt`, with
+  the lookup indexes §6.3's lockout and escalating windows query against.
+- `RefreshToken` — `userId`, `tokenHash` **unique**, `expiresAt`, `revokedAt?`, `ip?`,
+  `userAgent?`, `createdAt`. No `familyId` (§6.3).
+- `[S]` `server/src/lib/time.ts` — the **single** conversion helper (§3.2): the only place that
+  builds `startAt`/`endAt`, the only place that formats an instant in clinic-local time, and the
+  only place that normalises a phone to E.164. It must **reject a local time that does not exist**
+  (spring-forward gap) and take the **first** occurrence of an ambiguous one (fall-back), so a
+  02:30 window can never silently become 03:30 or an invalid instant. India has no DST, so this
+  will never fire in this clinic — but `APP_TIMEZONE` is configurable, which is exactly how such a
+  bug arrives late and unexplained. Implemented by round-trip verification rather than offset
+  arithmetic: for every offset the zone could be using, subtract it, format the result back into
+  the zone, and keep the candidate that reproduces the requested wall clock — zero matches is a
+  gap, two is ambiguous, one is ordinary. **`timeZone` is a required argument with no default**,
+  deliberately: this codebase has two timezone values (`APP_TIMEZONE` and `Clinic.timezone`) and
+  silently defaulting to one is precisely how a slot gets written in one zone and displayed in
+  another. Note that only a leading `+` or `00` marks an international phone number; a bare
+  `91-…` is treated as national rather than guessed at, because guessing which reading was meant is
+  how one person becomes two rows.
+- **DoD:** every entity from `plan.md` §24 exists with the locked enums; `prisma validate` and
+  `migrate reset` are clean; the generated SQL is reviewed line by line; `db:generate`,
+  `npm run typecheck` and `npm run lint` are green.
+
+### Day 6 — The constraints + seed
+
+**First task of the day is a spike, not a schema edit.** Since Prisma 7.4 the migration engine
+reads index predicates back from the database, so a partial index with no matching declaration in
+`schema.prisma` is treated as drift and `migrate dev` emits `DROP INDEX` for it — on every run,
+even with no schema change ([prisma#29220](https://github.com/prisma/prisma/issues/29220),
+[#29289](https://github.com/prisma/prisma/issues/29289)). The workflow §23 mandates for the
+partial unique indexes is therefore exactly the workflow that silently deletes the double-booking
+guard.
+
+This is **documented Prisma 7 behaviour, not a hypothesis**: `where` is supported on `@unique`,
+`@@unique` and `@@index` behind the `partialIndexes` preview feature, with full PostgreSQL support
+for migration *and* introspection. The syntax the spike uses:
+
+```prisma
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+// `raw()` is required for the IN-list; the object-literal form
+// (`where: { releasedAt: null }`) only expresses equality / IS NULL.
+@@unique([patientId, slotId], where: raw("status IN ('CONFIRMED','ARRIVED')"), map: "appointments_active_booking_per_patient_slot_unique")
+```
+
+So the spike verifies the **predicate round-trip**, which is the real risk:
+
+- Declare the three partial unique indexes with the exact predicates below, keep the `CHECK`s as raw
+  SQL, then run `migrate dev` **three times** and confirm the second and third generate nothing.
+- Then run `prisma db pull` and read what comes back. Introspection returns PostgreSQL's
+  *normalised* form, so a hand-written `raw("status = 'active'")` reappears as
+  `raw("(status = 'active'::text)")`. If the canonical form of our `IN (…)` predicate differs from
+  the string we wrote, the differ will keep proposing a change to an index that is already correct —
+  a no-op migration loop, which is the same guard-removal bug in a different hat. If it round-trips,
+  ship it; if it does not, either write the predicate in PostgreSQL's normalised form or take the
+  `active_marker` fallback.
+- Fallback: a maintained `active_marker` column (NULL when released, a constant when live) plus
+  `@@unique([patientId, activeMarker])` with `NULLS NOT DISTINCT` — PostgreSQL 18.3 has it, it
+  carries no predicate, so Prisma owns the index and can never drop it.
+- Also confirm `CHECK` constraints are neither introspected nor dropped, since Prisma has no
+  `CHECK` support at all.
+
+Then write the constraints — **this is not optional; they are the double-booking guard**, and the
+spelling is **snake_case column names**, because these are raw SQL against the mapped columns:
+
+| Constraint | Table | Mechanism |
+|---|---|---|
+| `UNIQUE (patient_id) WHERE released_at IS NULL` — one live hold per patient | `SeatHold` | per spike |
+| `UNIQUE (patient_id, slot_id) WHERE status IN ('CONFIRMED','ARRIVED')` — one active booking per patient per slot | `Appointment` | per spike |
+| `UNIQUE (appointment_id, slot_id) WHERE type = 'REMINDER'` — a reminder is never sent twice (§18) | `Notification` | per spike |
+| `CHECK (booked_count + held_count <= max_patients)` and `CHECK (max_patients > 0)` | `Slot` | raw SQL |
+| `CHECK (amount_paise > 0)` | `Payment` | raw SQL |
+
+The reminder index is keyed on `(appointment_id, slot_id)` **including the slot** on purpose: after
+a §14 reschedule the appointment's slot changes, so a key of `(type, appointment_id)` alone would
+reject the reminder for the new time — the patient would silently stop being reminded. No other
+notification type is constrained; §18 locks only the reminder.
+
+- `[T]` Assert in a scratch script (`server/scripts/`, run with `tsx` — Vitest does not arrive until
+  Day 35) that the database **rejects** each violating write: an over-capacity update, a second
+  active same-slot booking, a second live hold per patient, a second reminder for the same
+  appointment+slot, and a non-positive payment amount. A passing ORM migration is not evidence that
+  these rules exist.
+- `[T]` Assert the §8.1 derived-instant rule: for every seeded slot,
+  `start_at == toUtc(slot_date, start_time, clinic.timezone)`. Nothing in the database enforces
+  this, and every time comparison in the system depends on it.
+- Seed script at `server/prisma/seed.ts`, wired through `migrations.seed` in `prisma.config.ts`
+  (v7 removed `--skip-seed`, so this config entry **is** the hook). Idempotent — re-runnable
+  without duplicating. Clinic config, one admin, two verified doctors, one staff, two patients,
+  this week's slots.
+- **Seeded credentials, decided (was open, now locked):** the admin, doctors and staff are created
+  with `passwordHash = null` — no dev-only password, no env-gated second door. §5.1's rule is that
+  no one ever hands over a credential, and a "dev password" is just the seeded `admin/admin123` that
+  reaches a real clinic three months later; a second way into an authenticated account is a
+  production risk dressed as a convenience. Log in as them through the §6.2 claim link that Day 7's
+  stub prints, which also means the claim flow is exercised every day instead of being discovered
+  broken at hand-off. The cost is four clicks per fresh `dropdb → seed`, and nothing needs a login
+  before Day 7 anyway. The idempotent seed must never overwrite a claimed `passwordHash` (upsert on
+  the key columns, no field-level update of `passwordHash`).
+- **The two seeded patients are the exception: they get a real bcrypt hash**, because a patient
+  account is a self-registered account that always has a password (§5.1), and a patient row with a
+  null hash would be an account nobody can ever log into. The password comes from
+  `SEED_PATIENT_PASSWORD` in the environment — never hardcoded in the seed, never committed, and
+  `.env.example` carries a placeholder so the failure is "set the var", not "seed threw".
+- **The owner email is an input, not a constant:** §5.1 says the bootstrap reads the clinic owner's
+  email from environment configuration, so Day 4 adds `CLINIC_OWNER_EMAIL` to `.env.example` and the
+  config schema, and the seed creates the admin against it. Keep it out of the fixture as a literal —
+  a hardcoded address becomes the first admin of whoever runs the seed.
+- **DoD:** `dropdb → migrate → seed` reproduces a working DB; every constraint above is proven by a
+  failing write; a second `migrate dev` with no schema change produces **no** migration; the seed
+  logs which mode it ran in (`null hash, claim via reset link` vs `seeded password`), so nobody has
+  to guess why a login failed.
+- §24 also lists a second `SeatHold` index, `UNIQUE (slot_id, patient_id) WHERE released_at IS
+  NULL`; the one-live-hold-per-patient index above already implies it. Settle it during the spike:
+  ship it as belt-and-braces, or drop it as redundant.
 - **Phase 1 complete.**
 
 ---

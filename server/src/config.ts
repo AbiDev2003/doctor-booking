@@ -16,10 +16,29 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL: z
     .string()
     .regex(/^\d+[smhd]$/, "must look like 30s, 15m, 2h or 7d"),
+  // Seed inputs, read by prisma/seed.ts from Day 6. Optional so the app boots
+  // without them — nothing in the request path needs any of them.
+  //
+  // CLINIC_OWNER_NAME joins CLINIC_OWNER_EMAIL because `User.fullName` is required
+  // and the seeded owner is a User (§24). §5.1 reads these from the environment
+  // rather than a fixture literal, so the first admin is never a hard-coded name.
+  CLINIC_OWNER_EMAIL: z.email().optional(),
+  CLINIC_OWNER_NAME: z.string().min(1, "required when CLINIC_OWNER_EMAIL is set — User.fullName is not null").optional(),
+  SEED_PATIENT_PASSWORD: optionalSecret,
   RESEND_API_KEY: optionalSecret,
   RAZORPAY_KEY_ID: optionalSecret,
   RAZORPAY_KEY_SECRET: optionalSecret,
-});
+})
+  // The owner is a single row, so HALF of it is not a valid configuration, in
+  // either direction: an email with no name fails at the `users.full_name` NOT
+  // NULL constraint in Day 6, and a name with no email has nothing to attach the
+  // account to. Both are much later and much less obvious places to learn a
+  // value is missing, and the asymmetry that matters is that both halves are
+  // optional TOGETHER — nothing in the request path needs either one.
+  .refine((env) => (env.CLINIC_OWNER_EMAIL === undefined) === (env.CLINIC_OWNER_NAME === undefined), {
+    path: ["CLINIC_OWNER_NAME"],
+    message: "must be set together with CLINIC_OWNER_EMAIL — set both, or neither",
+  });
 
 const parsed = envSchema.safeParse(process.env);
 
@@ -37,4 +56,11 @@ if (!parsed.success) {
 
 export const config = parsed.data;
 
-export type Config = typeof config;
+// No caller today. This one is PRE-EXISTING Day 4 rather than something Day 5
+// added, and unlike the two commented-out exports in src/lib/time.ts it is not
+// redundant — a type alias for the parsed config shape is a reasonable thing for
+// a config module to export, and a later phase may well annotate against it.
+// Commented out only because it is currently unreferenced; safe to restore
+// without thinking, and a type export cannot affect runtime either way.
+//
+// export type Config = typeof config;

@@ -1,23 +1,1091 @@
-// Prisma schema — Day 3 placeholder.
+// Prisma schema — Phase 1, Day 4: identity + clinic.
+
+// Conventions, applied to every model in this file and every model after it (plan.md §23, §24):
 //
-// The Placeholder model exists only so `prisma migrate dev --name init` has
-// something to migrate and `prisma studio` has something to show. Day 4
-// replaces this file with the real domain schema (Clinic, User,
-// PatientProfile, DoctorProfile) and drops this model. Do not build on it.
+//   * Prisma field names are camelCase; every column is @map'd to snake_case.
+//     TypeScript never sees the snake_case form, raw SQL and psql always do.
+//   * Table names are plural via @@map.
+//   * Ids are `@default(uuid(7))` with `@db.Uuid` — time-ordered, so index
+//     locality holds on the high-write tables, and unguessable, so nothing is
+//     sequential. Client-generated, not dbgenerated("uuidv7()"): Prisma's
+//     dbgenerated defaults are a documented source of phantom migrations
+//     (prisma#24240, prisma#9823), and PostgreSQL's native uuidv7() buys
+//     nothing because every insert goes through Prisma.
+//   * Enum *types* are mapped to snake_case; enum *values* are stored exactly
+//     as written (uppercase) because Day 6's hand-written SQL compares them
+//     that way. Values come from the single enum table in plan.md §24 — do not
+//     add a value the plan does not have.
+//   * Every instant is @db.Timestamptz(3); clinic-local calendar dates and
+//     wall-clock times are @db.Date and @db.Time(0). Money is Int paise.
+//   * Referential actions are Restrict, never Cascade. Deletion in this system
+//     is deactivation and anonymisation, never a row delete (§6.1, §5.1).
 //
-// The connection string deliberately does NOT live here. Prisma 7 deprecated
-// `url` in the datasource block and moved it to prisma.config.ts, so the
-// schema stays free of environment concerns.
+// The connection string does NOT live here: Prisma 7 deprecated `url` in the datasource block and moved it to prisma.config.ts, so this file stays free of environment concerns.
 
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+
+  // Unlocks `where:` on @@unique/@@index — the only way to express the three
+  // partial unique indexes that ARE the double-booking guard (§8.6, §15, §18).
+  // Prisma has no CHECK support at all, so the capacity and money CHECKs in
+  // Step 2 are hand-written SQL regardless of this flag.
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
   provider = "postgresql"
 }
 
-model Placeholder {
-  id String @id @default(uuid())
+// ---------------------------------------------------------------------------
+// Enums (plan.md §24 enum table — transcribed, not inferred)
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  PATIENT
+  DOCTOR
+  STAFF
+  ADMIN
+
+  @@map("user_role")
+}
+
+enum DoctorVerificationStatus {
+  INVITED
+  PENDING_VERIFICATION
+  VERIFIED
+  REJECTED
+  ARCHIVED
+
+  @@map("doctor_verification_status")
+}
+
+enum AuthTokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  ACCOUNT_CLAIM
+  EMAIL_CHANGE
+
+  @@map("auth_token_purpose")
+}
+
+enum AuthAttemptPurpose {
+  LOGIN
+  OTP_SEND
+  OTP_VERIFY
+
+  @@map("auth_attempt_purpose")
+}
+
+enum Weekday {
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+  SUN
+
+  @@map("weekday")
+}
+
+enum AppointmentStatus {
+  CONFIRMED
+  ARRIVED
+  COMPLETED
+  CANCELLED
+  REJECTED
+  NO_SHOW
+
+  // Declared for forward compatibility and NEVER written (plan.md §13). A PENDING
+  // appointment would look active to the §15 same-slot index and the per-patient
+  // cap while not being one, so an abandoned online booking would permanently burn
+  // one of the patient's 3 booking slots. An attempt between "paying" and
+  // "verified" is a SeatHold, never an Appointment row (§8.6).
+  PENDING
+
+  @@map("appointment_status")
+}
+
+enum AppointmentEventType {
+  BOOKED
+  PAID
+  RESCHEDULED
+  CANCELLED
+  REJECTED
+  ARRIVED
+  COMPLETED
+  NO_SHOW
+
+  // RESCHEDULED lives HERE and nowhere else (plan.md §13, §14): a reschedule moves
+  // the same appointment row to a new slot, so the row is still CONFIRMED
+  // afterwards. As a status it would describe a row with no slot, which nothing
+  // else in the plan can handle.
+  //
+  // There is deliberately no CONFIRMED event: the row is born CONFIRMED, so
+  // BOOKED is that event (§13).
+  @@map("appointment_event_type")
+}
+
+enum SeatHoldReleaseReason {
+  EXPIRED
+  ABANDONED
+  PAYMENT_FAILED
+  CONVERTED
+  DELETED_WITH_ACCOUNT
+
+  @@map("seat_hold_release_reason")
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  VOIDED
+
+  // Never SUCCESS. PAID is the only payment success value; SUCCESS is refund
+  // vocabulary and belongs to RefundStatus alone (plan.md §17).
+  @@map("payment_status")
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+
+  // CARD is collection-only: a desk hand-back refund never records it (§17).
+  @@map("payment_method")
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCESS
+  FAILED
+
+  @@map("refund_status")
+}
+
+// Not in the original §24 table: added because `Refund`'s uniqueness key needs a
+// discriminator, and a discriminator that participates in a UNIQUE constraint must
+// be a closed set. A free-text kind would let two code paths write "CANCELLATION"
+// and "cancellation" and silently defeat the double-refund guard.
+enum RefundKind {
+  // §14: the fee difference when a patient moves to a cheaper slot/doctor,
+  // computed against the booking-time feeAmount snapshot. This refund and a
+  // later cancellation refund are two legitimate refunds against one payment.
+  RESCHEDULE_DELTA
+  // §17: patient cancelled, in or out of the refund window.
+  CANCELLATION
+  // §12 / §5.2: doctor unavailability or offboarding cascade.
+  CLINIC_CAUSED
+  // §8.6: money arrived after the hold expired.
+  EXPIRED_HOLD
+  // §17 step 5: payment verified but the hold conversion failed, so no seat was
+  // consumed. The single handler for every step-5 rejection cause.
+  CONVERSION_FAILED
+  // §17: pay-at-clinic hand-back. No gateway call; gatewayRefundId stays null.
+  DESK_HAND_BACK
+
+  @@map("refund_kind")
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+
+  @@map("notification_status")
+}
+
+// The one open list in the system: one value per plan.md §18 event, none grouped
+// and no catch-all bucket. REMINDER is the only value the plan names literally,
+// because Day 6's partial unique index quotes it:
+//
+//   UNIQUE (appointment_id, slot_id) WHERE type = 'REMINDER'
+//
+// A typo here is a silent bug, not an error — the index simply matches nothing and
+// the once-only reminder guard does not exist. Read the generated CREATE TYPE back
+// out of the migration and diff it against §18 before shipping.
+enum NotificationType {
+  // Auth & account (§6)
+  ACCOUNT_EMAIL_VERIFICATION
+  ACCOUNT_INVITATION
+  ACCOUNT_EMAIL_CHANGE_VERIFICATION
+  ACCOUNT_PASSWORD_RESET_REQUESTED
+  ACCOUNT_PASSWORD_RESET_COMPLETED
+  ACCOUNT_ALL_SESSIONS_REVOKED
+  ACCOUNT_DEACTIVATED
+  // Doctor management (§5)
+  DOCTOR_VERIFIED
+  DOCTOR_SUSPENDED_OR_ARCHIVED
+  DOCTOR_STAFF_ACTION
+  // Appointments (§8, §12–§14)
+  APPOINTMENT_BOOKED
+  APPOINTMENT_REJECTED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_RESCHEDULED
+  DOCTOR_UNAVAILABLE
+  APPOINTMENT_AUTO_CANCELLED
+  // Payments & refunds (§17)
+  PAYMENT_SUCCESSFUL
+  PAYMENT_FAILED
+  PAYMENT_LATE_REFUND
+  REFUND_COMPLETED
+  REFUND_REQUESTED
+  REFUND_REJECTED
+  // Reminders (§18)
+  REMINDER
+
+  @@map("notification_type")
+}
+
+// ---------------------------------------------------------------------------
+// Clinic — the single config record (plan.md §3.2)
+// ---------------------------------------------------------------------------
+
+model Clinic {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  name     String @map("name")
+  timezone String @map("timezone") // IANA zone, e.g. Asia/Kolkata — display only
+  currency String @default("INR") @map("currency")
+
+  // Paise. Never a float, never BigInt — BigInt breaks JSON.stringify at the API edge, which surfaces in Phase 6 far from the cause.
+  defaultConsultationFee Int @map("default_consultation_fee")
+
+  // Every locked §3.2 default lives here, so no value is a magic constant in code. Seeded on Day 6.
+  bookingHorizonDays          Int @default(60) @map("booking_horizon_days")
+  cancelCutoffMinutes         Int @default(60) @map("cancel_cutoff_minutes")
+  holdDurationMinutes         Int @default(10) @map("hold_duration_minutes")
+  minLeadMinutes              Int @default(0) @map("min_lead_minutes")
+  reminderLeadMinutes         Int @default(120) @map("reminder_lead_minutes")
+  maxActiveBookingsPerPatient Int @default(3) @map("max_active_bookings_per_patient")
+
+  // accessTokenTtlMinutes is deliberately NOT a column: ACCESS_TOKEN_TTL is the single source. Duplicating one setting into the database gives it two sources that can disagree.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("clinics")
+}
+
+// ---------------------------------------------------------------------------
+// User — the one account table for all four roles (plan.md §4, §5.1, §6)
+// ---------------------------------------------------------------------------
+
+model User {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  role UserRole @map("role")
+
+  // The one name every role has, and the reason it lives here rather than on a
+  // profile: STAFF has no profile table by design (§24), so a staff member would
+  // have had nowhere to store the name §5.1 collects and §5.2 snapshots into every
+  // audit row. `User` is the row all four roles share. PatientProfile.fullName
+  // was removed for this reason — two copies of one name eventually disagree, which
+  // is the same failure Day 4's single-email rule exists to prevent.
+  fullName String @map("full_name")
+
+  // Unique and nullable on purpose: PostgreSQL's unique index ignores NULLs, so any number of provisional desk patients can have no email (§16) while every real address stays globally unique across every role (§6.4). Uniqueness is enforced here rather than only in code so two entry points cannot both decide an address is free.
+  email String? @unique @map("email")
+
+  // Nullable because §5.1 forbids a temporary password. null MEANS "provisioned, not yet claimed" — the §6.2 reset link is the only way in — so every login path must treat it as cannot-authenticate rather than comparing it.
+  // Patient self-registration writes a real hash at once.
+  passwordHash String? @map("password_hash")
+
+  // The one email-verification flag, shared by every role (§6.3). There is no per-profile emailVerified: that would be a second source truth.
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(3)
+
+  // An unverified email change waits here until the link is opened, so an identity is never half-changed (§6.1).
+  pendingEmail String? @map("pending_email")
+
+  isDeactivated Boolean @default(false) @map("is_deactivated")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // There is deliberately no `phone` on User: the phone number is patient identity data and lives on PatientProfile, so exactly one copy exists and the desk lookup has a single key to hit (§16).
+
+  // Every relation to `User` in the schema. Where a model has two (a doctor and a patient are both users; an actor and a doctor are both users) the name is mandatory — Prisma cannot infer which is which. The name never reaches PostgreSQL.
+  patientProfile        PatientProfile?
+  doctorProfile         DoctorProfile?
+  authTokens            AuthToken[]
+  schedules             Schedule[]
+  slots                 Slot[]
+  doctorAppointments    Appointment[]          @relation("DoctorAppointments")
+  patientAppointments   Appointment[]          @relation("PatientAppointments")
+  seatHolds             SeatHold[]
+  payments              Payment[]
+  collectedPayments     Payment[]              @relation("PaymentCollector")
+  refundActions         Refund[]               @relation("RefundActor")
+  appointmentHistory    AppointmentHistory[]
+  doctorSubjects        DoctorHistory[]        @relation("DoctorHistoryDoctor")
+  doctorHistoryActions  DoctorHistory[]        @relation("DoctorHistoryActor")
+  auditLogs             AuditLog[]
+  unavailabilities      DoctorUnavailability[] @relation("DoctorUnavailability")
+  unavailabilityCreated DoctorUnavailability[] @relation("UnavailabilityCreator")
+  refreshTokens         RefreshToken[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// PatientProfile — 1:1 with User (plan.md §6.1, §16)
+// ---------------------------------------------------------------------------
+
+model PatientProfile {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  // @unique is what makes this 1:1 rather than 1:many.
+  userId String @unique @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  // Deliberately no `fullName` here: the name lives on User, because STAFF has no profile table and §5.1 still needs somewhere to put a staff member's name. Two copies of one name would eventually disagree.
+  //
+  // Deliberately no `email`/`emailVerified` either. The email is on User and §6.4's uniqueness rule is global, so a second copy would be a second source of truth for the same identity.
+
+  // The desk's identity key: unique, non-null, E.164 — normalised by the single helper at registration, at the desk and on change.
+  phone String @unique @map("phone")
+
+  // Always false in MVP — there is no SMS channel to verify with (§6.1).
+  phoneVerified Boolean @default(false) @map("phone_verified")
+
+  // A desk-created walk-in record: usable for booking without a login (§16).
+  isProvisional Boolean @default(false) @map("is_provisional")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("patient_profiles")
+}
+
+// ---------------------------------------------------------------------------
+// DoctorProfile — 1:1 with User (plan.md §5, §5.2)
+// ---------------------------------------------------------------------------
+
+model DoctorProfile {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @unique @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  // One lifecycle enum (§5). Suspension is deliberately NOT an enum value: it is these two orthogonal nullable columns, so un-suspending returns the doctor to whatever lifecycle value they already held instead of destroying it.
+  verificationStatus DoctorVerificationStatus @default(INVITED) @map("verification_status")
+  suspendedAt        DateTime?                @map("suspended_at") @db.Timestamptz(3)
+  suspendReason      String?                  @map("suspend_reason")
+
+  // Free text (§30), and the verification-impacting set: editing one of these resets verification to PENDING_VERIFICATION without clearing suspendedAt
+  // (§5.2). Specialization is free text on purpose — no taxonomy is imposed on the clinic.
+  qualification     String? @map("qualification")
+  licenseNumber     String? @map("license_number")
+  experience        String? @map("experience")
+  clinicAssociation String? @map("clinic_association")
+  specialization    String? @map("specialization")
+
+  // Paise. null falls back to the Clinic default; the §14 reschedule price delta is computed against this, so it is required from day one even though the field is optional.
+  consultationFee Int? @map("consultation_fee")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("doctor_profiles")
+}
+
+// ---------------------------------------------------------------------------
+// AuthToken — the ONE generic single-use email token (plan.md §6.1, §6.2, §6.3, §5.1). Four flows, one mechanic: password reset (link or OTP), registration verification, the invite claim, and the email change. Modelled now rather than in Phase 2 because from here the schema is the contract; discovering the missing table in Phase 2 would mean a migration for something everything already depends on.
+// ---------------------------------------------------------------------------
+
+model AuthToken {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  purpose AuthTokenPurpose @map("purpose")
+
+  // SHA-256 hex of the token, exactly as refresh tokens are stored — a leaked database must not hand out live reset links. The low-entropy case (a 6-digit OTP) is covered by §6.3's auth_attempts send/try limits, not by the hash.
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+
+  ip String? @map("ip") @db.Inet
+
+  // No updatedAt: a token is consumed once and then never edited.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // Backs "invalidate everything outstanding for this user and purpose", and the latest-token lookup on resend.
+  @@index([userId, purpose], map: "auth_tokens_user_id_purpose_idx")
+  @@map("auth_tokens")
+}
+
+// ===========================================================================
+// DAY 5 — scheduling, appointments, money, audit
+//
+// Read plan.md §8–§20 before changing anything below. Almost every column here
+// encodes a rule stated in those sections, and a column copied without its rule
+// is the one that gets "cleaned up" later.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Schedule — the doctor's weekly template, ONE ROW PER WINDOW (plan.md §8.1, §11, §24)
+//
+// A single blob per doctor cannot express two windows in a day, and §11's rule
+// that a template edit affects only ungenerated dates needs per-window
+// granularity. So 07:00–09:00 and 18:00–20:00 on Monday are two rows.
+// ---------------------------------------------------------------------------
+
+model Schedule {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  doctorId String @map("doctor_id") @db.Uuid
+  doctor   User   @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+
+  weekday   Weekday  @map("weekday")
+  startTime DateTime @map("start_time") @db.Time(0)
+  endTime   DateTime @map("end_time") @db.Time(0)
+  maxPatients Int    @map("max_patients")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // No effectiveFrom: the generated Slots are the record of what was applied, so
+  // effective-dating would create a second source of truth for "what was in force".
+  // No isActive: delete the row and audit it with the §8.4 reason. A boolean
+  // duplicating "does this row exist" is the same problem in a smaller box.
+
+  // Makes week-setup idempotent, and stops two identical windows being entered.
+  @@unique([doctorId, weekday, startTime], map: "schedules_doctor_id_weekday_start_time_key")
+  @@map("schedules")
+}
+
+// ---------------------------------------------------------------------------
+// Slot — one doctor session on one clinic-local date (plan.md §8.1, §8.2, §10, §11)
+// ---------------------------------------------------------------------------
+
+model Slot {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  doctorId String @map("doctor_id") @db.Uuid
+  doctor   User   @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+
+  // The clinic-local wall clock, as written by staff.
+  slotDate  DateTime @map("slot_date") @db.Date
+  startTime DateTime @map("start_time") @db.Time(0)
+  endTime   DateTime @map("end_time") @db.Time(0)
+
+  // The same window as UTC instants, written ONCE at creation through the single
+  // helper in src/lib/time.ts and never recomputed. EVERY time comparison in the
+  // system reads these two fields — is the slot running, has endAt passed, is a
+  // NO_SHOW allowed yet, has a hold expired. Comparing startTime to now() would
+  // give an answer that depends on the server's timezone, which is the class of
+  // bug this pair exists to make impossible (§3.2).
+  startAt DateTime @map("start_at") @db.Timestamptz(3)
+  endAt   DateTime @map("end_at") @db.Timestamptz(3)
+
+  // Stored counters, never derived (§8.1). They exist so an availability listing
+  // is one indexed read instead of an aggregate per slot.
+  //
+  // bookedCount counts every seat consumed by a seat-holding status: CONFIRMED,
+  // ARRIVED, COMPLETED, NO_SHOW. The last two do NOT release the seat (§13.1), so
+  // a no-show is a wasted seat, not a free one. It never includes holds.
+  // heldCount counts live SeatHold rows (releasedAt IS NULL), moved by the same
+  // atomic guard (§15).
+  //
+  // Neither is authoritative on its own: an expired-but-unreleased hold still
+  // counts, so heldCount is a LOWER bound on the true free-seat count, never an
+  // upper one. Every decision that must not be stale re-counts the live rows
+  // inside its own transaction (§8.6).
+  maxPatients Int @map("max_patients")
+  bookedCount Int @default(0) @map("booked_count")
+  heldCount   Int @default(0) @map("held_count")
+
+  // §8.4: disabling is blocked while the slot still holds a seat or a live hold,
+  // and re-enabling is an explicit audited action with a reason.
+  isDisabled     Boolean @default(false) @map("is_disabled")
+  disabledReason String? @map("disabled_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  appointments  Appointment[]
+  seatHolds     SeatHold[]
+  notifications Notification[]
+
+  // Makes slot generation idempotent (§11): running the generator twice must not
+  // double the week. It is also the §8.4 guard's lookup key.
+  @@unique([doctorId, slotDate, startTime], map: "slots_doctor_id_slot_date_start_time_key")
+  // The §12 cascade finds a doctor's slots whose window overlaps a disruption,
+  // by instant rather than by wall clock.
+  @@index([doctorId, startAt], map: "slots_doctor_id_start_at_idx")
+  @@map("slots")
+
+  // The two capacity CHECKs are Day 6 raw SQL, not expressible in Prisma:
+  //   CHECK (booked_count + held_count <= max_patients)
+  //   CHECK (max_patients > 0)
+}
+
+// ---------------------------------------------------------------------------
+// DoctorUnavailability — an absolute-time disruption window (plan.md §12, §11)
+// ---------------------------------------------------------------------------
+
+model DoctorUnavailability {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  doctorId String @map("doctor_id") @db.Uuid
+  doctor   User   @relation("DoctorUnavailability", fields: [doctorId], references: [id], onDelete: Restrict)
+
+  createdById String @map("created_by_id") @db.Uuid
+  createdBy   User   @relation("UnavailabilityCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  // Instants, not a wall clock: a disruption is an absolute period, and the
+  // affected-appointment search overlaps these two fields.
+  startAt DateTime @map("start_at") @db.Timestamptz(3)
+  endAt   DateTime @map("end_at") @db.Timestamptz(3)
+
+  // Free text, never an enum (§20): §8.4 requires a reason, not a reason code.
+  reason String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  appointments Appointment[]
+
+  // The booking transaction re-checks for an overlap inside its OWN transaction
+  // (§11). Without that, a booking that read the slot as enabled microseconds
+  // before a suspend committed could still insert a CONFIRMED appointment after
+  // the §12 cascade had run, stranding one patient with no notification and no
+  // refund path (§5.2).
+  @@index([doctorId, startAt], map: "doctor_unavailabilities_doctor_id_start_at_idx")
+  @@map("doctor_unavailabilities")
+}
+
+// ---------------------------------------------------------------------------
+// Appointment (plan.md §8.1, §13, §13.1, §14, §15, §17)
+//
+// Born CONFIRMED, always. Pay-at-clinic creates it immediately; an online
+// booking creates it at payment verification. There is no such thing as a
+// pending appointment — see AppointmentStatus.PENDING.
+// ---------------------------------------------------------------------------
+
+model Appointment {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  doctorId String @map("doctor_id") @db.Uuid
+  doctor   User   @relation("DoctorAppointments", fields: [doctorId], references: [id], onDelete: Restrict)
+
+  patientId String @map("patient_id") @db.Uuid
+  patient   User   @relation("PatientAppointments", fields: [patientId], references: [id], onDelete: Restrict)
+
+  slotId String @map("slot_id") @db.Uuid
+  slot   Slot   @relation(fields: [slotId], references: [id], onDelete: Restrict)
+
+  status AppointmentStatus @default(CONFIRMED)
+
+  // Booking-time snapshots. A later rename or fee change must never rewrite what
+  // the patient saw or agreed to pay — and §14's reschedule delta is computed
+  // against feeAmount, not against the doctor's current fee, so raising a fee
+  // cannot retroactively change what an existing patient supposedly owes.
+  doctorName String @map("doctor_name")
+  feeAmount  Int    @map("fee_amount")
+
+  // Queue position is a RANK derived from this, never a stored counter (§8.1).
+  // So when a middle booking cancels the rest simply close up: no renumbering
+  // logic and no uniqueness constraint on a position column. Never
+  // `SELECT count + 1` at booking time — that races, and the correct value falls
+  // out of the booking time already recorded in the consuming transaction.
+  bookingTime DateTime @default(now()) @map("booking_time") @db.Timestamptz(3)
+
+  // The clinic-caused marker (§12). There is deliberately NO isClinicCaused
+  // boolean: that fact is derived from this column being non-null, and two
+  // representations of one fact eventually disagree — and a disagreement there is
+  // a wrongly-refunded or un-refunded patient (§17).
+  doctorUnavailabilityId String?                @map("doctor_unavailability_id") @db.Uuid
+  doctorUnavailability   DoctorUnavailability? @relation(fields: [doctorUnavailabilityId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  history       AppointmentHistory[]
+  seatHolds     SeatHold[]
+  payments      Payment[]
+  notifications Notification[]
+
+  // The §13.1 live queue: one slot's appointments in booking order.
+  @@index([slotId, bookingTime], map: "appointments_slot_id_booking_time_idx")
+  // §17 refund classification and the §12 audit both key off this column.
+  @@index([doctorUnavailabilityId], map: "appointments_doctor_unavailability_id_idx")
+
+  // THE DOUBLE-BOOKING GUARD (§15), and the single most important constraint in
+  // this schema: one patient may hold at most one seat per slot, and only while
+  // the appointment is in a seat-holding status.
+  //
+  // `raw()` is required for the status list — the object-literal form
+  // (`where: { status: { in: [...] } }`) only expresses equality / IS NULL, not
+  // the list of statuses that makes this index partial.
+  //
+  // The predicate is written in PostgreSQL's NORMALISED form, deliberately, and
+  // that is not a style preference. PostgreSQL rewrites `status IN ('CONFIRMED',
+  // 'ARRIVED')` into `status = ANY (ARRAY['CONFIRMED'::appointment_status,
+  // 'ARRIVED'::appointment_status])`, and Prisma compares the string it reads
+  // back from introspection against this one literally. Written the readable
+  // way, the two never match and `migrate dev` proposes DROP + CREATE on every
+  // single run — a no-op migration loop that would silently delete the
+  // double-booking guard. Day 6's spike caught exactly this.
+  //
+  // The surrounding parentheses are part of that: `db pull` returns the
+  // predicate wrapped in its own pair, so this string is written to be
+  // byte-identical to the introspection output rather than merely equivalent.
+  @@unique([patientId, slotId], where: raw("(status = ANY (ARRAY['CONFIRMED'::appointment_status, 'ARRIVED'::appointment_status]))"), map: "appointments_active_booking_per_patient_slot_unique")
+  @@map("appointments")
+
+  // There is deliberately no `slotStartAt`/`slotEndAt` copy. The appointment reads
+  // its time from the slot, and §8.4 forbids moving a slot that holds a seat, so
+  // a second copy could only ever disagree.
+}
+
+// ---------------------------------------------------------------------------
+// SeatHold — the ONLY trace of an unfinished online booking (plan.md §8.6, §13, §17)
+//
+// A hold is a real row and never an Appointment row. Between "patient starts
+// paying" and "payment verified" no appointment exists, so an attempt that is
+// abandoned or expires leaves nothing behind to correct.
+// ---------------------------------------------------------------------------
+
+model SeatHold {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  slotId String @map("slot_id") @db.Uuid
+  slot   Slot   @relation(fields: [slotId], references: [id], onDelete: Restrict)
+
+  patientId String @map("patient_id") @db.Uuid
+  patient   User   @relation(fields: [patientId], references: [id], onDelete: Restrict)
+
+  // Null until the hold converts into a booking. Nullable is the point: a live
+  // hold has no appointment.
+  appointmentId String?      @map("appointment_id") @db.Uuid
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  // No foreign key: a Razorpay order is not a row in this database. A polymorphic
+  // reference cannot carry a FK, and pretending otherwise would produce a
+  // constraint against a table that does not exist.
+  paymentOrderId String? @map("payment_order_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // Stored as min(now + holdDuration, slot.startAt) (§8.6), so "a hold never
+  // extends into a running slot" needs no separate rule at release time.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  // Release is a STATE TRANSITION, never a deletion, so a freed seat stays
+  // provable. A seat is free exactly when
+  //   releasedAt IS NULL AND expiresAt > now()
+  // which is a property of the row itself.
+  releasedAt    DateTime?              @map("released_at") @db.Timestamptz(3)
+  releaseReason SeatHoldReleaseReason? @map("release_reason")
+
+  // No updatedAt: a hold is released once and then never edited.
+
+  // THE §8.6 ONE-HOLD RULE. A patient may hold at most one seat across the WHOLE
+  // clinic at a time, so a second concurrent payment attempt on another slot
+  // cannot quietly reserve a second seat while the first is still in flight.
+  //
+  // `released_at IS NULL` is what makes it partial: released holds are ordinary
+  // history and must not constrain anything, so a patient who books, cancels and
+  // rebooks is not blocked by their own earlier hold.
+  @@unique([patientId], where: raw("(released_at IS NULL)"), map: "seat_holds_one_live_hold_per_patient_unique")
+
+  // Shipped alongside the index above, which is where the spike of Day 6 settled
+  // the §24 open question. Correctness-wise this one IS implied — a patient has
+  // at most one live hold in total, so a duplicate (slot_id, patient_id) pair
+  // would need two live holds, which the index above already forbids.
+  //
+  // It earns its place on COST, not safety. §8.6 requires every path that must
+  // not act on a stale heldCount to re-count live rows inside its own
+  // transaction, and that re-count is `WHERE slot_id = ? AND released_at IS
+  // NULL`. The index above leads with patient_id, so it cannot serve a slot_id
+  // filter at all — this one can, and without it that re-count is a sequential
+  // scan of seat_holds on the hottest write path in the booking flow.
+  @@unique([slotId, patientId], where: raw("(released_at IS NULL)"), map: "seat_holds_one_live_hold_per_slot_patient_unique")
+
+  // Correctness never depends on either index anyway: every path that consumes a
+  // hold re-checks the predicate inside its own transaction and re-counts live
+  // rows rather than trusting heldCount (§8.6). These make the violation
+  // impossible rather than merely unlikely.
+  @@map("seat_holds")
+}
+
+// ---------------------------------------------------------------------------
+// Payment — the single money record for BOTH channels (plan.md §17)
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  // Null for a hold's order: the order is created before any appointment exists.
+  // The patient link is not nullable — every payment belongs to somebody.
+  appointmentId String?      @map("appointment_id") @db.Uuid
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  patientId String @map("patient_id") @db.Uuid
+  patient   User   @relation(fields: [patientId], references: [id], onDelete: Restrict)
+
+  // Int paise. Never a float, never BigInt — BigInt breaks JSON.stringify at the
+  // API edge, which surfaces in Phase 6 far from the cause. The COLUMN is
+  // amount_paise because that is the name Day 6's hand-written
+  // CHECK (amount_paise > 0) refers to.
+  amountPaise Int    @map("amount_paise")
+  currency    String @default("INR")
+
+  status PaymentStatus @default(PENDING)
+
+  // NULLABLE, and that is not an oversight. A hold's order is created before the
+  // patient reaches the checkout, so no method has been chosen yet. Required, the
+  // only options are a placeholder or a lie — and a placeholder later read as CASH
+  // is a reconciliation bug on the money table. CARD is collection-only: a desk
+  // hand-back refund never records it (§17).
+  method PaymentMethod?
+
+  // The §17 idempotency key, enforced by the DATABASE rather than by code, so
+  // retried webhooks, client retries, double-clicks and refresh resubmits all
+  // converge to one processed event. Nullable because a pay-at-clinic payment has
+  // no gateway order — and a unique index ignores NULLs, which is exactly right.
+  orderId   String? @unique @map("order_id")
+  paymentId String? @map("payment_id")
+
+  paidAt DateTime? @map("paid_at") @db.Timestamptz(3)
+
+  // Null for an online payment: the gateway is the counterparty and no human
+  // collected anything. Non-null only when STAFF marks a pay-at-clinic payment
+  // PAID at the desk — §17 requires recording amount, method, actor and
+  // timestamp, and cash and UPI are on the books, not off them.
+  collectedById String?   @map("collected_by_id") @db.Uuid
+  collectedBy   User?     @relation("PaymentCollector", fields: [collectedById], references: [id], onDelete: Restrict)
+  collectedAt   DateTime? @map("collected_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  refunds Refund[]
+
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Refund — a first-class record for gateway AND offline hand-backs (plan.md §17)
+// ---------------------------------------------------------------------------
+
+model Refund {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  paymentId String  @map("payment_id") @db.Uuid
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  // The uniqueness discriminator, and the reason this is not a bare
+  // UNIQUE (payment_id): a patient who reschedules to a cheaper slot is refunded
+  // the difference (§14) and may then cancel before the cutoff and be refunded in
+  // full (§17) — two legitimate refunds against one payment. §17 only ever asked
+  // for RETRY idempotency, so scoping the key by kind keeps a double-clicked
+  // approval from double-refunding (a retry updates the existing row) while
+  // permitting the two that must both exist.
+  kind RefundKind
+
+  amountPaise Int          @map("amount_paise")
+  status      RefundStatus @default(PENDING)
+
+  // Free text (§20). The refund POLICY is the RefundKind enum; this is the human
+  // explanation attached to the instance.
+  reason String
+
+  // The hand-back method for a pay-at-clinic refund; null for a gateway refund.
+  method PaymentMethod?
+
+  // The same attribution block as the history and audit tables, for the same
+  // reason: a real hand-back of money must survive the staff member being
+  // deactivated. Null actorId/actorRole for a refund the backend raised itself
+  // (§17 case 1, executed with no human actor).
+  actorId   String?   @map("actor_id") @db.Uuid
+  actor     User?     @relation("RefundActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorRole UserRole? @map("actor_role")
+  actorName String    @map("actor_name")
+
+  // Null for a desk hand-back, and the null is meaningful rather than unfinished:
+  // there was no gateway call because a human physically returned the money.
+  gatewayRefundId String? @map("gateway_refund_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // The staff dashboard's pending desk hand-backs, plus the admin retry queue.
+  @@index([status, kind], map: "refunds_status_kind_idx")
+  @@unique([paymentId, kind], map: "refunds_payment_id_kind_key")
+  @@map("refunds")
+}
+
+// ---------------------------------------------------------------------------
+// AppointmentHistory — append-only per-appointment timeline (plan.md §13, §14, §20)
+// ---------------------------------------------------------------------------
+
+model AppointmentHistory {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  appointmentId String      @map("appointment_id") @db.Uuid
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  eventType AppointmentEventType @map("event_type")
+
+  // Both nullable because BOOKED is the creating event — there is no `from`.
+  fromStatus AppointmentStatus? @map("from_status")
+  toStatus   AppointmentStatus? @map("to_status")
+
+  // jsonb, not two text columns (§20): the recorded field set differs per event,
+  // and a text pair invites stringly-typed diffs. Carries the old→new slot on a
+  // RESCHEDULED event.
+  metadata Json?
+
+  // The shared actor block. Identical on AppointmentHistory, DoctorHistory and
+  // AuditLog.
+  //
+  // actorId and actorRole are NULLABLE because a scheduled job has no User and no
+  // role: the §12 auto-cancel job is recorded as actorName = "system", which is
+  // the discriminator. UserRole stays locked to its four values — adding a SYSTEM
+  // member would break the §24 enum table. requestId is null for the same reason:
+  // it comes from the per-request middleware, and an interval job has no request.
+  actorId   String?   @map("actor_id") @db.Uuid
+  actor     User?     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  actorRole UserRole? @map("actor_role")
+
+  // A SNAPSHOT, never a join. That is precisely what stops a later rename or
+  // deactivation from rewriting who did what (§5.1, §5.2).
+  actorName String @map("actor_name")
+
+  // Nullable: §8.4 makes a reason mandatory on slot changes and §20 on audited
+  // actions, but a BOOKED event genuinely has none, and a required column here
+  // would only manufacture a "n/a" that later reads as a real reason.
+  reason String?
+
+  ip        String? @map("ip") @db.Inet
+  requestId String? @map("request_id")
+
+  // createdAt only, NEVER updatedAt. A row that can be edited is not an audit
+  // row, and @updatedAt would silently make every one of them mutable.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // No `target` columns: the parent row IS the target.
+  @@index([appointmentId, createdAt], map: "appointment_histories_appointment_id_created_at_idx")
+  @@map("appointment_histories")
+}
+
+// ---------------------------------------------------------------------------
+// DoctorHistory — append-only per-doctor timeline (plan.md §5, §5.2, §20)
+// ---------------------------------------------------------------------------
+
+model DoctorHistory {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  // Two relations to User on one model — the subject doctor and the acting user —
+  // so both need explicit names.
+  doctorId String @map("doctor_id") @db.Uuid
+  doctor   User   @relation("DoctorHistoryDoctor", fields: [doctorId], references: [id], onDelete: Restrict)
+
+  // A String, NOT AppointmentEventType, and not a new DoctorHistoryEventType
+  // enum either. §24 has exactly one event enum and it is scoped to
+  // appointments; a doctor timeline records §5 events (PROFILE_UPDATED,
+  // CREDENTIALS_UPDATED, SUSPENDED, ARCHIVED, REACTIVATED) and §8.4 slot edits,
+  // none of which an appointment enum can name. Forcing them into one would mean
+  // either widening a locked enum or inventing a second one, and §24's values
+  // come from a single transcribed table that must not grow by inference.
+  //
+  // The column still gets the @map: snake_case in the database is a file-wide
+  // convention (§23), and the one thing worse than a camelCase column is a CHECK
+  // in Day 6's hand-written SQL that spells it the other way and matches nothing.
+  eventType String @map("event_type")
+
+  metadata Json?
+
+  actorId   String?   @map("actor_id") @db.Uuid
+  actor     User?     @relation("DoctorHistoryActor", fields: [actorId], references: [id], onDelete: Restrict)
+  actorRole UserRole? @map("actor_role")
+  actorName String    @map("actor_name")
+  reason    String?
+  ip        String?   @map("ip") @db.Inet
+  requestId String?   @map("request_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([doctorId, createdAt], map: "doctor_histories_doctor_id_created_at_idx")
+  @@map("doctor_histories")
+}
+
+// ---------------------------------------------------------------------------
+// AuditLog — append-only administrative record (plan.md §20)
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  // A String in SCREAMING_SNAKE, NOT an enum (§20 lists examples, and a closed
+  // enum would turn every new audited action into a migration). Every `reason` in
+  // this schema is free text for the same reason: §8.4 requires a reason, never a
+  // reason code.
+  action String
+
+  // Polymorphic target, so one table covers slot, doctor, appointment, refund and
+  // user writes without a nullable foreign key to a dozen tables. targetId is
+  // @db.Uuid because every current target is a uuid(7) — declared as a bare
+  // String it would become a text column that needs a cast to compare with a real
+  // id, having already given up referential integrity.
+  targetType String @map("target_type")
+  targetId   String @map("target_id") @db.Uuid
+
+  // jsonb, not two text columns: §20 records an arbitrary field set per action.
+  before Json?
+  after  Json?
+
+  // The shared actor block, identical to the two history tables above.
+  actorId   String?   @map("actor_id") @db.Uuid
+  actor     User?     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  actorRole UserRole? @map("actor_role")
+  actorName String    @map("actor_name")
+  reason    String?
+  ip        String?   @map("ip") @db.Inet
+  requestId String?   @map("request_id")
+
+  // createdAt only, never updatedAt.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // Append-only by CONVENTION, not by database grant: there is no edit or delete
+  // route, the data layer exposes insert-and-read only, and a test asserts that
+  // an update or delete through the application fails. REVOKE grants are
+  // deliberately deferred (§42) because a single wrong REVOKE breaks the running
+  // app for a guarantee no user can see.
+  @@index([targetType, targetId, createdAt], map: "audit_logs_target_type_target_id_created_at_idx")
+  @@index([createdAt], map: "audit_logs_created_at_idx")
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Notification — one row per send (plan.md §18)
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  type   NotificationType
+  status NotificationStatus @default(PENDING)
+
+  // The address actually emailed, as a SNAPSHOT and NOT a foreign key. It may be
+  // a pendingEmail that was never activated, and §6.1's anonymisation must not be
+  // able to break the record of a send that already happened.
+  recipient String
+
+  appointmentId String?      @map("appointment_id") @db.Uuid
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  // NOT decoration — §18's dedupe key is UNIQUE (appointment_id, slot_id) WHERE
+  // type = 'REMINDER', and the slot has to be in the key because a §14 reschedule
+  // moves the appointment. Keyed on the appointment alone, the index would reject
+  // the reminder for the new time and the patient would silently stop being
+  // reminded about a booking they had just moved.
+  slotId String? @map("slot_id") @db.Uuid
+  slot   Slot?   @relation(fields: [slotId], references: [id], onDelete: Restrict)
+
+  sentAt DateTime? @map("sent_at") @db.Timestamptz(3)
+
+  // What makes a failed send visible to a human instead of vanishing (§18).
+  error String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // "A failed send is visible to a human" is one of only two reliability
+  // requirements in MVP, and the query behind it is a status filter.
+  @@index([status, createdAt], map: "notifications_status_created_at_idx")
+  @@index([recipient, createdAt], map: "notifications_recipient_created_at_idx")
+
+  // ONCE-ONLY REMINDER (§18). Exactly one reminder per (appointment, slot). The
+  // slot is part of the key because after a §14 reschedule the appointment moves
+  // to a different slot: a key on appointment alone would reject the reminder for
+  // the new time and the patient would silently stop being reminded.
+  //
+  // No other notification type is constrained: repeated events legitimately send
+  // more than one email (e.g. overlapping unavailability). Only the reminder is
+  // once-only.
+  //
+  // The `::notification_type` cast is PostgreSQL's normalisation, not decoration
+  // — written without it the predicate and the introspected form differ and
+  // `migrate dev` proposes DROP + CREATE every run. The reminder is one of only
+  // two MVP reliability requirements, so a silently deleted dedupe index means
+  // patients are emailed twice for one appointment.
+  @@unique([appointmentId, slotId], where: raw("(type = 'REMINDER'::notification_type)"), map: "notifications_reminder_once_per_appointment_slot_unique")
+  @@map("notifications")
+
+  // No other type is constrained: repeated events legitimately send more than
+  // one email (a second unavailability overlapping the first). Only the reminder
+  // is required to be once-only.
+}
+
+// ---------------------------------------------------------------------------
+// AuthAttempt — DB-backed lockout and rate-cap record (plan.md §6.3)
+// ---------------------------------------------------------------------------
+
+model AuthAttempt {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  // The §6.3 identity key: the NORMALISED email. Deliberately not a foreign key —
+  // a failed attempt against an address that has no account must still be
+  // recorded, or account sweeping across unknown addresses goes undetected. This
+  // is the one identity-ish table keyed by a string rather than a uuid.
+  identifierKey String @map("identifier_key")
+  ipKey         String @map("ip_key")
+
+  purpose    AuthAttemptPurpose
+  succeeded Boolean
+
+  // Append-only, so no updatedAt.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // Designed against the §6.3 queries, not by habit: 5 consecutive failures on
+  // an identity key, 20 attempts/min on an ip key, escalating 15→30→60 min, ≤3
+  // OTP sends per 15 min, ≤5 verify tries per OTP.
+  @@index([identifierKey, purpose, createdAt], map: "auth_attempts_identifier_key_purpose_created_at_idx")
+  @@index([ipKey, createdAt], map: "auth_attempts_ip_key_created_at_idx")
+  @@map("auth_attempts")
+}
+
+// ---------------------------------------------------------------------------
+// RefreshToken — opaque, hashed, rotating (plan.md §6.3)
+// ---------------------------------------------------------------------------
+
+model RefreshToken {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  // SHA-256 hex, exactly as AuthToken stores its tokens: a leaked database must
+  // not be a set of live sessions.
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  ip        String? @map("ip") @db.Inet
+  userAgent String? @map("user_agent")
+
+  // No updatedAt: rotation issues a NEW row and revokes the old one, so a row is
+  // never edited after it is written.
+  //
+  // No familyId (§6.3): token-family theft detection is out of MVP — invisible to
+  // legitimate users, and it buys nothing against the threat that matters here,
+  // which is a live session belonging to a suspended doctor.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // §6.3's "revoke every session" is ONE statement, and it runs inside the same
+  // transaction as a suspension, archive or deactivation — all of which must take
+  // effect immediately rather than at token expiry. tokenHash's unique index does
+  // not serve a WHERE user_id = ? filter, so without this a suspension is a
+  // sequential scan of the whole table inside the transaction that has to be
+  // instant.
+  @@index([userId], map: "refresh_tokens_user_id_idx")
+  @@map("refresh_tokens")
 }
