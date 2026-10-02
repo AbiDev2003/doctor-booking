@@ -7,6 +7,7 @@ import { genRequestId, requestId } from "./middleware/requestId.js";
 import { notFound } from "./middleware/notFound.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { healthRouter } from "./routes/health.js";
+import { authRouter } from "./routes/auth.js";
 
 export function createApp() {
   const app = express();
@@ -30,6 +31,7 @@ export function createApp() {
   app.use(express.json({ limit: "1mb" }));
 
   app.use("/api/v1/health", healthRouter);
+  app.use("/api/v1/auth", authRouter);
 
   app.use(notFound);
   app.use(errorHandler);
