@@ -11,8 +11,16 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().max(65535).default(3000),
   CLIENT_URL: z.url("must be a valid URL, e.g. http://localhost:5173"),
   APP_TIMEZONE: z.string().min(1, "required — IANA zone used for display only"),
+  // Only two things read this: the refresh cookie's `secure` flag and
+  // `sameSite`. Both must differ between localhost and a real deployment —
+  // see lib/cookies.ts for why SameSite breaks on separate subdomains.
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   JWT_ACCESS_SECRET: z.string().min(32, "required — at least 32 characters"),
-  JWT_REFRESH_SECRET: z.string().min(32, "required — at least 32 characters"),
+  // No refresh secret exists, and its absence is deliberate. A refresh token is
+  // an opaque random string stored as SHA-256, not a JWT: it must be revocable,
+  // which a self-contained token cannot be (§6.3). Nothing signs or verifies it
+  // beyond that hash lookup, so a second secret would be a var every operator
+  // sets, rotates and wonders about — with no reader.
   ACCESS_TOKEN_TTL: z
     .string()
     .regex(/^\d+[smhd]$/, "must look like 30s, 15m, 2h or 7d"),

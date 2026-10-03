@@ -44,8 +44,11 @@ The goal of this phase: the two existing apps install, talk to a real database, 
 ### Day 2 — Environment config + server foundation
 - `[S]` `npm i zod cors pino pino-http dotenv` and `npm i -D @types/cors`.
 - `server/.env` + `server/.env.example`: `DATABASE_URL`, `PORT`, `JWT_ACCESS_SECRET`,
-  `JWT_REFRESH_SECRET`, `ACCESS_TOKEN_TTL`, `RESEND_API_KEY`, `RAZORPAY_KEY_ID`,
+  `ACCESS_TOKEN_TTL`, `RESEND_API_KEY`, `RAZORPAY_KEY_ID`,
   `RAZORPAY_KEY_SECRET`, `CLIENT_URL`, `APP_TIMEZONE` (§35).
+  (`JWT_REFRESH_SECRET` was listed here and never shipped: the refresh token is an
+  opaque random string stored as SHA-256 so it can be revoked (§6.3), so nothing
+  signs or verifies it and the var would have had no reader.)
 - Add a tiny config module in `server/src/config.ts` that reads and **validates** env with
   Zod and crashes fast on a missing var. Never read `process.env` ad-hoc elsewhere.
 - `server/src/lib/logger.ts` — the Pino instance. `server/src/middleware/requestId.ts` —
