@@ -4,14 +4,9 @@ import { verifyAccessToken } from "../lib/jwt.js";
 import { prisma } from "../lib/prisma.js";
 import { AppError } from "../lib/appError.js";
 
-declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
-  namespace Express {
-    interface Request {
-      user?: { id: string; role: string; email: string | null };
-    }
-  }
-}
+// The `req.user` shape lives in `src/types/express.ts` — see the note there on
+// why an augmentation must not depend on who imports the file that declares it.
+import type {} from "../types/express.js";
 
 /**
  * Verifies the bearer token, then re-reads the account (§6.3's per-request status
@@ -54,7 +49,11 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
         // one query serving all four roles — there is no second lookup, and no
         // `StaffProfile` to look up (code-plan.md:208: STAFF is a `User.role` value
         // with no attributes of its own, so `isDeactivated` is the whole of it).
+        // `patientProfile` is the mirror image: null for every non-patient, and
+        // read here for the same reason the doctor relation is — one query, one
+        // place the caller's own identity comes from.
         doctorProfile: { select: { suspendedAt: true, verificationStatus: true } },
+        patientProfile: { select: { phone: true } },
       },
     });
 
@@ -91,7 +90,7 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
     // in order to complete it. §6.3 gates booking, not login, and the booking-side
     // check is Phase 4's. The §5 transition matrix itself is Day 12's; this is
     // deliberately only the two states §5.2 says disable login.
-    req.user = { id: user.id, role: user.role, email: user.email };
+    req.user = { id: user.id, role: user.role, email: user.email, phone: user.patientProfile?.phone ?? null };
     next();
   } catch (err) {
     next(err);

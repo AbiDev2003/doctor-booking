@@ -25,5 +25,14 @@
 
     "noEmit": true
   },
-  "include": ["prisma.config.ts", "prisma/seed.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "prisma.config.ts",
+    "prisma/seed.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    // The `req.user` augmentation: tests exercise middleware that never imports
+    // `requireAuth`, so without listing it here the global type would not exist
+    // in this program (see src/types/express.ts).
+    "src/types/express.ts"
+  ]
 }

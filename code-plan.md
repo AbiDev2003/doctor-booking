@@ -497,12 +497,71 @@ the code instead of implied by a version bump.
 - `[S]` Bootstrap first admin via a setup command (no admin self-registration).
 - **DoD:** each role can only reach its own endpoints; a patient cannot reach a doctor's.
 
+**DoD caveat, stated now rather than discovered later:** the DoD needs role-gated *endpoints*
+to prove itself, and Day 10 builds none — the doctor routes are Day 12, the patient's booking
+routes Day 13, the staff desk Day 14. What Day 10 ships is the middleware itself with unit
+tests (`tests/rbac.test.ts`: all four roles against `requireRole`, the ownership helper's
+self-or-role branch, and a guard against role injection through the register schema), and each
+of those days inherits the live-HTTP proof because it exercises the same middleware. Same
+posture as Day 9's deactivation caveat above: ordering, not uncertainty.
+
+| Question | Decision |
+|---|---|
+| How is "patient sees only their data" proven on Day 10? | **It isn't — there is nothing yet to see.** `requireSelfOrRole` ships exported with no caller and says so in its comment; first callers are Day 13 (patient's own bookings) and Day 14 (doctor's own schedule). A helper with no data behind it earns a unit test, not a fake route |
+| Where does `req.user`'s type live? | **`src/types/express.ts`, not the middleware** — the repo compiles two TS programs (`tsconfig.json` and `tsconfig.tools.json`, the latter including tests), and the tools program never loads `middleware/auth.ts`. An augmentation declared inside auth.ts is invisible to `tsc -p tsconfig.tools.json`, so both programs instead include one shared file that each imports as a dependency marker |
+| What about the `[S]` setup command for the first admin? | **The Day 6 seed already creates one; Day 10 verifies rather than builds.** §5.1 wants no admin self-registration, and the seed satisfies it — a second mechanism that does the same thing is two places to get it wrong. Live check: the seeded admin passes `requireRole("ADMIN")` |
+
+**Files:** `src/middleware/rbac.ts` (new), `src/lib/ownership.ts` (new),
+`tests/rbac.test.ts` (new), `src/middleware/auth.ts` + `src/types/express.ts` (the `req.user`
+type made precise: `role` as the `$Enums.UserRole` union, `phone`, patient profile selected),
+`tsconfig.tools.json` (include the augmentation file).
+
 ### Day 11 — Forgot password + account management
 - `[S]` Forgot password (email reset link or OTP) → set new password → revoke all sessions.
 - `[S]` Patient account: update email/phone (verify new email), delete → anonymise.
 - `[C]` Forgot/reset + profile + delete-account screens.
 - **DoD:** full account lifecycle works; a reset kills all sessions.
 - **Phase 2 complete.**
+
+| Question | Decision |
+|---|---|
+| What is the reset TTL? | **`PASSWORD_RESET_TTL`, default `15m`** — §6.2 says configurable, so env with the spec'd default, same shape as the Day 9 lockout vars. `EMAIL_CHANGE` tokens borrow it: both are "how long a recovery/verification secret lives before it must be re-requested", and one meaning across two purposes beats two vars that must be kept equal by hand |
+| Can two issued OTPs collide? | **Yes — and verification would silently pick the wrong account without handling it.** `auth_tokens.token_hash` is globally unique and the verify path is `findUnique` on the submitted code's hash with no userId, so a 6-digit code is a 1-in-a-million key that two in-flight resets *will* eventually share. `issueResetToken` regenerates on collision (≤5 draws). The alternative — composite lookup — would require a schema the plan does not have |
+| Is token issuance inside the reset transaction? | **No.** Postgres aborts a transaction on any statement error, so a unique-violation retry inside a tx would poison everything already written to it. Ordering replaces atomicity instead: consume the patient's prior outstanding token first, then issue — a crash between the two leaves an extra live token, never a blocked reset, and single-use claims cap the blast radius |
+| What does `/forgot-password` return? | **One generic §6.2 message for every input** — unknown address, deactivated account, rate-limited, link or OTP method: same body. The method only changes delivery. The real URL/code is logged server-side only, never in the response — the client echoes the server's copy so the wording cannot drift |
+| What re-auths a phone change or a deletion? | **The current password only** (locked decision: no OTP option) — and the check *participates in the §6.3 LOGIN lockout*: same identity key, failures recorded, success recorded. A password check that does not count toward the lockout is a side door around it: guess forever here, and LOGIN's five-failure promise means nothing |
+| How much audit does Day 11 build? | **The minimal append-only writer: insert and throw, nothing else** (locked decision — Day 20 adds reads/exports). It takes the `DbClient` so the audit row commits inside the same transaction as the change it describes, and `actor.name` is snapshotted at write time because `AuditLog.actorName` is NOT NULL and anonymising a user later must not rewrite the history of what happened |
+| Why do release/void run before the delete guards? | **Because the guards would otherwise trip over the delete's own actions.** Releasing the patient's held seat and voiding its pending order are always-safe; if they ran after the guard check, `PENDING_PAYMENT` would block deleting an account whose only pending order was for the seat we were about to release. Everything is one transaction, so a guard failure still rolls the whole attempt back |
+| Why 409 for `EMAIL_UNCHANGED`/`PHONE_UNCHANGED`? | **Setting a value to what it already is is a conflict with current state, not a validation failure** — 422 would blame the input's shape, which is well-formed. Same reasoning as `EMAIL_ALREADY_EXISTS` on register |
+| Where did the Login screen come from? | **It is a plan gap, absorbed into Day 11 by decision** — the day list has no `[C]` login task before this, yet `/profile`, phone change and delete need a session to exist at all. Added with the bearer/`credentials:"include"` plumbing, which is what makes every Day 11 screen more than a form posting into the void |
+| How does the client hold the session? | **Access token in module memory, refresh token in its httpOnly cookie** — never localStorage (an XSS must not read a 15-minute credential; memory dies with the tab). Every request sends `credentials: "include"`; an expired access token triggers exactly one `/auth/refresh` + replay, deduped across concurrent 401s because the refresh token is single-use. `INVALID_CREDENTIALS` and `INVALID_REFRESH_TOKEN` are terminal and never retried — retrying them would turn "wrong password" into a phantom network failure |
+
+**Files:** `src/config.ts` + `.env.example` (`PASSWORD_RESET_TTL`); `src/lib/auth.ts`
+(`generateOtp`, `looksLikeOtp`, `getPasswordResetExpiry`); `src/lib/prisma.ts` (`DbClient`,
+`isUniqueConstraintViolation`); `src/lib/clientIp.ts` (`getClientIp` extracted — two routers
+now need the §6.3 IP authority, so there is one reader of `x-forwarded-for`, not two);
+`src/services/audit.service.ts` (new); `src/services/auth.service.ts` (`issueResetToken`,
+`forgotPassword`, `resetPassword`); `src/services/account.service.ts` (new — all four §6.1
+operations); `src/schemas/auth.ts` + `src/schemas/account.ts` (new);
+`src/routes/auth.ts` (+`/forgot-password`, `/reset-password`);
+`src/routes/account.ts` (new — four routes, `authBurstGuard`, patient-only via Day 10's
+`requireRole`); `src/app.ts` (mount); client: `src/lib/api.ts` (rewritten — session
+plumbing + ten new calls), `src/pages/{Login,ForgotPassword,ResetPassword,Profile,VerifyEmailChange}.tsx`
+(new), `src/App.tsx`, `src/index.css`.
+
+**Reused, not rewritten:** `revokeAllSessions` (reset revokes inside its tx; delete revokes
+inside its own) — `verify-email`'s token-verification mirror in `auth.service.ts` is the model
+for `verifyEmailChange` (same single-use claim, same generic failure); `authBurstGuard` from
+Day 9 rides on the account router; `clearRefreshCookie` for delete; `assertOtpSendAllowed` /
+`assertOtpVerifyAllowed` gate the new recovery paths under the same §6.3 budgets as Day 7's
+verification; `requireRole` (Day 10) is what makes `/change-phone`, `/change-email` and
+`/delete-account` patient-only without a single new guard line.
+
+**Delete-account guard order (§6.1, one transaction):** release live holds → void those
+orders → guards (upcoming appointments, `PENDING` payment, `PENDING` refund) → deactivate +
+anonymise → revoke sessions → audit. Outstanding `auth_tokens` are deliberately *not* deleted:
+every verify path already rejects `isDeactivated`, so a leftover link fails closed with the
+same generic message a forged one gets.
 
 ---
 

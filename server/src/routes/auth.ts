@@ -1,17 +1,26 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
-import { isIP } from "node:net";
 import { config } from "../config.js";
 import { AppError } from "../lib/appError.js";
-import { registerSchema, verifyEmailSchema, loginSchema } from "../schemas/auth.js";
-import { registerPatient, verifyEmail, login, rotateRefreshToken, logout } from "../services/auth.service.js";
+import { registerSchema, verifyEmailSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema } from "../schemas/auth.js";
+import {
+  registerPatient,
+  verifyEmail,
+  login,
+  rotateRefreshToken,
+  logout,
+  forgotPassword,
+  resetPassword,
+} from "../services/auth.service.js";
 import {
   REFRESH_COOKIE_NAME,
   setRefreshCookie,
   clearRefreshCookie,
 } from "../lib/cookies.js";
+import { getClientIp } from "../lib/clientIp.js";
 import { requireAuth } from "../middleware/auth.js";
 import { authBurstGuard } from "../middleware/rateLimit.js";
+import { getRequestId } from "../middleware/requestId.js";
 
 export const authRouter = Router();
 
@@ -35,26 +44,6 @@ export const authRouter = Router();
  * remains the IP authority.
  */
 authRouter.use(authBurstGuard);
-
-/**
- * The client address for the auth_attempts / refresh_tokens `ip` columns.
- *
- * It reads `req.ip`, never `x-forwarded-for` directly: `app.ts` sets
- * `trust proxy`, which is what makes `req.ip` the real client rather than the
- * proxy's address. Reading the header here instead would take whatever the
- * caller sent — and Day 9's per-IP lockout is keyed on exactly this value.
- *
- * The result is validated because those columns are `inet`: an address
- * Postgres cannot parse fails the insert and turns a login into a 500. An
- * unparseable address is not worth failing a request over, so it becomes null.
- */
-function getClientIp(req: Request): string | null {
-  const raw = req.ip ?? req.socket.remoteAddress;
-  if (!raw) return null;
-
-  const candidate = raw.replace(/^\[/, "").replace(/\]$/, "").split("%")[0] ?? "";
-  return isIP(candidate) > 0 ? candidate : null;
-}
 
 authRouter.post("/register", async (req, res, next) => {
   try {
@@ -171,4 +160,74 @@ authRouter.post("/logout", async (req, res, next) => {
 /** Day 8 DoD: "access API". Day 10 turns this into the ownership baseline. */
 authRouter.get("/me", requireAuth, (req: Request, res: Response) => {
   res.status(200).json({ user: req.user });
+});
+
+/* ------------------------------------------------------------------ */
+/* Day 11 — password recovery (§6.2)                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * §6.2 request, for every role — no `requireAuth`, obviously, but also no role
+ * gate: a locked-out admin resets the same way a patient does.
+ *
+ * The response body is written HERE and is byte-identical whether or not an
+ * account exists: `forgotPassword` reports `sent` only so this route knows
+ * whether there is anything to log. The dev-mode link/OTP line below is the
+ * Phase 7 email stub, same as Day 7's verification link — it goes to the
+ * server log, never to the client, because the response must not distinguish
+ * the branches it just refused to distinguish in its body either.
+ */
+authRouter.post("/forgot-password", async (req, res, next) => {
+  try {
+    const parsed = forgotPasswordSchema.parse(req.body);
+    const ip = getClientIp(req);
+
+    const result = await forgotPassword({
+      email: parsed.email,
+      method: parsed.method === "otp" ? "OTP" : "LINK",
+      ip,
+    });
+
+    if (result.sent) {
+      if (result.method === "LINK") {
+        const resetUrl = `${config.CLIENT_URL}/reset-password?token=${result.rawToken}`;
+        req.log.info({ userId: result.userId }, `Password reset link: ${resetUrl}`);
+      } else {
+        req.log.info({ userId: result.userId }, `Password reset OTP: ${result.rawToken}`);
+      }
+    }
+
+    res.status(200).json({
+      message: "If an account exists for that email, a recovery message has been sent.",
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * §6.2 completion — link token or OTP, one endpoint, because they are one
+ * AuthToken mechanic. Wrong token on this route costs one of the token's five
+ * verification tries (rateLimit.service.ts), and `retryAfterSeconds` arrives
+ * via the error handler for the 429 case.
+ */
+authRouter.post("/reset-password", async (req, res, next) => {
+  try {
+    const parsed = resetPasswordSchema.parse(req.body);
+
+    await resetPassword({
+      token: parsed.token,
+      password: parsed.password,
+      ip: getClientIp(req),
+      requestId: getRequestId(res),
+    });
+
+    // The client clears any stored session state on this response: the reset
+    // revoked every refresh token server-side, and a client still holding an
+    // access token would look signed-in against a session that no longer
+    // renews until its 15-minute TTL lapses.
+    res.status(200).json({ message: "Password has been reset. You can now sign in." });
+  } catch (err) {
+    next(err);
+  }
 });
