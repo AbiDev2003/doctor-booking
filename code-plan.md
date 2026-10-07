@@ -429,6 +429,68 @@ The biggest server phase. Do it fully before touching scheduling. §3.4: every r
 - `[T]` Lockout, rotation, and immediate-revocation tests.
 - **DoD:** suspending a doctor logs him out everywhere on the next request.
 
+#### Decisions locked for Day 9
+
+Six questions came out of reading this day against `plan.md` §6.3 and Day 8's code. Each is
+settled here so the day is mechanical; the reasoning is in `loopholes.md` §7.
+
+| Question | Decision |
+|---|---|
+| Are the thresholds in code or env? | **Env, defaulting to the §6.3 numbers** — `plan.md` fixes the values, but a developer proving the lockout path should not have to fail a login five times to watch it happen. Unset means the spec'd value, so production runs on defaults |
+| How is a count-shaped limit validated? | **`.int().positive()`** — never a bare `z.coerce.number()`. `PORT` already gets away with coercion only because `.positive()` rejects the `0` that `""` coerces into (`config.ts:11`); a limit with no such floor can be turned to `0` by blanking the line, which is a lockout nobody chose |
+| Can the lockout be disabled? | **No, and there is no value that expresses it** — `plan.md` never wants it off, so `0` is rejected at boot rather than read as "no failures allowed". A blank value goes through `blankAsUndefined` (`config.ts:4-5`) and falls back to the default |
+| Are durations numbers or strings? | **Strings matching `/^\d+[smhd]$/`**, like `ACCESS_TOKEN_TTL` (`config.ts:24-26`) — `15m` stays readable, and a duration cannot be typo'd into a count |
+| What do Day 9's `[T]` tests cover? | **The decision logic only, as pure unit tests** — the harness is Day 35 (`code-plan.md:674`) and the DB-backed versions of these same tests are Day 36 (`:678`). The judgment is split into a pure function so the escalation ladder and window boundary are testable with no database |
+| What proves the DoD on Day 9? | **The mechanism, via deactivation** — see the caveat below |
+| Is `express-rate-limit` a second IP authority? | **No — it sheds load before the database, and nothing else** — §6.3 asks for the coarse layer, so the package is taken, but `auth_attempts.ipKey` stays the IP authority. Two limiters disagreeing is how an endpoint ends up enforcing the more permissive one |
+| How is the "≤5 verification tries per OTP" cap keyed, when `/verify-email` carries only the submitted code? | **Both §6.3 keys, because the per-OTP key alone cannot do the job** — the cap is keyed on `hash(submittedCode)`, and brute force works by submitting *different* codes, so each guess arrives under a fresh key with a fresh budget of five. Thirty wrong codes against one issued token returned thirty `400`s and no `429`. What that key genuinely protects is the *valid* token (five looks total, one of them legitimate). Bounding guessing needs the IP key, which §6.3 already assigns to this class of abuse: 20/min against a six-digit space cannot exhaust 10⁶ before the token expires |
+| Is a per-IP verify cap safe on a shared NAT host? | **Yes, because the budget is per IP per *purpose*, not per patient** — 20/min shared across all verification traffic from one host. Legitimate volume is a handful of requests. The earlier worry that one host could spend "every unrelated patient's budget" only applies if the ceiling were per-patient, which it is not — and a per-patient ceiling is not expressible here anyway (below) |
+| Can a wrong OTP guess be attributed to a specific patient? | **No, not with today's endpoint** — a wrong code matches no `auth_tokens` row, so nothing identifies which issued token is being attacked. The honest fix is to carry the address in the verification link, which changes the Day 7 link format and the client with it. Not done on Day 9; recorded here so it is a decision rather than a surprise on Day 11 |
+
+**Env variable names** (added to `.env.example` and the config schema, all optional with
+§6.3 defaults): `LOCKOUT_FAILURES=5`, `LOCKOUT_WINDOW=15m`, `LOCKOUT_MAX_WINDOW=60m`,
+`IP_ATTEMPTS_PER_WINDOW=20`, `IP_WINDOW=1m`, `OTP_SEND_LIMIT=3`, `OTP_SEND_WINDOW=15m`,
+`OTP_VERIFY_LIMIT=5`. Eight vars is a lot for what is one policy, and the honest reason they
+are separate rather than one JSON blob is that each one is a distinct §6.3 clause — the
+identity key, the IP key, and the two OTP limits — so they are separately tunable and
+separately citable.
+
+**DoD caveat, stated now rather than discovered on Day 9:** the DoD says *suspending a doctor*,
+but doctor suspension is Day 12 (`code-plan.md:499`) and there is no endpoint for it yet, and
+password reset is Day 11. What Day 9 can genuinely prove is the **mechanism**: a per-request
+re-check plus `revokeAllSessions` inside the same transaction, demonstrated through
+deactivation — set `isDeactivated`, and the next request is rejected. Day 12's suspend/archive
+route inherits the same helper, and its DoD then proves the doctor case end to end. The gap is
+real but it is ordering, not uncertainty.
+
+#### Files
+
+| File | |
+|---|---|
+`src/services/rateLimit.service.ts` | **new** — attempt recording, windowed counts, the pure lockout decision, escalation |
+`src/middleware/rateLimit.ts` | **new** — the DB-backed guard as Express middleware; generic 429 |
+| `src/lib/duration.ts` | **new** — `30s`/`15m`/`1h`/`7d` → ms, shared by the three lockout windows, the IP window and the OTP send window, so one parser owns the format instead of five inline regexes |
+`tests/rateLimit.test.ts` | **new** — pure decision-logic tests (ladder, boundary, identity vs IP) |
+`src/middleware/auth.ts` | doctor status re-check on top of Day 8's `isDeactivated` |
+`src/services/auth.service.ts` | record attempts; `deactivateUser()` wrapping `revokeAllSessions` in one transaction |
+`src/routes/auth.ts` | mount the limiter; keep `getClientIp` as the only IP source |
+`src/middleware/errorHandler.ts` | emit `Retry-After` on 429 |
+`src/config.ts`, `.env.example` | the eight vars above, validated as specified |
+`package.json` | `express-rate-limit` — §6.3's coarse outer guard on the auth router |
+
+**Reused, not rewritten:** `revokeAllSessions` (`auth.service.ts:318`) already exists and is
+Day 9's first caller. `AuthAttempt` (`schema.prisma:1031-1053`) already exists, indexes
+included, and was indexed for exactly these queries. `getClientIp` (`routes/auth.ts:29`) is
+the only place an IP is derived — `ipKey` must be that value, not a second reader of
+`x-forwarded-for`.
+
+**On the coarse layer's store:** `express-rate-limit`'s default in-memory store is acceptable
+here *only* because the authoritative cap is DB-backed and the app is single-instance (§18
+keeps Redis out of the MVP). That is a dependency, not a coincidence: if the `auth_attempts`
+IP cap is ever removed, an in-memory guard silently becomes the only one and is per-process.
+Set the store explicitly rather than inheriting the default, so the assumption is visible in
+the code instead of implied by a version bump.
+
 ### Day 10 — RBAC + ownership
 - `[S]` Role middleware for all four roles. Ownership checks (patient sees only their data;
   doctor sees only their own schedule). §7.
@@ -628,6 +690,10 @@ Not a phase you defer — this is where you prove the hard rules. Mirror `plan.m
 ### Day 36 — Auth + authorization tests
 - Lockout, rotation, immediate revocation, email uniqueness across entry points, RBAC +
   ownership per role.
+- **Not a repeat of Day 9:** that day's tests are pure decision-logic unit tests with no
+  database (`code-plan.md`, Day 9). These are the same behaviours against a real DB and real
+  HTTP, and they are what prove the windowed count queries — the part a pure test cannot
+  reach.
 
 ### Day 37 — Business-rule + concurrency tests
 - Booking/overbooking races, same-slot duplicates, cutoff boundaries, reschedule fee delta,

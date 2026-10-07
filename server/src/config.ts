@@ -1,10 +1,34 @@
 import "dotenv/config";
 import { z } from "zod";
+import { DURATION_PATTERN, durationToMs } from "./lib/duration.js";
 
 const blankAsUndefined = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? undefined : value;
 
 const optionalSecret = z.preprocess(blankAsUndefined, z.string().min(1).optional());
+
+const DURATION_MESSAGE = "must look like 30s, 15m, 2h or 7d";
+
+/**
+ * Counts are `.int().positive()` and never a bare `z.coerce.number()`.
+ *
+ * `PORT` gets away with coercion only because `.positive()` rejects the `0` an
+ * empty string coerces into (`z.coerce.number()` on `""` is 0, not a parse
+ * failure). A limit without that floor can be zeroed by blanking the line in
+ * `.env`, and nothing complains at boot: `LOCKOUT_FAILURES=0` reads plausibly as
+ * "lock out immediately" and is really "the threshold is never reached", i.e. the
+ * lockout is off with no trace. `.positive()` also rejects `0` typed by hand, so
+ * there is no value at all that disables a control §6.3 always wants on.
+ *
+ * `blankAsUndefined` covers the other route to the same hole: a blank line
+ * becomes "unset", which falls back to the §6.3 default rather than to nothing.
+ */
+const positiveCount = (defaultValue: number) =>
+  z.preprocess(blankAsUndefined, z.coerce.number().int().positive().default(defaultValue));
+
+/** See `positiveCount` for why the preprocess comes first. */
+const duration = (defaultValue: string) =>
+  z.preprocess(blankAsUndefined, z.string().regex(DURATION_PATTERN, DURATION_MESSAGE).default(defaultValue));
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "required — the PostgreSQL connection string"),
@@ -23,7 +47,23 @@ const envSchema = z.object({
   // sets, rotates and wonders about — with no reader.
   ACCESS_TOKEN_TTL: z
     .string()
-    .regex(/^\d+[smhd]$/, "must look like 30s, 15m, 2h or 7d"),
+    .regex(DURATION_PATTERN, DURATION_MESSAGE),
+  // §6.3 rate limiting. Every value is optional and defaults to the number the
+  // plan fixes, so an unset variable means "the spec'd policy" rather than "no
+  // policy" — production runs on defaults and .env is purely an override, which
+  // is what makes a locally tuned LOCKOUT_FAILURES=2 safe to leave lying around.
+  //
+  // The identity pair (failures + window) is the primary §6.3 defence and the
+  // only one that protects one account. The IP pair is the secondary cap against
+  // sweeping across many addresses. The OTP pair is stricter than both by design.
+  LOCKOUT_FAILURES: positiveCount(5),
+  LOCKOUT_WINDOW: duration("15m"),
+  LOCKOUT_MAX_WINDOW: duration("60m"),
+  IP_ATTEMPTS_PER_WINDOW: positiveCount(20),
+  IP_WINDOW: duration("1m"),
+  OTP_SEND_LIMIT: positiveCount(3),
+  OTP_SEND_WINDOW: duration("15m"),
+  OTP_VERIFY_LIMIT: positiveCount(5),
   // Seed inputs, read by prisma/seed.ts from Day 6. Optional so the app boots
   // without them — nothing in the request path needs any of them.
   //
@@ -46,7 +86,27 @@ const envSchema = z.object({
   .refine((env) => (env.CLINIC_OWNER_EMAIL === undefined) === (env.CLINIC_OWNER_NAME === undefined), {
     path: ["CLINIC_OWNER_NAME"],
     message: "must be set together with CLINIC_OWNER_EMAIL — set both, or neither",
-  });
+  })
+  // The escalation cap must not be below the base window, or the ladder inverts:
+  // `LOCKOUT_WINDOW=30m` with `LOCKOUT_MAX_WINDOW=15m` clamps every level to
+  // 15 minutes, so "repeated lockouts grow" is silently false and the operator
+  // has no way to see it — the config loads, the lockout works, it just never
+  // escalates. Both fields already report their own shape errors, so a parse
+  // failure here returns true rather than throwing out of the refine and
+  // replacing a precise field error with a crash.
+  .refine(
+    (env) => {
+      try {
+        return durationToMs(env.LOCKOUT_MAX_WINDOW) >= durationToMs(env.LOCKOUT_WINDOW);
+      } catch {
+        return true;
+      }
+    },
+    {
+      path: ["LOCKOUT_MAX_WINDOW"],
+      message: "must be greater than or equal to LOCKOUT_WINDOW — the escalation cap cannot be below the base window",
+    },
+  );
 
 const parsed = envSchema.safeParse(process.env);
 

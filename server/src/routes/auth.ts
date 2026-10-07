@@ -11,8 +11,30 @@ import {
   clearRefreshCookie,
 } from "../lib/cookies.js";
 import { requireAuth } from "../middleware/auth.js";
+import { authBurstGuard } from "../middleware/rateLimit.js";
 
 export const authRouter = Router();
+
+/**
+ * §6.3's coarse outer guard, on every route in this router — including the
+ * unauthenticated Day 7 ones, which is the point of an outer layer: it sheds load
+ * before the expensive work, namely the DB-backed caps in `rateLimit.service.ts`
+ * and the bcrypt comparison behind `/login`.
+ *
+ * **It does not shed body parsing.** `app.use(express.json())` is registered at
+ * `app.ts:39`, ahead of this router at `app.ts:45`, so bodies are already parsed by
+ * the time this runs. That is accepted rather than fixed by hoisting the guard into
+ * `app.ts`: `express.json` is capped at 1mb, so parsing a shed request costs
+ * milliseconds of arithmetic, while the database round trip and bcrypt cost ~100ms —
+ * and keeping the guard inside the auth router means it covers the routes Day 11
+ * adds without anyone having to remember a second registration. If auth bodies ever
+ * grow past the 1mb cap, revisit the ordering then.
+ *
+ * Strictly looser than the real policy (100/min against the DB cap's 20/min) so it
+ * is never the reason a legitimate request is refused. `auth_attempts.ipKey`
+ * remains the IP authority.
+ */
+authRouter.use(authBurstGuard);
 
 /**
  * The client address for the auth_attempts / refresh_tokens `ip` columns.
@@ -62,7 +84,7 @@ authRouter.get("/verify-email", async (req, res, next) => {
   try {
     const token = typeof req.query.token === "string" ? req.query.token : "";
     const parsed = verifyEmailSchema.parse({ token });
-    await verifyEmail(parsed.token);
+    await verifyEmail(parsed.token, getClientIp(req));
     res.status(200).json({ message: "Email verified successfully" });
   } catch (err) {
     next(err);
@@ -72,7 +94,7 @@ authRouter.get("/verify-email", async (req, res, next) => {
 authRouter.post("/verify-email", async (req, res, next) => {
   try {
     const parsed = verifyEmailSchema.parse(req.body);
-    await verifyEmail(parsed.token);
+    await verifyEmail(parsed.token, getClientIp(req));
     res.status(200).json({ message: "Email verified successfully" });
   } catch (err) {
     next(err);
