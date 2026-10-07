@@ -9,6 +9,7 @@ import { notFound } from "./middleware/notFound.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { healthRouter } from "./routes/health.js";
 import { authRouter } from "./routes/auth.js";
+import { accountRouter } from "./routes/account.js";
 
 export function createApp() {
   const app = express();
@@ -43,6 +44,11 @@ export function createApp() {
 
   app.use("/api/v1/health", healthRouter);
   app.use("/api/v1/auth", authRouter);
+  // §6.1 account management, same prefix: identity endpoints sharing the
+  // auth router's §6.3 guard (registered on the router itself, not here) and
+  // the lockout-backed password checks behind it. Mounted after the auth
+  // router only because it adds routes rather than intercepting any.
+  app.use("/api/v1/auth", accountRouter);
 
   app.use(notFound);
   app.use(errorHandler);

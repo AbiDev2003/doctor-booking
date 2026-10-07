@@ -48,6 +48,15 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL: z
     .string()
     .regex(DURATION_PATTERN, DURATION_MESSAGE),
+  // §6.2: the password-reset link / OTP expiry — "short (default: 15 minutes,
+  // configurable)". One knob for both methods, because link and OTP are one
+  // AuthToken row with one expiresAt: two knobs would let an operator believe
+  // the two expire differently when the column can only hold one value. It also
+  // sets §6.1's EMAIL_CHANGE token expiry, deliberately — plan.md §6.2 calls
+  // AuthToken "the single mechanic ... one issue/verify/expiry/rate-limit path,
+  // not four", and a purpose-by-purpose expiry matrix nothing reads is how four
+  // paths quietly reappear.
+  PASSWORD_RESET_TTL: duration("15m"),
   // §6.3 rate limiting. Every value is optional and defaults to the number the
   // plan fixes, so an unset variable means "the spec'd policy" rather than "no
   // policy" — production runs on defaults and .env is purely an override, which

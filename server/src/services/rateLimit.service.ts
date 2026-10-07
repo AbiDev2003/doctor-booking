@@ -394,19 +394,12 @@ export async function assertLoginAttemptAllowed(
 }
 
 /**
- * §6.3's OTP email-bombing cap: at most `OTP_SEND_LIMIT` sends per
- * `OTP_SEND_WINDOW` for one address.
- *
+ * §6.3's OTP email-bombing cap: at most `OTP_SEND_LIMIT` sends per `OTP_SEND_WINDOW` for one address.
  * Two keys, because §6.3 gives the IP key this exact job ("guarding against ...
- * OTP email-bombing") and an address-only cap cannot deliver it. A botnet sending
- * three mails per address walks straight through a per-address limit while costing
- * a real inbox provider a reputation hit.
- *
- * Exported and unused on purpose: Day 11's forgot-password is the first thing that
- * sends an OTP, and having the limit already written and reviewed means the first
- * caller wires it up rather than reinventing it. The IP term matters most here,
- * since sending is the expensive direction.
+ * OTP email-bombing") and an address-only cap cannot deliver it. A botnet sending three mails per address walks straight through a per-address limit while costing a real inbox provider a reputation hit.
+ * Exported and unused on purpose: Day 11's forgot-password is the first thing that sends an OTP, and having the limit already written and reviewed means the first caller wires it up rather than reinventing it. The IP term matters most here since sending is the expensive direction.
  */
+
 export async function assertOtpSendAllowed(
   identifierKey: string,
   ipKey: string,
