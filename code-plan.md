@@ -101,7 +101,7 @@ The goal of this phase: the two existing apps install, talk to a real database, 
 - Health route runs a real `SELECT 1` via `$queryRaw`; unreachable DB → `503 {db:"down"}`.
 - **DoD:** `/api/v1/health` returns `200 {status:"ok", db:"up"}`; `prisma studio` opens the
   DB; `dropdb → migrate dev → generate` reproduces it from scratch.
-- **Phase 0 complete.** Merge `feature/foundation` → `develop` and tag the milestone.
+- **Phase 0 complete. [DONE]** Merge `feature/foundation` → `develop` and tag the milestone.
 
 ---
 
@@ -397,7 +397,7 @@ notification type is constrained; §18 locks only the reminder.
 - §24 also lists a second `SeatHold` index, `UNIQUE (slot_id, patient_id) WHERE released_at IS
   NULL`; the one-live-hold-per-patient index above already implies it. Settle it during the spike:
   ship it as belt-and-braces, or drop it as redundant.
-- **Phase 1 complete.**
+- **Phase 1 complete. [DONE]**
 
 ---
 
@@ -521,7 +521,7 @@ type made precise: `role` as the `$Enums.UserRole` union, `phone`, patient profi
 - `[S]` Patient account: update email/phone (verify new email), delete → anonymise.
 - `[C]` Forgot/reset + profile + delete-account screens.
 - **DoD:** full account lifecycle works; a reset kills all sessions.
-- **Phase 2 complete.**
+- **Phase 2 complete. [DONE]**
 
 | Question | Decision |
 |---|---|

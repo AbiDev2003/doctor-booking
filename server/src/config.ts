@@ -57,6 +57,15 @@ const envSchema = z.object({
   // not four", and a purpose-by-purpose expiry matrix nothing reads is how four
   // paths quietly reappear.
   PASSWORD_RESET_TTL: duration("15m"),
+  // §5.1 invite claim — a SEPARATE knob from PASSWORD_RESET_TTL, and the
+  // reason is human, not technical: a reset is "I am locked out right now"
+  // (minutes), an invitation is "your account is waiting whenever you get to
+  // it" (a day). Borrowing the 15m reset TTL would mean every doctor who does
+  // not click within a quarter of an hour needs a resent invite, and the two
+  // values can never be kept equal by hand because they should not be equal.
+  // The token mechanics (single-use, hashed, rate-limited) are identical; only
+  // the lifetime differs.
+  ACCOUNT_CLAIM_TTL: duration("24h"),
   // §6.3 rate limiting. Every value is optional and defaults to the number the
   // plan fixes, so an unset variable means "the spec'd policy" rather than "no
   // policy" — production runs on defaults and .env is purely an override, which

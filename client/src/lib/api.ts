@@ -296,6 +296,20 @@ export async function apiResetPassword(input: { token: string; password: string 
 }
 
 /* ------------------------------------------------------------------ */
+/* Day 12 — §5.1 account claim                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The invitation link's submit. Unlike a reset, nothing here signs anyone in:
+ * the server issues no session on a claim (Day 9's login remains the one
+ * place tokens are minted), and no local token needs clearing — a claimable
+ * account could never have had one.
+ */
+export function apiClaimAccount(input: { token: string; password: string }): Promise<{ message: string }> {
+  return request("/auth/claim-account", { method: "POST", body: JSON.stringify(input) });
+}
+
+/* ------------------------------------------------------------------ */
 /* Day 11 — account management (§6.1)                                  */
 /* ------------------------------------------------------------------ */
 

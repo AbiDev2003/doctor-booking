@@ -5,6 +5,7 @@ import VerifyEmailChange from "./pages/VerifyEmailChange.tsx";
 import Login from "./pages/Login.tsx";
 import ForgotPassword from "./pages/ForgotPassword.tsx";
 import ResetPassword from "./pages/ResetPassword.tsx";
+import ClaimAccount from "./pages/ClaimAccount.tsx";
 import Profile from "./pages/Profile.tsx";
 
 export default function App() {
@@ -17,6 +18,8 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/verify-email-change" element={<VerifyEmailChange />} />
+      {/* Day 12 §5.1 — the invitation landing page (D2: built with the flow). */}
+      <Route path="/claim-account" element={<ClaimAccount />} />
       <Route path="/profile" element={<Profile />} />
       {/* Login is the front door until a patient dashboard (Day 13) earns
           the root path. */}

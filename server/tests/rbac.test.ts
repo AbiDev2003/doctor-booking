@@ -38,9 +38,9 @@ function run(middleware: (req: Request, res: Response, next: NextFunction) => vo
   return forwarded;
 }
 
-const PATIENT: User = { id: "u-1", role: $Enums.UserRole.PATIENT, email: "p@x.com", phone: "+919876543210" };
-const DOCTOR: User = { id: "u-2", role: $Enums.UserRole.DOCTOR, email: "d@x.com", phone: null };
-const ADMIN: User = { id: "u-3", role: $Enums.UserRole.ADMIN, email: "a@x.com", phone: null };
+const PATIENT: User = { id: "u-1", role: $Enums.UserRole.PATIENT, email: "p@x.com", phone: "+919876543210", name: "Priya Patient" };
+const DOCTOR: User = { id: "u-2", role: $Enums.UserRole.DOCTOR, email: "d@x.com", phone: null, name: "Dev Doctor" };
+const ADMIN: User = { id: "u-3", role: $Enums.UserRole.ADMIN, email: "a@x.com", phone: null, name: "Ada Admin" };
 
 function expectError(result: unknown, status: number, code: string): void {
   assert.ok(result instanceof AppError, `expected AppError, got ${String(result)}`);

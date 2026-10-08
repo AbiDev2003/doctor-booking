@@ -86,7 +86,18 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
     }
 
     res.status(err.status).json({
-      error: { code: err.code, message: err.message, requestId },
+      error: {
+        code: err.code,
+        message: err.message,
+        // Structured extras a legitimate client branches on, when the service
+        // supplied any: §5's 422 `VERIFICATION_INCOMPLETE` carries WHICH
+        // verification fields are missing, 429s carry retryAfterSeconds.
+        // Omitted entirely when absent — `details: undefined` must not serialize
+        // as a key with a null value, or clients cannot tell "no details" from
+        // "details were null".
+        ...(err.details !== undefined && { details: err.details }),
+        requestId,
+      },
     });
     return;
   }

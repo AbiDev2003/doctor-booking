@@ -54,6 +54,8 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
         // place the caller's own identity comes from.
         doctorProfile: { select: { suspendedAt: true, verificationStatus: true } },
         patientProfile: { select: { phone: true } },
+        // §20's actorName snapshot source (Day 12): one more column on the row already being fetched, so no audit writer ever needs a second read of the actor.
+        fullName: true,
       },
     });
 
@@ -90,7 +92,13 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
     // in order to complete it. §6.3 gates booking, not login, and the booking-side
     // check is Phase 4's. The §5 transition matrix itself is Day 12's; this is
     // deliberately only the two states §5.2 says disable login.
-    req.user = { id: user.id, role: user.role, email: user.email, phone: user.patientProfile?.phone ?? null };
+    req.user = {
+      id: user.id,
+      role: user.role,
+      email: user.email,
+      phone: user.patientProfile?.phone ?? null,
+      name: user.fullName,
+    };
     next();
   } catch (err) {
     next(err);
