@@ -620,6 +620,22 @@ same generic message a forged one gets.
 - **DoD:** the guard rejects a booked-slot time edit with a clear error; a capacity raise
   is audited.
 
+#### Decisions locked for Day 16
+| # | Decision |
+|---|----------|
+| 1 | Roles: slot create/edit/disable/enable = ADMIN/STAFF only; DOCTOR excluded (their availability tool is Day 18's `DoctorUnavailability`). Reads ADMIN/STAFF. Gate = existing `requireRole(ADMIN, STAFF)`; service re-enforces. |
+| 2 | Reason contract mirrors Day 15: mandatory on edit/disable/enable (422 if missing), OPTIONAL on create. |
+| 3 | ONE shared seat-or-hold predicate (`lib/slotGuard.ts`, pure) gates BOTH time-edit and disable (409 `SLOT_HELD`): `CONFIRMED`/`ARRIVED` always; `COMPLETED`/`NO_SHOW` only while the slot has not ended (§13.1); live hold = `releasedAt IS NULL AND expiresAt > now()` (§8.6). Capacity-only edits SKIP it. |
+| 4 | Capacity-lower: `newMaxPatients < bookedCount + heldCount` → 409 `CAPACITY_BELOW_BOOKED` with §8.4's message; DB CHECK (counters ≤ max) backstops races; counters re-read inside the transaction. |
+| 5 | Time/date edits recompute `startAt`/`endAt` ONLY through `localDateTimeToUtc` with `Clinic.timezone`; overlap vs the same doctor's slots on that `slotDate` → 422 `SLOT_OVERLAP` (half-open windows via `windowsOverlap`, excluding self). |
+| 6 | Manual create: `(doctorId, slotDate, startTime)` unique → 409 `SLOT_EXISTS` (race backstop under the overlap check); create restricted to `[today, today + bookingHorizonDays]` (422 `SLOT_OUTSIDE_HORIZON`). |
+| 7 | No hard DELETE in MVP — disable = `isDisabled` + `disabledReason`; re-enable audited with mandatory reason. Bulk-week create (`POST /slots/bulk`) deferred. |
+| 8 | Audit + DoctorHistory double-write in the same transaction: AuditLog `SLOT_CREATED`/`SLOT_UPDATED` (time edit)/`SLOT_CAPACITY_CHANGE`/`SLOT_DISABLED`/`SLOT_ENABLED`, targetType `slot`, before/after snapshots, reason/ip/requestId; AND a `DoctorHistory` row on the doctor's timeline (plan §5.2 records §8.4 slot edits there; `eventType` free string). |
+| 9 | Settings PATCH scope = the SIX scheduling tunables only (`bookingHorizonDays`, `cancelCutoffMinutes`, `holdDurationMinutes`, `minLeadMinutes`, `reminderLeadMinutes`, `maxActiveBookingsPerPatient`); `timezone`/`currency`/`name`/`defaultConsultationFee` excluded. Audited `CLINIC_SETTINGS_UPDATED` with before/after, reason optional. `GET /api/v1/clinics/settings` ADMIN/STAFF; PATCH ADMIN-only. |
+| 10 | Horizon change re-runs `materializeSlots()` AFTER commit: widened horizon tops up idempotently; narrowed writes nothing (leftover far-future slots hidden by Day 17 read model / Day 19 booking-horizon check, never deleted). |
+| 11 | DoD: pure `tests/slotGuard.test.ts` (statuses × end/now × holds × capacity) + scratch `scripts/day16-dod.ts` — synthetic CONFIRMED appointment + live hold on a generated slot asserts time-edit/disable rejected (409 `SLOT_HELD`), capacity raise lands an audit row, self-cleaning. DB-backed seat tests land with Day 36. |
+| 12 | Error codes: 422 missing reason; 409 `SLOT_HELD`/`CAPACITY_BELOW_BOOKED`/`SLOT_OVERLAP`/`SLOT_EXISTS`; 404 `SLOT_NOT_FOUND`. |
+
 ### Day 17 — Availability read model
 - `[S]` "Bookable slots for doctor X on date D" endpoint — hides suspended/unverified
   doctors, closed slots, full slots, and slots overlapping `DoctorUnavailability` (§11).
