@@ -598,6 +598,20 @@ same generic message a forged one gets.
   (unique `doctorId+slotDate+startTime`) (§11).
 - **DoD:** creating a schedule produces correct slots; re-running doesn't duplicate.
 
+#### Decisions locked for Day 15
+| # | Decision |
+|---|----------|
+| 1 | Idempotency = whole-DATE skip (Option A): a `(doctorId, slotDate)` already holding any slot is skipped entirely. Template edits then affect only ungenerated dates (§11). |
+| 2 | Roles: ADMIN/STAFF manage any doctor's template; DOCTOR manages own. DOCTOR cannot change `maxPatients` on PATCH (403, §8.3 reasoning like `consultationFee`); create may include it. |
+| 3 | Overlapping windows on the same weekday → 422 `SCHEDULE_WINDOW_OVERLAP` (app-level); unique key `(doctorId, weekday, startTime)` backstops races → 409 `SCHEDULE_WINDOW_EXISTS`. |
+| 4 | Timezone: `Clinic.timezone` DB row is the SINGLE runtime authority (generator + `/doctors/me/today` queue). `APP_TIMEZONE` only bootstraps the row and is IANA-validated at boot; seed warns but never overwrites a different existing value. Queue route + seed + demo script touch points swept. |
+| 5 | Reason mandatory on UPDATE and DELETE audits, optional on CREATE (§20). |
+| 6 | No audit rows for materialization — Pino log only; template CRUD audited with before/after `HH:MM` snapshots. |
+| 7 | DoD via pure unit tests (`tests/slotPlan.test.ts`, no config/prisma) + scratch `scripts/day15-dod.ts` proving idempotency against the seeded DB. DB-backed tests land with Day 36. |
+| 8 | Horizon `[today, today + bookingHorizonDays]` is INCLUSIVE of today — generate today's elapsed windows too. |
+| 9 | Materialization runs AFTER the mutating transaction (never 500s a saved edit; failure logged, recoverable via `POST /schedules/materialize`). Wired into verify/unsuspend/unarchive (materialisation resumes on the §5 VERIFIED set). |
+| 10 | Seed's §4 slot block DELETED in favor of calling `materializeSlots()` — the generator is the only Slot-row writer; the previous minimal "this-week" block is gone. |
+
 ### Day 16 — Slot management + capacity + horizon
 - `[S]` Slot create/edit/disable with the §8.4 guards: block date/time edits and
   disable/remove while the slot still holds a seat or a live hold; capacity-only edits

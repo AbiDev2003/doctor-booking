@@ -30,6 +30,7 @@ import {
   archiveDoctor,
   unarchiveDoctor,
 } from "../services/doctor.service.js";
+import { getClinicSettings } from "../services/clinic.service.js";
 import type { ActorContext } from "../services/doctor.service.js";
 
 /**
@@ -192,7 +193,11 @@ doctorsRouter.get("/:id", selfOrStaff, async (req, res, next) => {
  */
 doctorsRouter.get("/me/today", requireRole($Enums.UserRole.DOCTOR), async (req, res, next) => {
   try {
-    const queue = await getTodayQueue(authenticatedUser(req).id, config.APP_TIMEZONE);
+    // §3.2 (Day 15 decision 4): the Clinic row's timezone is the runtime
+    // authority — not config.APP_TIMEZONE, which only bootstraps the row at
+    // seed time. A clinic that relocates updates one row and this queue follows.
+    const clinic = await getClinicSettings();
+    const queue = await getTodayQueue(authenticatedUser(req).id, clinic.timezone);
     res.status(200).json({ queue });
   } catch (err) {
     next(err);

@@ -9,7 +9,11 @@
 // test result ambiguous.
 //
 // What it creates: one Clinic config row, one admin, two verified doctors, one
-// staff user, two patients, and this week's slots for both doctors.
+// staff user, two patients, weekly schedule templates, and the slot generator
+// materialising [today, today + bookingHorizonDays] for every bookable doctor.
+// The generator (services/slotGeneration.service.ts) is the only piece that
+// writes Slot rows, so a re-seed behaves exactly like the API's own
+// materialisation path rather than a divergent copy.
 //
 // ---------------------------------------------------------------------------
 // CREDENTIALS — the deliberate asymmetry (plan.md §5.1, code-plan.md Day 6)
@@ -40,7 +44,8 @@ import bcrypt from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { config } from "../src/config.js";
-import { localDateTimeToUtc, normalizePhoneToE164 } from "../src/lib/time.js";
+import { normalizePhoneToE164 } from "../src/lib/time.js";
+import { materializeSlots } from "../src/services/slotGeneration.service.js";
 
 // ---------------------------------------------------------------------------
 // Inputs
@@ -92,10 +97,11 @@ const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString, connectionTimeoutMillis: 5_000 }),
 });
 
-// The clinic's zone is the single source for every wall-clock conversion below
-// (§3.2). It comes from APP_TIMEZONE, not from a literal, so a machine in a
-// different zone seeds slots that are correct for THAT clinic rather than
-// silently wrong ones that only look right in Asia/Kolkata.
+// APP_TIMEZONE bootstraps the clinic row's timezone below — the runtime
+// authority for every wall-clock conversion since Day 15 (decision 4). It
+// comes from the env, not from a literal, so a machine in a different zone
+// seeds slots correct for THAT clinic rather than silently wrong ones that
+// only look right in Asia/Kolkata.
 const ZONE = config.APP_TIMEZONE;
 
 // Deterministic UUIDs so the second run updates the same rows instead of
@@ -120,37 +126,8 @@ const ID = {
 const DEFAULT_FEE_PAISE = 50_000; // ₹500.00 — a plausible local consultation
 const DEFAULT_MAX_PATIENTS = 12;
 
-/**
- * Clinic-local calendar date as a `@db.Date` value.
- *
- * Built from the LOCAL wall clock, not from UTC: `new Date()` is an instant, and
- * `toISOString()` on it would give the UTC calendar date, which is a different
- * day for every evening in IST. The date being seeded is a clinic-local date, so
- * it has to be derived from local parts.
- */
-function localDate(y: number, m: number, d: number): Date {
-  return new Date(Date.UTC(y, m - 1, d));
-}
-
-/** The `Weekday` enum member for a JS getDay() value (0 = Sunday). */
-const WEEKDAY_BY_JS_DAY = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"] as const;
-type Weekday = (typeof WEEKDAY_BY_JS_DAY)[number];
-
-/**
- * Monday of the current clinic-local week.
- *
- * A clinic thinks in whole weeks starting Monday, and §11's template changes
- * apply per-week. Anchoring to Monday keeps every re-seed inside the same week,
- * which is what makes the slot upsert idempotent — anchoring to "today" would
- * create a second partial week on the next run.
- */
-function mondayOfThisWeek(): Date {
-  const now = new Date();
-  const today = localDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
-  const jsDay = today.getUTCDay(); // 0 = Sunday
-  const daysSinceMonday = (jsDay + 6) % 7; // Sunday(0) -> 6, Monday(1) -> 0
-  return new Date(today.getTime() - daysSinceMonday * 86_400_000);
-}
+/** The `Weekday` union matching the schema enum — used only as a type here. */
+type Weekday = "SUN" | "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT";
 
 /**
  * `time` as a `@db.Time` value.
@@ -162,9 +139,6 @@ function mondayOfThisWeek(): Date {
 function timeOf(hour: number, minute: number): Date {
   return new Date(Date.UTC(1970, 0, 1, hour, minute, 0));
 }
-
-const iso = (d: Date): string => d.toISOString().slice(0, 10);
-const hhmm = (d: Date): string => `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
 
 // ---------------------------------------------------------------------------
 // Seed
@@ -224,13 +198,25 @@ async function main(): Promise<void> {
   // `update` rather than `updateMany` so a stale `where` can never silently
   // affect zero rows and look like a successful seed.
   //
-  // timezone is display-only; every stored instant is absolute (§3.2).
+  // timezone is the runtime authority for wall-clock conversion since Day 15
+  // (decision 4). APP_TIMEZONE BOOTSTRAPS it on first create and never
+  // overwrites it on re-seed: a clinic that changed its zone in a prior run
+  // (e.g. Asia/Dubai) must keep its own value, or a re-seed would silently
+  // move every future slot's clock. A mismatch is warned about, not silently
+  // ignored and not silently fixed.
   // -------------------------------------------------------------------------
+  const existingClinic = await prisma.clinic.findUnique({ where: { id: ID.clinic } });
+  if (existingClinic && existingClinic.timezone !== ZONE) {
+    console.warn(
+      `  NOTE: existing clinic timezone is "${existingClinic.timezone}", APP_TIMEZONE is "${ZONE}".\n` +
+        `        Keeping the existing value — the Clinic row is the runtime authority (§3.2).`,
+    );
+  }
+
   const clinic = await prisma.clinic.upsert({
     where: { id: ID.clinic },
     update: {
       name: "City Care Clinic",
-      timezone: ZONE,
       currency: "INR",
       defaultConsultationFee: DEFAULT_FEE_PAISE,
       bookingHorizonDays: 60,
@@ -239,6 +225,7 @@ async function main(): Promise<void> {
       minLeadMinutes: 0,
       reminderLeadMinutes: 120,
       maxActiveBookingsPerPatient: 3,
+      // timezone deliberately absent (see above): only `create` sets it.
     },
     create: {
       id: ID.clinic,
@@ -439,85 +426,27 @@ async function main(): Promise<void> {
   console.log(`\n  schedules   ${scheduleCount} weekly windows across ${DOCTOR_DETAILS.length} doctors`);
 
   // -------------------------------------------------------------------------
-  // 4. This week's slots
+  // 4. Slots — the real Day 15 generator, not a reimplementation
   //
-  // Slot generation itself is Day 15's job, and this is a deliberately MINIMAL
-  // version: it materialises only the current week, because that is what makes
-  // the seed useful today. It must be replaced by the real generator then, and
-  // this block deleted rather than left to drift.
+  // This is the Day 15 slot generator itself (services/slotGeneration.service.ts),
+  // replacing the minimal "this week only" block that lived here before. The
+  // generator is the ONLY code that creates Slot rows from Schedule rows:
+  // - it reads Clinic.timezone (the runtime authority, §3.2) for startAt/endAt
+  //   through localDateTimeToUtc — never local Date arithmetic;
+  // - it materialises [today, today + bookingHorizonDays] inclusive (decision 8);
+  // - it is idempotent (decision 1): a date that already has any slot is skipped
+  //   whole, plus the (doctorId, slotDate, startTime) unique key backstops races.
   //
-  // The important part is that startAt/endAt come from the ONE conversion
-  // helper, never from local `Date` arithmetic. Every time comparison in the
-  // system reads these two columns, so a slot seeded with a hand-rolled
-  // timestamp is the exact §3.2 bug this project exists to avoid — and it would
-  // look perfectly correct until someone changed the server's timezone.
+  // bookedCount/heldCount/maxPatients are untouched ON THE DOMAIN: the generator
+  // inserts fresh rows with zero counters and never updates existing ones. A
+  // booking that moved a counter between seed runs cannot be reset because the
+  // generator never writes to an existing slot at all.
   // -------------------------------------------------------------------------
-  const monday = mondayOfThisWeek();
-  const horizonDays = clinic.bookingHorizonDays;
-
-  let slotCount = 0;
-  let skippedSlots = 0;
-
-  for (const doctor of DOCTOR_DETAILS) {
-    const schedules = await prisma.schedule.findMany({ where: { doctorId: doctor.id } });
-
-    for (const schedule of schedules) {
-      // Each template row maps to exactly one date in this week.
-      const jsDay = WEEKDAY_BY_JS_DAY.indexOf(schedule.weekday);
-      const dayOffset = (jsDay + 6) % 7; // Monday(1) -> 0
-      const slotDate = new Date(monday.getTime() + dayOffset * 86_400_000);
-
-      // §10: never materialise past the horizon, even though "this week" is
-      // nowhere near 60 days. Checked anyway so widening the range later
-      // cannot quietly break the rule.
-      const daysOut = Math.round((slotDate.getTime() - monday.getTime()) / 86_400_000);
-      if (daysOut > horizonDays) continue;
-
-      const startAt = localDateTimeToUtc({ date: iso(slotDate), time: hhmm(schedule.startTime) }, ZONE);
-      const endAt = localDateTimeToUtc({ date: iso(slotDate), time: hhmm(schedule.endTime) }, ZONE);
-
-      try {
-        // Upserted on (doctorId, slotDate, startTime), which is what makes
-        // running the generator twice harmless (§11).
-        //
-        // bookedCount/heldCount/maxPatients are NOT reset on update. They are
-        // live counters that bookings have moved, and a re-seed that zeroed
-        // them would silently release seats that patients actually hold — the
-        // one genuinely dangerous thing a seed could do here.
-        await prisma.slot.upsert({
-          where: {
-            doctorId_slotDate_startTime: { doctorId: doctor.id, slotDate, startTime: schedule.startTime },
-          },
-          update: {},
-          create: {
-            doctorId: doctor.id,
-            slotDate,
-            startTime: schedule.startTime,
-            endTime: schedule.endTime,
-            startAt,
-            endAt,
-            maxPatients: schedule.maxPatients,
-            bookedCount: 0,
-            heldCount: 0,
-          },
-        });
-        slotCount += 1;
-      } catch (error) {
-        // §3.2 requires a nonexistent local time (the spring-forward gap) to be
-        // skipped and logged rather than written as an invalid instant. India
-        // has no DST so this never fires here, but ZONE is configuration.
-        skippedSlots += 1;
-        console.warn(
-          `  slot SKIPPED  ${doctor.fullName} ${iso(slotDate)} ${hhmm(schedule.startTime)}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-  }
-
-  console.log(`  slots       ${slotCount} for the week of ${iso(monday)}${skippedSlots > 0 ? ` (${skippedSlots} skipped)` : ""}`);
-  console.log(`              startAt/endAt derived through localDateTimeToUtc in ${ZONE}`);
+  const materialized = await materializeSlots();
+  console.log(
+    `  slots       ${materialized.created} created for the ${clinic.bookingHorizonDays}-day horizon ` +
+      `(${materialized.doctors} bookable doctors, ${materialized.skippedExistingDates} dates already stocked, ${materialized.rejectedWindows} DST-gap windows skipped)`,
+  );
 
   // -------------------------------------------------------------------------
   // 5. Mode summary

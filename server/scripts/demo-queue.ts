@@ -35,10 +35,13 @@ const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString, connectionTimeoutMillis: 5_000 }),
 });
 
-const ZONE = config.APP_TIMEZONE;
-
 async function main(): Promise<void> {
   const now = new Date();
+
+  // §3.2 (Day 15 decision 4): Clinic.timezone is the runtime authority; the
+  // APP_TIMEZONE fallback only covers a clinic row that never got seeded.
+  const clinicRow = await prisma.clinic.findFirst({ select: { timezone: true } });
+  const ZONE = clinicRow?.timezone ?? config.APP_TIMEZONE;
   const range = clinicDayRange(now, ZONE);
   const today = formatInClinicTime(range.start, ZONE).slice(0, 10);
 

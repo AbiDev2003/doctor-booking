@@ -8,8 +8,10 @@ import { assertDoctorAction, isBookable } from "../lib/doctorState.js";
 import type { DoctorAction } from "../lib/doctorState.js";
 import { clinicDayRange, utcToLocalDateTime } from "../lib/time.js";
 import { maskContact } from "../lib/privacy.js";
+import { logger } from "../lib/logger.js";
 import { writeAudit } from "./audit.service.js";
 import { revokeAllSessions } from "./auth.service.js";
+import { materializeSlots } from "./slotGeneration.service.js";
 
 /**
  * plan.md §5, §5.1, §5.2 — the doctor lifecycle, Day 12.
@@ -387,10 +389,11 @@ export async function getDoctor(doctorId: string): Promise<ReturnType<typeof toD
  * fully decide its shape:
  *
  * **"Today" is the clinic's day, not the server's.** `clinicDayRange` turns
- * "now" into the UTC instants bounding the clinic's calendar day (the same
- * zone the seed used to build `startAt`/`endAt` — `config.APP_TIMEZONE`), so a
- * server in UTC never splits or merges a clinic session. A slot is today's if
- * its `startAt` falls inside that window.
+ * "now" into the UTC instants bounding the clinic's calendar day (the zone
+ * comes from the caller, which reads `Clinic.timezone` — the runtime
+ * authority since Day 15's decision 4 — so a server in UTC never splits or
+ * merges a clinic session. A slot is today's if its `startAt` falls inside
+ * that window.
  *
  * **The contact is masked server-side, or not sent at all.** The patient's
  * E.164 full number never leaves the API in this response (`maskContact` in
@@ -567,6 +570,24 @@ async function loadDoctorRow(client: DbClient, doctorId: string): Promise<Loaded
     throw new AppError(404, "DOCTOR_NOT_FOUND", "Doctor not found");
   }
   return { user: { id: user.id, fullName: user.fullName }, profile: user.doctorProfile };
+}
+
+/**
+ * §5.2's "materialisation resumes" seam (Day 15): a doctor who just became
+ * bookable — verified, un-suspended, un-archived — gets their horizon filled
+ * from the weekly template. Run AFTER the state transaction commits, because
+ * the generator's §5 filter reads the very columns the transaction moved; run
+ * quietly, because the state change is already committed and a slow slot
+ * batch must not surface as a failed verification. The gap is recoverable by
+ * hand (`POST /schedules/materialize`) and the failure is logged, which is
+ * the honest trade against a 500 that lies about what was saved.
+ */
+async function materializeAfterStateChange(doctorId: string): Promise<void> {
+  try {
+    await materializeSlots({ doctorId });
+  } catch (error) {
+    logger.error({ err: error, doctorId }, "post-state-change slot materialisation failed — doctor is bookable, slots pending (POST /schedules/materialize)");
+  }
 }
 
 /**
@@ -785,6 +806,10 @@ export async function verifyDoctor(input: DoctorStateActionInput): Promise<void>
       requestId: input.requestId ?? null,
     });
   });
+
+  // §5.2 materialisation seam (Day 15): VERIFIED + not suspended is bookable,
+  // so the template's horizon fills now rather than at the next manual run.
+  await materializeAfterStateChange(input.doctorId);
 }
 
 /**
@@ -945,6 +970,10 @@ export async function unsuspendDoctor(input: DoctorStateActionInput): Promise<vo
       requestId: input.requestId ?? null,
     });
   });
+
+  // §5.2 materialisation seam (Day 15): clearing suspension restores
+  // bookability, so any horizon gap opened while suspended closes now.
+  await materializeAfterStateChange(input.doctorId);
 }
 
 /**
@@ -1050,4 +1079,8 @@ export async function unarchiveDoctor(input: DoctorStateActionInput & { readonly
       requestId: input.requestId ?? null,
     });
   });
+
+  // §5.2 materialisation seam (Day 15): UNARCHIVE lands on VERIFIED with
+  // suspension cleared — fully bookable, so the horizon fills here too.
+  await materializeAfterStateChange(input.doctorId);
 }

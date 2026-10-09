@@ -247,7 +247,7 @@ model Clinic {
   id String @id @default(uuid(7)) @db.Uuid
 
   name     String @map("name")
-  timezone String @map("timezone") // IANA zone, e.g. Asia/Kolkata — display only
+  timezone String @map("timezone") // IANA zone, e.g. Asia/Kolkata — the runtime authority for wall-clock conversion (§3.2); APP_TIMEZONE bootstraps it at seed time
   currency String @default("INR") @map("currency")
 
   // Paise. Never a float, never BigInt — BigInt breaks JSON.stringify at the API edge, which surfaces in Phase 6 far from the cause.

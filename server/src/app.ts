@@ -12,6 +12,7 @@ import { authRouter } from "./routes/auth.js";
 import { accountRouter } from "./routes/account.js";
 import { doctorsRouter, staffRouter } from "./routes/doctors.js";
 import { publicRouter } from "./routes/public.js";
+import { schedulesRouter } from "./routes/schedules.js";
 
 export function createApp() {
   const app = express();
@@ -55,6 +56,9 @@ export function createApp() {
   // two prefixes — see routes/doctors.ts for why both live in one file.
   app.use("/api/v1/doctors", doctorsRouter);
   app.use("/api/v1/staff", staffRouter);
+  // §11 schedule templates + slot materialisation (Day 15). Authenticated
+  // like the doctors router — every route is gated, none are public.
+  app.use("/api/v1/schedules", schedulesRouter);
   // §26 public storefront (Day 13). Mounted after the authenticated routers on
   // purpose: it is the one surface with no auth middleware, and listing it
   // here makes that absence a visible exception rather than an accident.

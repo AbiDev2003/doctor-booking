@@ -15,12 +15,14 @@ import { AppError } from "./appError.js";
  *
  * Two deliberate design choices, both of which look like needless strictness:
  *
- * `timeZone` is a REQUIRED argument and has no default. There are two timezone
- * values in this codebase — the `APP_TIMEZONE` env var and the `Clinic.timezone`
- * config row — and silently defaulting to one of them is precisely how a slot
- * gets written in one zone and displayed in another. Making the caller name the
- * zone forces the one decision that has to be made explicitly, and it keeps this
- * function testable without an environment.
+ * `timeZone` is a REQUIRED argument and has no default. `Clinic.timezone` is
+ * the single runtime source for wall-clock conversions since Day 15 (locked
+ * decision 4); `APP_TIMEZONE` only bootstraps that row at seed time. Callers
+ * read the DB row (via `getClinicSettings`) rather than the env var, and
+ * silently defaulting to either one is precisely how a slot gets written in
+ * one zone and displayed in another. Making the caller name the zone forces
+ * the one decision that has to be made explicitly, and it keeps this function
+ * testable without an environment.
  *
  * The DST rules below are unreachable for `Asia/Kolkata`, which has had no DST
  * since 1945. They are implemented anyway because the timezone is configuration:
