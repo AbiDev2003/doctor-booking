@@ -16,6 +16,7 @@
     "db:seed": "prisma db seed",
     "db:reset": "prisma migrate reset --force && prisma db seed",
     "db:assert": "tsx scripts/assert-constraints.ts",
+    "demo:queue": "tsx scripts/demo-queue.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.tools.json"
   },
   "keywords": [],

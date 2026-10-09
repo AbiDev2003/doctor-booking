@@ -338,3 +338,114 @@ export async function apiDeleteAccount(input: { password: string }): Promise<{ m
   accessToken = null;
   return result;
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 13 — public doctor surface (§26)                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What an anonymous visitor may know about a doctor — the client twin of the
+ * server's allow-list DTO (`services/public.service.ts`). The fields absent
+ * here (`licenseNumber`, `email`, `verificationStatus`, …) are absent on
+ * purpose: the API never sends them to an unauthenticated caller, so a page
+ * has nothing to render even if it tried.
+ */
+export interface PublicDoctor {
+  id: string;
+  fullName: string;
+  qualification: string | null;
+  experience: string | null;
+  clinicAssociation: string | null;
+  specialization: string | null;
+  /** Paise, with the Clinic default applied server-side (§3.2). */
+  consultationFee: number;
+}
+
+export interface PublicClinicResult {
+  clinic: { name: string; timezone: string; currency: string };
+  /** §26's truthful statistics, derived from real bookable doctors. */
+  stats: { doctorCount: number; specializationCount: number };
+}
+
+export function apiPublicClinic(): Promise<PublicClinicResult> {
+  return request("/public/clinic");
+}
+
+export function apiPublicDoctors(): Promise<{ doctors: PublicDoctor[] }> {
+  return request("/public/doctors");
+}
+
+export function apiPublicDoctor(id: string): Promise<{ doctor: PublicDoctor }> {
+  return request(`/public/doctors/${encodeURIComponent(id)}`);
+}
+
+/* ------------------------------------------------------------------ */
+/* Day 14 — doctor dashboard (§28)                                     */
+/* ------------------------------------------------------------------ */
+
+export type DoctorVerificationStatus = "INVITED" | "PENDING_VERIFICATION" | "VERIFIED" | "REJECTED" | "ARCHIVED";
+
+export interface DoctorDetail {
+  id: string;
+  fullName: string;
+  email: string;
+  verificationStatus: DoctorVerificationStatus;
+  suspendedAt: string | null;
+  suspendReason: string | null;
+  qualification: string | null;
+  licenseNumber: string | null;
+  experience: string | null;
+  clinicAssociation: string | null;
+  specialization: string | null;
+  consultationFee: number | null;
+  isBookable: boolean;
+  createdAt: string;
+}
+
+/**
+ * The doctor's own row. The endpoint is `selfOrStaff` — this only ever answers
+ * for the signed-in doctor's own id when called from the dashboard, and for a
+ * staff/admin roster row otherwise; the server makes that call.
+ */
+export function apiGetDoctor(id: string, signal?: AbortSignal): Promise<{ doctor: DoctorDetail }> {
+  return request(`/doctors/${encodeURIComponent(id)}`, { signal });
+}
+
+/**
+ * Descriptive or credential edits (§5.2). The server refuses `consultationFee`
+ * from a doctor (403) and forces PENDING_VERIFICATION when a credential moved;
+ * the returned status is what the page shows in its re-verification banner.
+ */
+export function apiUpdateDoctor(
+  id: string,
+  patch: Partial<
+    Pick<
+      DoctorDetail,
+      "fullName" | "qualification" | "licenseNumber" | "experience" | "clinicAssociation" | "specialization" | "consultationFee"
+    >
+  >,
+): Promise<{ verificationStatus: DoctorVerificationStatus }> {
+  return request(`/doctors/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export interface TodayQueueEntry {
+  appointmentId: string;
+  patientName: string;
+  /** Last-four mask — the full number never leaves the server (§7/§28). */
+  maskedContact: string;
+  status: "CONFIRMED" | "ARRIVED" | "COMPLETED" | "NO_SHOW";
+  bookingTime: string;
+  upNext: boolean;
+}
+
+export interface TodaySlotQueue {
+  slotId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  queue: TodayQueueEntry[];
+}
+
+export function apiDoctorToday(): Promise<{ queue: { date: string; slots: TodaySlotQueue[] } }> {
+  return request("/doctors/me/today");
+}

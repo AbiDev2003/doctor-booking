@@ -21,6 +21,7 @@ import {
   inviteStaff,
   listDoctors,
   getDoctor,
+  getTodayQueue,
   updateDoctorProfile,
   verifyDoctor,
   rejectDoctor,
@@ -164,6 +165,35 @@ doctorsRouter.get("/:id", selfOrStaff, async (req, res, next) => {
     const id = doctorIdOf(req);
     requireSelfOrRole(req, id, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
     res.status(200).json({ doctor: await getDoctor(id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* §28 — today's queue (Day 14)                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The doctor's own day-queue. Deliberately two properties, neither of which
+ * accepts a path param:
+ *
+ * - the actor is the doctor themselves — `requireRole(DOCTOR)` plus reading
+ *   the id from `req.user.id`, never from the URL, so there is no way to ask
+ *   for someone else's queue;
+ * - "today" is the clinic's calendar day inside the service
+ *   (`getTodayQueue` → `clinicDayRange`), so the route needs no date input to
+ *   textually chisel on the caller's behalf.
+ *
+ * `/me/today` is registered right here among the single-segment reads; it
+ * cannot be shadowed by the `/:id` family (those parse one segment), and
+ * keeping it before the rising `/:id/:verb` routes in later phases means no
+ * future route ever re-anchors "me".
+ */
+doctorsRouter.get("/me/today", requireRole($Enums.UserRole.DOCTOR), async (req, res, next) => {
+  try {
+    const queue = await getTodayQueue(authenticatedUser(req).id, config.APP_TIMEZONE);
+    res.status(200).json({ queue });
   } catch (err) {
     next(err);
   }

@@ -6,6 +6,8 @@ import { AppError } from "../lib/appError.js";
 import { generateToken, hashToken, getAccountClaimExpiry } from "../lib/auth.js";
 import { assertDoctorAction, isBookable } from "../lib/doctorState.js";
 import type { DoctorAction } from "../lib/doctorState.js";
+import { clinicDayRange, utcToLocalDateTime } from "../lib/time.js";
+import { maskContact } from "../lib/privacy.js";
 import { writeAudit } from "./audit.service.js";
 import { revokeAllSessions } from "./auth.service.js";
 
@@ -374,6 +376,155 @@ export async function getDoctor(doctorId: string): Promise<ReturnType<typeof toD
     throw new AppError(404, "DOCTOR_NOT_FOUND", "Doctor not found");
   }
   return toDoctorDto(user);
+}
+
+/* ------------------------------------------------------------------ */
+/* §28 — today's queue (Day 14, read-only)                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The queue the doctor's Overview and Queue screens render. Two §28 rules
+ * fully decide its shape:
+ *
+ * **"Today" is the clinic's day, not the server's.** `clinicDayRange` turns
+ * "now" into the UTC instants bounding the clinic's calendar day (the same
+ * zone the seed used to build `startAt`/`endAt` — `config.APP_TIMEZONE`), so a
+ * server in UTC never splits or merges a clinic session. A slot is today's if
+ * its `startAt` falls inside that window.
+ *
+ * **The contact is masked server-side, or not sent at all.** The patient's
+ * E.164 full number never leaves the API in this response (`maskContact` in
+ * `lib/privacy.ts` keeps the last four digits) — §7 does not trust a doctor's
+ * device with the full value, yet a desk user needs enough to tell two
+ * same-named patients apart. Only the phone is exposed: appointments carry no
+ * email by design, so there is nothing else to leak.
+ */
+
+export interface TodayQueueEntry {
+  readonly appointmentId: string;
+  readonly patientName: string;
+  /** Last-four-digit mask; the full E.164 value never appears here. */
+  readonly maskedContact: string;
+  readonly status: $Enums.AppointmentStatus;
+  readonly bookingTime: Date;
+  /** "Up next": the first CONFIRMED/ARRIVED booking among windows still open. */
+  readonly upNext: boolean;
+}
+
+export interface TodaySlotQueue {
+  readonly slotId: string;
+  /** Clinic-local calendar date (`@db.Date` read back through the zone). */
+  readonly slotDate: string;
+  /** Clinic-local wall clock, e.g. "09:00:00", straight from the stored columns. */
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly queue: readonly TodayQueueEntry[];
+}
+
+export interface TodayQueue {
+  readonly date: string;
+  readonly slots: readonly TodaySlotQueue[];
+}
+
+/**
+ * `status` controls whether a booking is *in* the day-queue at all. CANCELLED
+ * and REJECTED leave no trace in the waiting room; the queue lists who is
+ * coming, waiting, attended, or was marked absent (§28 includes NO_SHOW and
+ * COMPLETED as flags).
+ */
+const QUEUE_STATUSES = [
+  $Enums.AppointmentStatus.CONFIRMED,
+  $Enums.AppointmentStatus.ARRIVED,
+  $Enums.AppointmentStatus.COMPLETED,
+  $Enums.AppointmentStatus.NO_SHOW,
+] as const;
+
+export async function getTodayQueue(
+  doctorId: string,
+  timeZone: string,
+  now: Date = new Date(),
+): Promise<TodayQueue> {
+  const range = clinicDayRange(now, timeZone);
+
+  const rows = await prisma.appointment.findMany({
+    where: {
+      doctorId,
+      slot: { startAt: { gte: range.start, lt: range.endExclusive } },
+      status: { in: [...QUEUE_STATUSES] },
+    },
+    select: {
+      id: true,
+      status: true,
+      bookingTime: true,
+      slot: {
+        select: {
+          id: true,
+          slotDate: true,
+          startTime: true,
+          endTime: true,
+          startAt: true,
+          endAt: true,
+        },
+      },
+      patient: { select: { fullName: true, patientProfile: { select: { phone: true } } } },
+    },
+    orderBy: [{ slot: { startAt: "asc" } }, { bookingTime: "asc" }],
+  });
+
+  // Group by slot, preserving the window then booking-time order the query
+  // returned (rows all share a single day, so window order needs remembered).
+  const bySlot = new Map<string, TodaySlotQueue>();
+  const slotEndsAt = new Map<string, Date>();
+  for (const row of rows) {
+    let slot = bySlot.get(row.slot.id);
+    if (!slot) {
+      const created: TodaySlotQueue = {
+        slotId: row.slot.id,
+        // `slotDate`/`startTime`/`endTime` are timezone-less calendar columns
+        // (`@db.Date`/`@db.Time`): Prisma reads them UTC-anchored, so the
+        // wall-clock value is the ISO projection, not a clinic-zone
+        // conversion (a −05:00 clinic would otherwise read its own stored date
+        // as yesterday).
+        slotDate: row.slot.slotDate.toISOString().slice(0, 10),
+        startTime: row.slot.startTime.toISOString().slice(11, 19),
+        endTime: row.slot.endTime.toISOString().slice(11, 19),
+        queue: [],
+      };
+      bySlot.set(row.slot.id, created);
+      slotEndsAt.set(row.slot.id, row.slot.endAt);
+      slot = created;
+    }
+    (slot.queue as TodayQueueEntry[]).push({
+      appointmentId: row.id,
+      patientName: row.patient.fullName,
+      maskedContact: maskContact(row.patient.patientProfile?.phone ?? ""),
+      status: row.status,
+      bookingTime: row.bookingTime,
+      upNext: false,
+    });
+  }
+
+  // §28's "up next" is the first booking still in the room, not merely the
+  // first row: a COMPLETED early slot must not keep the flag, and a group
+  // whose window has ended is over regardless of who is listed. Walk in
+  // window-then-booking order and flag the first CONFIRMED/ARRIVED whose slot
+  // has not ended; leave the rest unflagged.
+  let flagged = false;
+  for (const slot of bySlot.values()) {
+    const windowOpen = slotEndsAt.get(slot.slotId)! > now;
+    for (const entry of slot.queue as TodayQueueEntry[]) {
+      const waiting = entry.status === $Enums.AppointmentStatus.CONFIRMED || entry.status === $Enums.AppointmentStatus.ARRIVED;
+      if (!flagged && windowOpen && waiting) {
+        (entry as { upNext: boolean }).upNext = true;
+        flagged = true;
+      }
+    }
+  }
+
+  return {
+    date: utcToLocalDateTime(range.start, timeZone).date,
+    slots: [...bySlot.values()],
+  };
 }
 
 /* ------------------------------------------------------------------ */

@@ -11,6 +11,7 @@ import { healthRouter } from "./routes/health.js";
 import { authRouter } from "./routes/auth.js";
 import { accountRouter } from "./routes/account.js";
 import { doctorsRouter, staffRouter } from "./routes/doctors.js";
+import { publicRouter } from "./routes/public.js";
 
 export function createApp() {
   const app = express();
@@ -54,6 +55,10 @@ export function createApp() {
   // two prefixes — see routes/doctors.ts for why both live in one file.
   app.use("/api/v1/doctors", doctorsRouter);
   app.use("/api/v1/staff", staffRouter);
+  // §26 public storefront (Day 13). Mounted after the authenticated routers on
+  // purpose: it is the one surface with no auth middleware, and listing it
+  // here makes that absence a visible exception rather than an accident.
+  app.use("/api/v1/public", publicRouter);
 
   app.use(notFound);
   app.use(errorHandler);

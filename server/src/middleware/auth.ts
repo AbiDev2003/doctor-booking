@@ -9,21 +9,10 @@ import { AppError } from "../lib/appError.js";
 import type {} from "../types/express.js";
 
 /**
- * Verifies the bearer token, then re-reads the account (§6.3's per-request status
- * re-check).
- *
- * The database read is what makes a suspension, archive or deactivation take
- * effect on the *next request* rather than at token expiry — plan.md:490 is
- * explicit that a 15-minute TTL alone is not sufficient. It costs one indexed
- * primary-key lookup, and it is the reason `revokeAllSessions` is instant: revoking
- * the refresh tokens stops the session being renewed, and this check stops the
- * access token already in the client's memory.
- *
+ * Verifies the bearer token, then re-reads the account (§6.3's per-request status re-check).
+ * The database read is what makes a suspension, archive or deactivation take effect on the *next request* rather than at token expiry — plan.md:490 is explicit that a 15-minute TTL alone is not sufficient. It costs one indexed primary-key lookup, and it is the reason `revokeAllSessions` is instant: revoking the refresh tokens stops the session being renewed, and this check stops the access token already in the client's memory.
  * The role is also taken from the database rather than from the JWT's `role` claim.
- * The claim is what lets a request skip the lookup in principle; reading the role
- * from the row instead means a demotion takes effect immediately too, and it costs
- * nothing extra given the row is being fetched anyway. A stale claim must never be
- * the authority on what a session may do.
+ * The claim is what lets a request skip the lookup in principle; reading the role from the row instead means a demotion takes effect immediately too, and it costs nothing extra given the row is being fetched anyway. A stale claim must never be the authority on what a session may do.
  */
 export async function requireAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
   try {
