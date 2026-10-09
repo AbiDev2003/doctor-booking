@@ -171,3 +171,188 @@ button:disabled {
   margin: 0;
   font-size: 0.875rem;
 }
+
+/* --- Day 13: public storefront + Day 14 doctor shell ------------- */
+
+.page {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.site-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.site-nav--shell {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 10;
+}
+
+.site-nav__brand {
+  font-weight: 700;
+  text-decoration: none;
+  color: #0f172a;
+}
+
+.site-nav__links {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 0.875rem;
+}
+
+.site-nav__links a.active {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.site-nav__links a {
+  color: #334155;
+  text-decoration: none;
+}
+
+.site-nav__placeholder {
+  display: inline-block;
+  width: 3.5rem;
+  height: 1rem;
+  background: #e2e8f0;
+  border-radius: 0.25rem;
+}
+
+.site-nav__signout {
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: #b91c1c;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.site-footer {
+  max-width: 48rem;
+  margin: 3rem auto 1.5rem;
+  padding: 0 1.5rem;
+  color: #94a3b8;
+  font-size: 0.875rem;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 1rem;
+}
+
+.hero h1 {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+}
+
+.hero__stats {
+  font-size: 0.875rem;
+  color: #475569;
+}
+
+.doctor-grid {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+.card--doctor {
+  margin: 0;
+  max-width: none;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.card--doctor h3 {
+  margin: 0 0 0.25rem;
+}
+
+.card--doctor .button-link {
+  margin-top: 0.5rem;
+}
+
+.doctor-grid__fee {
+  font-weight: 600;
+  margin: 0.25rem 0 0;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.chip {
+  margin: 0;
+  padding: 0.375rem 0.75rem;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.chip--active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.card--queue {
+  margin: 1rem 0;
+  max-width: none;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+}
+
+.card--queue h2 {
+  margin-top: 0;
+  font-size: 1.125rem;
+}
+
+.queue {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.queue__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+}
+
+.queue__row--up-next {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.queue__badge {
+  margin-left: 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #2563eb;
+}

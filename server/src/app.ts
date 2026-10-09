@@ -10,6 +10,8 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import { healthRouter } from "./routes/health.js";
 import { authRouter } from "./routes/auth.js";
 import { accountRouter } from "./routes/account.js";
+import { doctorsRouter, staffRouter } from "./routes/doctors.js";
+import { publicRouter } from "./routes/public.js";
 
 export function createApp() {
   const app = express();
@@ -49,6 +51,14 @@ export function createApp() {
   // the lockout-backed password checks behind it. Mounted after the auth
   // router only because it adds routes rather than intercepting any.
   app.use("/api/v1/auth", accountRouter);
+  // §5/§5.2 doctor lifecycle + §5.1 staff invitation (Day 12). Two mounts for
+  // two prefixes — see routes/doctors.ts for why both live in one file.
+  app.use("/api/v1/doctors", doctorsRouter);
+  app.use("/api/v1/staff", staffRouter);
+  // §26 public storefront (Day 13). Mounted after the authenticated routers on
+  // purpose: it is the one surface with no auth middleware, and listing it
+  // here makes that absence a visible exception rather than an accident.
+  app.use("/api/v1/public", publicRouter);
 
   app.use(notFound);
   app.use(errorHandler);

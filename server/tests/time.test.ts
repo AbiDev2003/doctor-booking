@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { AppError } from "../src/lib/appError.js";
 import {
+  clinicDayRange,
   localDateTimeToUtc,
   normalizePhoneToE164,
   utcToLocalDateTime,
@@ -216,5 +217,56 @@ describe("normalizePhoneToE164", () => {
   it("rejects a length outside the E.164 bounds", () => {
     assert.throws(() => normalizePhoneToE164("12345"), throwsCode("INVALID_PHONE"));
     assert.throws(() => normalizePhoneToE164("+9198765432109876543"), throwsCode("INVALID_PHONE"));
+  });
+});
+
+describe("clinicDayRange", () => {
+  it("bounds the clinic-local day in UTC instants", () => {
+    // 2026-10-01 03:30Z is 09:00 the same morning in +05:30, so the clinic
+    // day 2026-10-01 runs from its local midnight — which in +05:30 is the
+    // PREVIOUS UTC date's 18:30Z — to the exclusive local midnight a day on.
+    const range = clinicDayRange(new Date("2026-10-01T03:30:00Z"), CLINIC_ZONE);
+    assert.equal(range.start.toISOString(), "2026-09-30T18:30:00.000Z");
+    assert.equal(range.endExclusive.toISOString(), "2026-10-01T18:30:00.000Z");
+  });
+
+  it("maps a UTC instant whose clinic-local date differs to the local day", () => {
+    // 23:00Z is 04:30 the NEXT morning in +05:30: still the same clinic day
+    // window, whose bounds sit a UTC date in the past.
+    const range = clinicDayRange(new Date("2026-10-01T23:00:00Z"), CLINIC_ZONE);
+    assert.equal(range.start.toISOString(), "2026-10-01T18:30:00.000Z");
+    assert.equal(range.endExclusive.toISOString(), "2026-10-02T18:30:00.000Z");
+  });
+
+  it("minus-offset zones start their day on the previous UTC date", () => {
+    const range = clinicDayRange(new Date("2026-10-02T04:00:00Z"), DST_ZONE); // 00:00 EDT
+    assert.equal(range.start.toISOString(), "2026-10-02T04:00:00.000Z");
+  });
+
+  it("rolls cleanly across a month boundary", () => {
+    // 2026-10-31 23:30 local (+0530) is 2026-10-31T18:00Z. The start must be
+    // the 30th's 18:30Z and the exclusive end the 31st's 18:30Z — nothing may
+    // slip back to the 30th (out ahead of midnight) or forward past midnight.
+    const range = clinicDayRange(new Date("2026-10-31T18:00:00Z"), CLINIC_ZONE);
+    assert.equal(range.start.toISOString(), "2026-10-30T18:30:00.000Z");
+    assert.equal(range.endExclusive.toISOString(), "2026-10-31T18:30:00.000Z");
+  });
+
+  it("keeps a DST-sprung-forward day 23 hours long and correctly bounded", () => {
+    // 2026-03-08 11:00 EDT — the day DST began in New York. The day window is
+    // 23 real hours; the start must still be its local midnight and the end
+    // the following local midnight, not ±24h from now.
+    const spring = clinicDayRange(new Date("2026-03-08T15:00:00Z"), DST_ZONE); // 11:00 EDT
+    assert.equal(spring.start.toISOString(), "2026-03-08T05:00:00.000Z"); // 00:00 EST
+    assert.equal(spring.endExclusive.toISOString(), "2026-03-09T04:00:00.000Z"); // 00:00 EDT
+  });
+
+  it("keeps a DST-fallback day 25 hours long and correctly bounded", () => {
+    // 2026-11-01 12:00 EST — the day DST ended in New York. The window must
+    // cover 25 real hours without inventing a second day or skipping the
+    // repeated hour: 00:00 EDT (04:00Z) → 00:00 EST the following day (05:00Z).
+    const fall = clinicDayRange(new Date("2026-11-01T17:00:00Z"), DST_ZONE); // 12:00 EST
+    assert.equal(fall.start.toISOString(), "2026-11-01T04:00:00.000Z"); // 00:00 EDT
+    assert.equal(fall.endExclusive.toISOString(), "2026-11-02T05:00:00.000Z"); // 00:00 EST
   });
 });

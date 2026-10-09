@@ -85,3 +85,14 @@ export function looksLikeOtp(rawToken: string): boolean {
 export function getPasswordResetExpiry(): Date {
   return new Date(Date.now() + durationToMs(config.PASSWORD_RESET_TTL));
 }
+
+/**
+ * §5.1's invite-claim expiry — its own knob (`ACCOUNT_CLAIM_TTL`, 24h default)
+ * for the reason documented in config.ts: an invitation is not an emergency,
+ * and borrowing PASSWORD_RESET_TTL's 15 minutes would resend invites all day.
+ * Same `durationToMs` parser as every other duration in this codebase, so the
+ * format is owned by one module.
+ */
+export function getAccountClaimExpiry(): Date {
+  return new Date(Date.now() + durationToMs(config.ACCOUNT_CLAIM_TTL));
+}

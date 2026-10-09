@@ -9,21 +9,10 @@ import { AppError } from "../lib/appError.js";
 import type {} from "../types/express.js";
 
 /**
- * Verifies the bearer token, then re-reads the account (§6.3's per-request status
- * re-check).
- *
- * The database read is what makes a suspension, archive or deactivation take
- * effect on the *next request* rather than at token expiry — plan.md:490 is
- * explicit that a 15-minute TTL alone is not sufficient. It costs one indexed
- * primary-key lookup, and it is the reason `revokeAllSessions` is instant: revoking
- * the refresh tokens stops the session being renewed, and this check stops the
- * access token already in the client's memory.
- *
+ * Verifies the bearer token, then re-reads the account (§6.3's per-request status re-check).
+ * The database read is what makes a suspension, archive or deactivation take effect on the *next request* rather than at token expiry — plan.md:490 is explicit that a 15-minute TTL alone is not sufficient. It costs one indexed primary-key lookup, and it is the reason `revokeAllSessions` is instant: revoking the refresh tokens stops the session being renewed, and this check stops the access token already in the client's memory.
  * The role is also taken from the database rather than from the JWT's `role` claim.
- * The claim is what lets a request skip the lookup in principle; reading the role
- * from the row instead means a demotion takes effect immediately too, and it costs
- * nothing extra given the row is being fetched anyway. A stale claim must never be
- * the authority on what a session may do.
+ * The claim is what lets a request skip the lookup in principle; reading the role from the row instead means a demotion takes effect immediately too, and it costs nothing extra given the row is being fetched anyway. A stale claim must never be the authority on what a session may do.
  */
 export async function requireAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
   try {
@@ -54,6 +43,8 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
         // place the caller's own identity comes from.
         doctorProfile: { select: { suspendedAt: true, verificationStatus: true } },
         patientProfile: { select: { phone: true } },
+        // §20's actorName snapshot source (Day 12): one more column on the row already being fetched, so no audit writer ever needs a second read of the actor.
+        fullName: true,
       },
     });
 
@@ -90,7 +81,13 @@ export async function requireAuth(req: Request, _res: Response, next: NextFuncti
     // in order to complete it. §6.3 gates booking, not login, and the booking-side
     // check is Phase 4's. The §5 transition matrix itself is Day 12's; this is
     // deliberately only the two states §5.2 says disable login.
-    req.user = { id: user.id, role: user.role, email: user.email, phone: user.patientProfile?.phone ?? null };
+    req.user = {
+      id: user.id,
+      role: user.role,
+      email: user.email,
+      phone: user.patientProfile?.phone ?? null,
+      name: user.fullName,
+    };
     next();
   } catch (err) {
     next(err);

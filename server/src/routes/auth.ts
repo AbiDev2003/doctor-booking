@@ -2,7 +2,7 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import { config } from "../config.js";
 import { AppError } from "../lib/appError.js";
-import { registerSchema, verifyEmailSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema } from "../schemas/auth.js";
+import { registerSchema, verifyEmailSchema, loginSchema, forgotPasswordSchema, resetPasswordSchema, claimAccountSchema } from "../schemas/auth.js";
 import {
   registerPatient,
   verifyEmail,
@@ -11,6 +11,7 @@ import {
   logout,
   forgotPassword,
   resetPassword,
+  claimAccount,
 } from "../services/auth.service.js";
 import {
   REFRESH_COOKIE_NAME,
@@ -227,6 +228,42 @@ authRouter.post("/reset-password", async (req, res, next) => {
     // access token would look signed-in against a session that no longer
     // renews until its 15-minute TTL lapses.
     res.status(200).json({ message: "Password has been reset. You can now sign in." });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Day 12 — §5.1 account claim (the invitation's second half)          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The invitation link's landing endpoint — unauthenticated for the same
+ * reason `/reset-password` is: the link is opened from an inbox, possibly on
+ * a device where nobody is signed in, and the token itself is the
+ * authorization (D1: its own `ACCOUNT_CLAIM` purpose and `ACCOUNT_CLAIM_TTL`,
+ * deliberately not the 15-minute reset's — an invitation may sit unread for
+ * hours, and a token that expires faster than people read email becomes a
+ * support loop).
+ *
+ * Response is generic on a bad token (400 `INVALID_OR_EXPIRED_TOKEN` from the
+ * service, like reset), and success reports only "claimed": no session is
+ * issued here — the account's `INVITED` status may still gate what happens
+ * next, and Day 9's login remains the single place sessions are minted. The
+ * client routes to sign-in on 200 (client/src/pages/ClaimAccount.tsx).
+ */
+authRouter.post("/claim-account", async (req, res, next) => {
+  try {
+    const parsed = claimAccountSchema.parse(req.body);
+
+    await claimAccount({
+      token: parsed.token,
+      password: parsed.password,
+      ip: getClientIp(req),
+      requestId: getRequestId(res),
+    });
+
+    res.status(200).json({ message: "Account claimed. You can now sign in." });
   } catch (err) {
     next(err);
   }

@@ -733,3 +733,143 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
     });
   });
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 12 — §5.1 account claim (the invitation's second half)          */
+/* ------------------------------------------------------------------ */
+
+export interface ClaimAccountInput {
+  token: string;
+  password: string;
+  ip?: string | null;
+  requestId?: string | null;
+}
+
+/**
+ * §5.1's claim — the moment an invited DOCTOR/STAFF/ADMIN sets their first
+ * password. This is the whole reason `User.passwordHash` is nullable: the
+ * account exists (`null` hash = provisioned, not claimed) and this is the one
+ * path that turns it into a real credential. §5.1 forbids handing anyone a
+ * temporary password, so the invitation token IS the credential proof.
+ *
+ * Deliberately the same shape as `resetPassword` above — same caps, same
+ * generic single-use rejection, same conditional claim as the concurrency
+ * lock — because it is literally the same mechanic with a different
+ * `purpose`. Differences, each with a reason:
+ *
+ * - **TTL is `ACCOUNT_CLAIM_TTL` (24h), not `PASSWORD_RESET_TTL` (15m):**
+ *   a reset is an emergency, an invitation is not (config.ts).
+ * - **`emailVerifiedAt` is set on claim (Day 12 decision D4):** the link was
+ *   delivered to this address, so opening it is proof of the address — §6.3
+ *   does not REQUIRE verification for provisioned roles, so this gates
+ *   nothing; it simply stops the flag from being a lie.
+ * - **Sessions are NOT revoked:** with a null `passwordHash` this account
+ *   could never log in (login compares against a null hash and fails), so
+ *   there is no session to revoke. A second claim racing the first is settled
+ *   by the conditional token claim, not by revocation.
+ * - **No `DoctorHistory` row:** claiming is an auth event on a `User`, not a
+ *   doctor-lifecycle event. The `AuditLog` row below is the record; the
+ *   `INVITED` history row was written when the invitation created the
+ *   profile.
+ *
+ * The DoctorProfile's `verificationStatus` deliberately does not move here:
+ * `INVITED` means "has not submitted profile details yet" (§5), and a
+ * password says nothing about credentials. Status moves on the §5.2
+ * credential edit.
+ */
+export async function claimAccount(input: ClaimAccountInput): Promise<{ userId: string }> {
+  const submittedToken = input.token.trim();
+  const tokenHash = hashToken(submittedToken);
+  const ipKey = input.ip ?? UNKNOWN_IP_KEY;
+
+  // The same per-token and per-IP budgets as every other token verification
+  // (§6.3): five looks total, twenty a minute from one host. The claim token is a 32-byte link — guessing it is hopeless — but the caps cost nothing and one code path cannot drift from the others.
+  await assertOtpVerifyAllowed(tokenHash, ipKey);
+
+  const attempt = {
+    identifierKey: tokenHash,
+    ipKey,
+    purpose: $Enums.AuthAttemptPurpose.OTP_VERIFY,
+  };
+
+  const authToken = await prisma.authToken.findUnique({
+    where: { tokenHash },
+    include: { user: true },
+  });
+
+  // One refusal for every way a token can be wrong: distinguishing "no such
+  // token" from "already claimed" would tell a prober which of their guesses
+  // was real. Same doctrine as verifyEmail and resetPassword.
+  const rejectInvalidToken = async (): Promise<never> => {
+    await recordFailureQuietly(attempt);
+    throw new AppError(400, "INVALID_OR_EXPIRED_TOKEN", "Invalid or expired invitation token");
+  };
+
+  if (!authToken) {
+    return rejectInvalidToken();
+  }
+  if (authToken.purpose !== $Enums.AuthTokenPurpose.ACCOUNT_CLAIM) {
+    return rejectInvalidToken();
+  }
+  if (authToken.consumedAt !== null) {
+    return rejectInvalidToken();
+  }
+  if (authToken.expiresAt < new Date()) {
+    return rejectInvalidToken();
+  }
+  if (authToken.user.isDeactivated) {
+    await recordFailureQuietly(attempt);
+    throw new AppError(403, "ACCOUNT_DEACTIVATED", "Account is deactivated");
+  }
+
+  await recordAttempt({ ...attempt, succeeded: true });
+
+  // bcrypt BEFORE the transaction — ~100ms must not hold a connection open.
+  const passwordHash = await hashPassword(input.password);
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    // The conditional claim IS the single-use lock: two racing submits both
+    // read `consumedAt = null`, only one flips it.
+    const claimed = await tx.authToken.updateMany({
+      where: { id: authToken.id, consumedAt: null },
+      data: { consumedAt: now },
+    });
+    if (claimed.count !== 1) {
+      throw new AppError(400, "INVALID_OR_EXPIRED_TOKEN", "Invalid or expired invitation token");
+    }
+
+    // A resend issues a fresh token; claiming with one must not leave any
+    // earlier invitation still live — the same sweep resetPassword does for
+    // PASSWORD_RESET, scoped to this purpose.
+    await tx.authToken.updateMany({
+      where: {
+        userId: authToken.userId,
+        purpose: $Enums.AuthTokenPurpose.ACCOUNT_CLAIM,
+        consumedAt: null,
+      },
+      data: { consumedAt: now },
+    });
+
+    await tx.user.update({
+      where: { id: authToken.userId },
+      data: { passwordHash, emailVerifiedAt: now },
+    });
+
+    await writeAudit(tx, {
+      action: "ACCOUNT_CLAIMED",
+      targetType: "user",
+      targetId: authToken.userId,
+      actor: {
+        id: authToken.user.id,
+        role: authToken.user.role,
+        name: authToken.user.fullName,
+      },
+      after: { passwordSet: true, emailVerified: true },
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+  });
+
+  return { userId: authToken.userId };
+}

@@ -90,3 +90,20 @@ export const resetPasswordSchema = z.object({
 });
 
 export type ResetPasswordInputShape = z.infer<typeof resetPasswordSchema>;
+
+/**
+ * §5.1 account claim (Day 12) — the invitation's password half. Lives beside
+ * resetPassword because it IS a reset of the same kind: one link token, one
+ * password validator, same rules by the reasoning above. The distinction the
+ * plan insists on is in the TOKEN's purpose and lifetime (`ACCOUNT_CLAIM`,
+ * `ACCOUNT_CLAIM_TTL`, decided D1/D3), not in the password policy.
+ */
+export const claimAccountSchema = z.object({
+  token: z.string().trim().min(1, "Token is required"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(128, "Password must not exceed 128 characters"),
+});
+
+export type ClaimAccountInputShape = z.infer<typeof claimAccountSchema>;

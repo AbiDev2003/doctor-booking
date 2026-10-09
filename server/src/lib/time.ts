@@ -287,6 +287,41 @@ export function formatInClinicTime(instant: Date, timeZone: string): string {
   return `${local.date} ${local.time}`;
 }
 
+/**
+ * The UTC instants bounding a clinic-local calendar day.
+ *
+ * "Today" is a property of the clinic's timezone, never of the server's — a
+ * host running UTC is 5.5 hours behind `Asia/Kolkata`, so `new Date()` alone
+ * would split a clinic day in two. Day 14's doctor queue window and Phase 4's
+ * slot materialisation both query by these bounds.
+ *
+ * The day is computed from the instant's own clinic-local date, then the next
+ * clinic-local date is the `Date.UTC(year, month, day + 1)` one-calendar-day
+ * shift formatted back into the zone — `Date.UTC` is pure proleptic-calendar
+ * arithmetic, so the shift is deterministic even across a DST transition and a
+ * year boundary, and `localDateTimeToUtc` answers for whatever zone is asked.
+ * The end bound is exclusive, matching every other `gte`/`lt` window in this
+ * codebase.
+ */
+export function clinicDayRange(
+  instant: Date,
+  timeZone: string,
+): { readonly start: Date; readonly endExclusive: Date } {
+  const date = utcToLocalDateTime(instant, timeZone).date;
+  // Slicing a fixed-length `YYYY-MM-DD` string (rather than `split().map(Number)`)
+  // keeps the parts `number` under `noUncheckedIndexedAccess`: `Number("2026")`
+  // is always a number, while an array element is `number | undefined`.
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7)) - 1; // Date.UTC's 0-based month
+  const day = Number(date.slice(8, 10));
+  const tomorrow = new Date(Date.UTC(year, month, day + 1)).toISOString().slice(0, 10);
+
+  return {
+    start: localDateTimeToUtc({ date, time: "00:00:00" }, timeZone),
+    endExclusive: localDateTimeToUtc({ date: tomorrow, time: "00:00:00" }, timeZone),
+  };
+}
+
 const MIN_E164_DIGITS = 8;
 const MAX_E164_DIGITS = 15;
 
