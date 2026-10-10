@@ -12,6 +12,10 @@ import { logger } from "../lib/logger.js";
 import { writeAudit } from "./audit.service.js";
 import { revokeAllSessions } from "./auth.service.js";
 import { materializeSlots } from "./slotGeneration.service.js";
+import {
+  applyUnavailabilityCascade,
+  OPEN_ENDED_WINDOW_END,
+} from "./appointmentCascade.service.js";
 
 /**
  * plan.md §5, §5.1, §5.2 — the doctor lifecycle, Day 12.
@@ -28,17 +32,16 @@ import { materializeSlots } from "./slotGeneration.service.js";
  * rather than a second audit row overwriting the first suspension's timestamp
  * and reason.
  *
- * **§12 cascade seam (suspend/archive):** plan §5.2 makes suspension and
+ * **§12 cascade (suspend/archive, Day 18):** plan §5.2 makes suspension and
  * archive auto-trigger the §12 affected-appointment cascade (email every
  * patient with a future CONFIRMED booking, waive the cutoff, auto-cancel and
- * refund at slot end). Appointments do not exist until Day 19 and refunds
- * until Day 24, so the loop lands with Day 18's unavailability cascade — the
- * same code, because §12 says suspension "reuses this same cascade". Each
- * suspend/archive below carries a marker comment at exactly where it hooks
- * in. What is real TODAY is the other half of immediacy: status flip + every
- * session revoked in the same transaction, so login dies at once (Day 9's
- * per-request re-check in middleware/auth.ts blocks any access token still in
- * flight).
+ * refund at slot end). That is wired below to the SAME `applyUnavailabilityCascade`
+ * `createDoctorUnavailability` runs, with an open-ended window (§12 says
+ * suspension "reuses this same cascade"). Appointments do not exist until Day
+ * 19, so today it is a no-op that only closes the seam; on top of it, status
+ * flip + every session revoked in the same transaction mean login dies at once
+ * (Day 9's per-request re-check in middleware/auth.ts blocks any access token
+ * still in flight).
  *
  * **Role limits are enforced twice on purpose:** the route gates (Day 10's
  * `requireRole`) decide who may reach each endpoint, and the matrix re-decides
@@ -869,16 +872,21 @@ export async function rejectDoctor(input: DoctorStateActionInput): Promise<void>
 
 /**
  * SUSPEND — STAFF or ADMIN, mandatory reason, ONE transaction (§5.2):
- * status columns + every session revoked + audit + history. The revocation is
- * what makes Day 9's DoD real for doctors: refresh tokens die here, and any
- * access token still in flight is refused by the per-request re-check on its
- * next request — not at expiry.
+ * status columns + every session revoked + the §12 affected-appointment
+ * cascade + audit + history. The revocation is what makes Day 9's DoD real
+ * for doctors: refresh tokens die here, and any access token still in flight
+ * is refused by the per-request re-check on its next request — not at expiry.
  *
- * §12 CASCADE SEAM (Day 18): every future CONFIRMED appointment for this
- * doctor gets the unavailability cascade — automatic patient emails, cutoff
- * waived, auto-cancel + full refund at slot end. Appointments do not exist
- * until Day 19; the loop lands with Day 18's cascade, which §12 says is the
- * SAME code. Slot re-closing (§8.4) is the other half of that seam.
+ * §12 CASCADE: every future CONFIRMED appointment for this doctor is emailed
+ * (a queued Notification row) and auto-cancelled + refunded at slot end —
+ * wired to the SAME cascade `createDoctorUnavailability` runs (plan §5.2,
+ * §12). A suspension has no DoctorUnavailability row to reference, so no
+ * marker is stamped — the patients are the product. With appointments not
+ * existing until Day 19 this is a no-op today; the marker/refund
+ * classification for status-change cascades is finalised when §17's
+ * cancellation logic lands (Days 21–23).
+ *
+ * Slot re-closing (§8.4) is the other half of that seam.
  */
 export async function suspendDoctor(input: DoctorStateActionInput & { readonly reason: string }): Promise<void> {
   const reason = input.reason.trim();
@@ -900,6 +908,17 @@ export async function suspendDoctor(input: DoctorStateActionInput & { readonly r
     }
 
     await revokeAllSessions(tx, input.doctorId);
+
+    // §12 CASCADE — same seam as createDoctorUnavailability, open-ended.
+    await applyUnavailabilityCascade(tx, {
+      doctorId: input.doctorId,
+      window: { startAt: now, endAt: OPEN_ENDED_WINDOW_END },
+      disruptionId: null,
+      reason,
+      actor: input.actor,
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
 
     await writeAudit(tx, {
       action: "DOCTOR_SUSPENDED",
@@ -1004,7 +1023,17 @@ export async function archiveDoctor(input: DoctorStateActionInput & { readonly r
 
     await revokeAllSessions(tx, input.doctorId);
 
-    // §12 CASCADE SEAM (Day 18) — identical to suspendDoctor's above.
+    // §12 CASCADE — same seam as suspendDoctor's above, same open-ended window:
+    // every future CONFIRMED appointment is notified and closed at slot end.
+    await applyUnavailabilityCascade(tx, {
+      doctorId: input.doctorId,
+      window: { startAt: new Date(), endAt: OPEN_ENDED_WINDOW_END },
+      disruptionId: null,
+      reason,
+      actor: input.actor,
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
 
     await writeAudit(tx, {
       action: "DOCTOR_ARCHIVED",
