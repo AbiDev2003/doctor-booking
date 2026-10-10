@@ -362,9 +362,28 @@ export interface PublicDoctor {
 }
 
 export interface PublicClinicResult {
-  clinic: { name: string; timezone: string; currency: string };
+  clinic: { name: string; timezone: string; currency: string; bookingHorizonDays: number };
   /** §26's truthful statistics, derived from real bookable doctors. */
   stats: { doctorCount: number; specializationCount: number };
+}
+
+/** One bookable window the availability read model returns (server DTO twin). */
+export interface PublicAvailabilitySlot {
+  slotId: string;
+  /** Clinic-local `YYYY-MM-DD`. */
+  slotDate: string;
+  /** Clinic-local `HH:MM` wall clock. */
+  startTime: string;
+  endTime: string;
+  /** Free seats per the stored counters — a UX hint, floored at zero. */
+  remaining: number;
+}
+
+export function apiPublicDoctorAvailability(
+  doctorId: string,
+  date: string,
+): Promise<{ availability: PublicAvailabilitySlot[] }> {
+  return request(`/public/doctors/${encodeURIComponent(doctorId)}/availability?date=${encodeURIComponent(date)}`);
 }
 
 export function apiPublicClinic(): Promise<PublicClinicResult> {

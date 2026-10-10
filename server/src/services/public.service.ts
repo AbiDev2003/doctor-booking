@@ -126,10 +126,33 @@ export async function getPublicDoctor(doctorId: string): Promise<PublicDoctor> {
   return toPublicDoctorDto(user, defaultFee);
 }
 
+/**
+ * A 404 unless `doctorId` names a bookable doctor — the §5 rule, spelled the
+ * same `bookableFilter` way. Day 17's availability endpoint calls this so
+ * "whose slots may we list?" and "who is on the public site?" can never
+ * disagree: a suspended or unverified doctor answers the same generic
+ * `DOCTOR_NOT_FOUND` everywhere, revealing nothing about what exists.
+ */
+export async function assertBookableDoctor(doctorId: string): Promise<void> {
+  const user = await prisma.user.findFirst({
+    where: { id: doctorId, ...bookableFilter },
+    select: { id: true },
+  });
+  if (!user) {
+    throw new AppError(404, "DOCTOR_NOT_FOUND", "Doctor not found");
+  }
+}
+
 export interface PublicClinic {
   readonly name: string;
   readonly timezone: string;
   readonly currency: string;
+  /**
+   * §10's booking horizon, exposed so the storefront can bound its date input
+   * to `[today, today + horizon]` — the client cannot learn this any other way,
+   * and a request outside the window is simply empty rather than an error.
+   */
+  readonly bookingHorizonDays: number;
 }
 
 export interface PublicClinicStats {
@@ -147,7 +170,7 @@ export interface PublicClinicResult {
 
 export async function getPublicClinic(): Promise<PublicClinicResult> {
   const [clinic, doctorCount, specializations] = await Promise.all([
-    prisma.clinic.findFirst({ select: { name: true, timezone: true, currency: true } }),
+    prisma.clinic.findFirst({ select: { name: true, timezone: true, currency: true, bookingHorizonDays: true } }),
     prisma.user.count({ where: bookableFilter }),
     prisma.doctorProfile.findMany({
       where: {
@@ -165,7 +188,12 @@ export async function getPublicClinic(): Promise<PublicClinicResult> {
   }
 
   return {
-    clinic: { name: clinic.name, timezone: clinic.timezone, currency: clinic.currency },
+    clinic: {
+      name: clinic.name,
+      timezone: clinic.timezone,
+      currency: clinic.currency,
+      bookingHorizonDays: clinic.bookingHorizonDays,
+    },
     stats: { doctorCount, specializationCount: specializations.length },
   };
 }
