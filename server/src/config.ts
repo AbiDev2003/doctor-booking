@@ -34,7 +34,7 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1, "required — the PostgreSQL connection string"),
   PORT: z.coerce.number().int().positive().max(65535).default(3000),
   CLIENT_URL: z.url("must be a valid URL, e.g. http://localhost:5173"),
-  APP_TIMEZONE: z.string().min(1, "required — IANA zone used for display only"),
+  APP_TIMEZONE: z.string().min(1, "required — IANA zone that bootstraps Clinic.timezone"),
   // Only two things read this: the refresh cookie's `secure` flag and
   // `sameSite`. Both must differ between localhost and a real deployment —
   // see lib/cookies.ts for why SameSite breaks on separate subdomains.
@@ -123,6 +123,27 @@ const envSchema = z.object({
     {
       path: ["LOCKOUT_MAX_WINDOW"],
       message: "must be greater than or equal to LOCKOUT_WINDOW — the escalation cap cannot be below the base window",
+    },
+  )
+  // A typo'd zone here (APP_TIMEZONE seeds Clinic.timezone on Day 6, which is
+  // the runtime authority for every wall-clock conversion since Day 15)
+  // surfaces as INVALID_TIMEZONE at the first conversion — a 500 in the
+  // request path, far from the value that caused it. Refusing that value at
+  // boot makes the fix be "edit .env", not "have the clinic not load".
+  // Intl.DateTimeFormat throws RangeError on an unknown zone; construction is
+  // the whole validation, nothing needs formatting.
+  .refine(
+    (env) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: env.APP_TIMEZONE });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    {
+      path: ["APP_TIMEZONE"],
+      message: "is not a valid IANA time zone (e.g. Asia/Kolkata, America/New_York)",
     },
   );
 
