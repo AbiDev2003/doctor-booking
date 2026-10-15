@@ -16,6 +16,7 @@ import { schedulesRouter } from "./routes/schedules.js";
 import { slotsRouter } from "./routes/slots.js";
 import { clinicsRouter } from "./routes/clinics.js";
 import { unavailabilitiesRouter } from "./routes/unavailability.js";
+import { appointmentsRouter } from "./routes/appointments.js";
 
 export function createApp() {
   const app = express();
@@ -71,6 +72,9 @@ export function createApp() {
   // §12 unavailability (Day 18). DOCTOR/ADMIN/STAFF; a doctor manages only
   // their own disruptions, staff/admin manage any.
   app.use("/api/v1/unavailabilities", unavailabilitiesRouter);
+  // §15 booking (Day 19). PATIENT self-booking; the last-seat guard, per-patient
+  // cap and same-slot rule all live inside the booking transaction.
+  app.use("/api/v1/appointments", appointmentsRouter);
   // §26 public storefront (Day 13). Mounted after the authenticated routers on
   // purpose: it is the one surface with no auth middleware, and listing it
   // here makes that absence a visible exception rather than an accident.

@@ -586,7 +586,7 @@ same generic message a forged one gets.
 - `[C]` Doctor shell: profile edit (triggers re-verification), schedule placeholder, today's
   appointments, read-only live queue (name + masked contact + status, "up next") (§28).
 - **DoD:** doctor can view/edit own profile and see today's queue read-only.
-- **Phase 3 complete.**
+- **Phase 3 complete. [DONE]**
 
 ---
 
@@ -648,7 +648,7 @@ same generic message a forged one gets.
 - `[T]` "Attendance is never overwritten" — a `COMPLETED`/`NO_SHOW` patient is not
   auto-cancelled.
 - **DoD:** marking a doctor unavailable closes slots and cleanly cascades bookings.
-- **Phase 4 complete.**
+- **Phase 4 complete. [DONE]**
 
 ---
 
@@ -663,6 +663,19 @@ The correctness-critical phase. Slow down here.
   index). Queue position = rank by `bookingTime` (no stored counter) (§8.1, §15).
 - `[C]` Confirm-booking flow (no payment yet).
 - **DoD:** two people race for the last seat — exactly one wins; no overbooking.
+
+#### Decisions locked for Day 19
+| # | Decision |
+|---|----------|
+| 1 | Scope = patient self-booking, pay-at-clinic only, born `CONFIRMED`. No `Payment` row and no `SeatHold` (money is Phase 6); desk/walk-in booking is Day 32. |
+| 2 | Last-seat guard = §15's atomic `UPDATE slots … WHERE booked_count + held_count < max_patients` via `$executeRaw` (Prisma `where` cannot compare two columns); 0 rows → 409 `SLOT_FULL`. The `booked_count + held_count <= max_patients` CHECK is the backstop. The `FOR UPDATE` lock is on the PATIENT row, not the slot. |
+| 3 | Per-patient cap (§15) counts `CONFIRMED`+`ARRIVED` bookings **and** live holds (`released_at IS NULL AND expires_at > now()`), read inside the transaction after `SELECT … FROM users WHERE id = ? FOR UPDATE` — the patient-row lock serializes same-patient attempts so two cannot both pass. |
+| 4 | Same-slot rule = §15's partial unique index, with an explicit pre-check (`ACTIVE_BOOKING_STATUSES = [CONFIRMED, ARRIVED]`) for a clean 409 `ALREADY_BOOKED`; a P2002 race is mapped to the same. |
+| 5 | §6.3 e-mail gate read off the locked row → 403 `EMAIL_NOT_VERIFIED`. §5 bookability re-applied in-transaction via `isBookable`; the five non-capacity hides live in pure `lib/bookingGuard.ts` (fullness deliberately excluded — the guarded UPDATE owns it). |
+| 6 | One transaction writes `Appointment` (snapshots `doctorName`/`feeAmount`/`bookingTime`) + `AppointmentHistory` `BOOKED` + `AuditLog` `APPOINTMENT_BOOKED`. Route `POST /api/v1/appointments`, PATIENT-only (service re-enforces). Queue position stays a rank over `bookingTime` — no stored counter. |
+| 7 | Error codes: 404 `SLOT_NOT_FOUND`/`DOCTOR_NOT_FOUND`; 409 `SLOT_FULL`/`SLOT_DISABLED`/`SLOT_STARTED`/`DOCTOR_UNAVAILABLE`/`ALREADY_BOOKED`/`BOOKING_CAP_REACHED`; 422 `BOOKING_OUTSIDE_HORIZON`; 403 `EMAIL_NOT_VERIFIED`. |
+| 8 | DoD: pure `tests/bookingGuard.test.ts` + scratch `scripts/day19-dod.ts` (concurrent last-seat race, self-cleaning). The DB-backed concurrency suite lands Day 20/36. |
+| 9 | The doctor profile's Book button is live: signed-out → `/login?returnTo=/doctors/:id` (Login honours a relative `returnTo` and refreshes the session query); non-patient → desk message; patient → confirmation panel. |
 
 ### Day 20 — Concurrency + audit
 - `[S]` Double-booking/overbooking tests hammering the last seat (§15, `[T]`).
