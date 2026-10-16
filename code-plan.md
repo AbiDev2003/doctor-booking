@@ -682,6 +682,16 @@ The correctness-critical phase. Slow down here.
 - `[S]` `AuditLog` on every state change; `AppointmentHistory` timeline written.
 - **DoD:** concurrency tests green; every booking/cancel/transition is audited + in history.
 
+#### Decisions locked for Day 20
+| # | Decision |
+|---|----------|
+| 1 | Concurrency proof = scratch `scripts/day20-dod.ts` against the seeded local DB (day19-dod style, self-cleaning). The Vitest+Supertest harness stays Day 35; `npm test` stays DB-free. |
+| 2 | Races: 5 patients × 2 seats (exactly 2 winners); same-patient same-slot concurrent → 1 + `ALREADY_BOOKED` (P2002 path); same-patient 4 different slots vs cap 3 → 1 × `BOOKING_CAP_REACHED`; per-winner exactly 1 BOOKED history + 1 audit row, losers write none. Plus a synthetic live `SeatHold` counting toward the cap. |
+| 3 | Audit scope today = completeness sweep of existing writers + the read side. Cancel/attendance/reschedule auditing lands with Days 21–22 services (same in-transaction `writeAudit` contract); nothing pulled forward. |
+| 4 | Audit read = `listAuditEntries` + `GET /api/v1/audit` ADMIN-only, filters `targetType`/`targetId`/`action`, keyset pagination on `(createdAt, id)`. No UI (Day 33), no file export (§42). |
+| 5 | §20 append-only proven by a pure unit test asserting `audit.service.ts` exports no update/delete mutator; DB-level checks stay in `scripts/assert-constraints.ts`; REVOKE grants deferred (§42). |
+| 6 | Wiring: new `scripts/day20-dod.ts`, `npx tsx`, no new npm script; day19-dod untouched. |
+
 ### Day 21 — Status transitions + attendance
 - `[S]` Enforce the §13 matrix server-side (terminal states; no `COMPLETED` directly from
   `CONFIRMED`; `NO_SHOW` only after `endAt`; `REJECTED` needs a reason).

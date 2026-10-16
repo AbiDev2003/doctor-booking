@@ -17,6 +17,7 @@ import { slotsRouter } from "./routes/slots.js";
 import { clinicsRouter } from "./routes/clinics.js";
 import { unavailabilitiesRouter } from "./routes/unavailability.js";
 import { appointmentsRouter } from "./routes/appointments.js";
+import { auditRouter } from "./routes/audit.js";
 
 export function createApp() {
   const app = express();
@@ -75,6 +76,9 @@ export function createApp() {
   // §15 booking (Day 19). PATIENT self-booking; the last-seat guard, per-patient
   // cap and same-slot rule all live inside the booking transaction.
   app.use("/api/v1/appointments", appointmentsRouter);
+  // §20 audit read surface (Day 20). ADMIN-only, read-only: the write side has
+  // existed since Day 11, and this is the "reads/exports" half Day 11 deferred.
+  app.use("/api/v1/audit", auditRouter);
   // §26 public storefront (Day 13). Mounted after the authenticated routers on
   // purpose: it is the one surface with no auth middleware, and listing it
   // here makes that absence a visible exception rather than an accident.
