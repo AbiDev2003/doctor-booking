@@ -699,6 +699,18 @@ The correctness-critical phase. Slow down here.
 - `[S]` Patient cancel (before cutoff) and the §12 auto-cancel job.
 - **DoD:** illegal transitions are rejected; check-in flow works.
 
+#### Decisions locked for Day 21
+| # | Decision |
+|---|----------|
+| 1 | Surface = five explicit verb routes, `POST /api/v1/appointments/:id/{arrive,complete,no-show,reject,cancel}` (no single `PATCH status`). A verb names its intent, so the matrix row and its wall are unambiguous at the edge. |
+| 2 | Reason rule: rejecting and a STAFF cancellation require a non-blank `reason` (422 `REASON_REQUIRED`); a patient self-cancel's reason is optional. |
+| 3 | The §13.1 `PENDING`-payment wall on `COMPLETED`/`NO_SHOW` is built now as a no-op (`payment.count`, always 0 until Phase 6) so the guard is in place before money rows exist. |
+| 4 | `REJECTED` refund is DEFERRED to Phase 6 (Day 25). Today writes zero money code and one comment naming the deferred refund; the notification row is still queued (§18). |
+| 5 | Cancellations and rejections queue their §18 `APPOINTMENT_CANCELLED`/`APPOINTMENT_REJECTED` `Notification` row now via `queueNotification`; actual sending is Phase 7. A provisional desk patient with no email is skipped (`recipient` NOT NULL, §16). |
+| 6 | The whole §13 matrix, the clock walls (`SLOT_NOT_STARTED`, `SLOT_NOT_ENDED`, `CUTOFF_REACHED`), the payment/reason guards and the history-event mapping live in the pure `lib/transitionGuard.ts`; the service `appointmentTransition.service.ts` owns only the transaction (load → ownership → matrix → wall → conditional write → history/notification/audit). |
+| 7 | Race backstop = conditional `UPDATE … WHERE id = ? AND status = <status just read>` (`updateMany`, count ≠ 1 → 409 `INVALID_TRANSITION`), matching Day 19/20's guarded-write contract. Ownership is checked BEFORE the matrix so a stranger gets 403 regardless of status. |
+| 8 | DoD: pure `tests/transitionGuard.test.ts` + self-cleaning scratch `scripts/day21-dod.ts` (matrix/wall/reason refusals, ARRIVED→COMPLETED, NO_SHOW seat-keeping, REJECT + patient-cancel seat-freeing, cutoff enforce + clinic-caused waiver, staff-cancel-vs-auto-cancel interplay, concurrent no-show → one winner). The DB-backed HTTP suite stays Day 35; `npm test` stays DB-free. |
+
 ### Day 22 — Rescheduling
 - `[S]` Reschedule = same row, new slot (never a `RESCHEDULED` status). Enforce cutoff +
   capacity; higher fee → payment before commit; lower fee → automatic refund (§14).
