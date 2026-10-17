@@ -1,6 +1,8 @@
 import type { $Enums } from "../generated/prisma/client.js";
 import type { Prisma } from "../generated/prisma/client.js";
-import type { DbClient } from "../lib/prisma.js";
+import { prisma, type DbClient } from "../lib/prisma.js";
+import { encodeAuditCursor, type AuditCursor } from "../lib/auditCursor.js";
+import type { AuditLogDto, AuditPageDto } from "../schemas/audit.js";
 
 /**
  * plan.md §20 — the append-only audit row, written inside the same transaction
@@ -24,9 +26,10 @@ import type { DbClient } from "../lib/prisma.js";
  *
  * **Why there is no update or delete path.** §20: a row is created once and
  * can never be updated or deleted — enforced here by exposing insert-and-read
- * only (the read side lives with whoever queries it), and asserted at the
- * database level by scripts/assert-constraints.ts. No `updateAudit`,
- * `deleteAudit`, or upsert will be added.
+ * only (`writeAudit` + Day 20's `listAuditEntries`), and asserted at both the
+ * database level (`scripts/assert-constraints.ts`) and the module level
+ * (`tests/audit.test.ts`, which pins that no mutator is ever exported). No
+ * `updateAudit`, `deleteAudit`, or upsert will be added.
  *
  * `action` is free SCREAMING_SNAKE text, never an enum (schema.prisma: AuditLog
  * comment): §20 lists examples, and a closed enum would turn every new audited
@@ -90,4 +93,86 @@ export async function writeAudit(client: DbClient, entry: AuditEntry): Promise<v
       ...(entry.after !== undefined && { after: entry.after }),
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Day 20 — the read side (§20 insert-and-READ; decision 4)
+// ---------------------------------------------------------------------------
+
+export interface ListAuditInput {
+  readonly targetType?: string | undefined;
+  readonly targetId?: string | undefined;
+  readonly action?: string | undefined;
+  readonly limit: number;
+  readonly cursor?: AuditCursor | undefined;
+}
+
+function toAuditDto(row: {
+  id: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  before: Prisma.JsonValue;
+  after: Prisma.JsonValue;
+  actorId: string | null;
+  actorRole: $Enums.UserRole | null;
+  actorName: string;
+  reason: string | null;
+  ip: string | null;
+  requestId: string | null;
+  createdAt: Date;
+}): AuditLogDto {
+  return {
+    id: row.id,
+    action: row.action,
+    targetType: row.targetType,
+    targetId: row.targetId,
+    before: row.before,
+    after: row.after,
+    actorId: row.actorId,
+    actorRole: row.actorRole,
+    actorName: row.actorName,
+    reason: row.reason,
+    ip: row.ip,
+    requestId: row.requestId,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/**
+ * Newest-first page of audit rows, keyset-paginated on `(createdAt, id)` —
+ * the seek both indexes are built for (`plan.md` §24). `limit + 1` rows are
+ * fetched so "is there a next page" is answered without a second COUNT:
+ * one more row than the page holds means `nextCursor` is minted from the
+ * last row actually returned.
+ *
+ * Read-only and unscoped by actor on purpose: ADMIN is the one role §20 lets
+ * see the whole trail, and the route gate (`routes/audit.ts`) is where that is
+ * enforced — same as every other read in this codebase.
+ */
+export async function listAuditEntries(input: ListAuditInput): Promise<AuditPageDto> {
+  const rows = await prisma.auditLog.findMany({
+    where: {
+      ...(input.targetType !== undefined && { targetType: input.targetType }),
+      ...(input.targetId !== undefined && { targetId: input.targetId }),
+      ...(input.action !== undefined && { action: input.action }),
+      ...(input.cursor !== undefined && {
+        OR: [
+          { createdAt: { lt: input.cursor.createdAt } },
+          { createdAt: input.cursor.createdAt, id: { lt: input.cursor.id } },
+        ],
+      }),
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: input.limit + 1,
+  });
+
+  const hasMore = rows.length > input.limit;
+  const page = hasMore ? rows.slice(0, input.limit) : rows;
+  const last = page[page.length - 1];
+
+  return {
+    entries: page.map(toAuditDto),
+    nextCursor: hasMore && last !== undefined ? encodeAuditCursor(last) : null,
+  };
 }

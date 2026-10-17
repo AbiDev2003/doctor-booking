@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { apiLogin, ApiError } from "../lib/api";
 
 type FieldErrors = Record<string, string>;
@@ -9,6 +10,8 @@ const EMPTY = { email: "", password: "" };
 
 export default function Login() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const [values, setValues] = useState(EMPTY);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -32,9 +35,14 @@ export default function Login() {
 
     try {
       await apiLogin(values);
-      // Every role lands on the account page for now; role-specific dashboards
-      // arrive with their days (patient Day 13, doctor Day 34, staff Day 37).
-      navigate("/profile");
+      // Refresh the session query BEFORE navigating so the destination's
+      // useSession sees the new sign-in rather than a cached "signed out".
+      await queryClient.invalidateQueries({ queryKey: ["me"] });
+      // Honour a returnTo from a booking redirect, but only a relative path —
+      // an absolute or protocol-relative URL would be an open redirect.
+      const returnTo = searchParams.get("returnTo");
+      const target = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/profile";
+      navigate(target);
     } catch (err) {
       if (err instanceof ApiError) {
         setFieldErrors(err.byField());

@@ -324,6 +324,21 @@ export function clinicDayRange(
   };
 }
 
+/**
+ * `date` shifted by `days` clinic-local calendar days, as `YYYY-MM-DD`.
+ *
+ * Pure proleptic-UTC arithmetic — the same one-calendar-day shift `clinicDayRange`
+ * uses for its next-day bound — so it is DST-independent and reads no zone: a
+ * `YYYY-MM-DD` is already a clinic-local wall date, so moving it is calendar math.
+ * The booking horizon (today → today + `bookingHorizonDays`) is its one caller.
+ */
+export function addCalendarDays(date: string, days: number): string {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7)) - 1; // Date.UTC's 0-based month
+  const day = Number(date.slice(8, 10));
+  return new Date(Date.UTC(year, month, day + days)).toISOString().slice(0, 10);
+}
+
 const MIN_E164_DIGITS = 8;
 const MAX_E164_DIGITS = 15;
 

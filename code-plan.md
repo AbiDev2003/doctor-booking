@@ -586,7 +586,7 @@ same generic message a forged one gets.
 - `[C]` Doctor shell: profile edit (triggers re-verification), schedule placeholder, today's
   appointments, read-only live queue (name + masked contact + status, "up next") (§28).
 - **DoD:** doctor can view/edit own profile and see today's queue read-only.
-- **Phase 3 complete.**
+- **Phase 3 complete. [DONE]**
 
 ---
 
@@ -648,7 +648,7 @@ same generic message a forged one gets.
 - `[T]` "Attendance is never overwritten" — a `COMPLETED`/`NO_SHOW` patient is not
   auto-cancelled.
 - **DoD:** marking a doctor unavailable closes slots and cleanly cascades bookings.
-- **Phase 4 complete.**
+- **Phase 4 complete. [DONE]**
 
 ---
 
@@ -664,10 +664,33 @@ The correctness-critical phase. Slow down here.
 - `[C]` Confirm-booking flow (no payment yet).
 - **DoD:** two people race for the last seat — exactly one wins; no overbooking.
 
+#### Decisions locked for Day 19
+| # | Decision |
+|---|----------|
+| 1 | Scope = patient self-booking, pay-at-clinic only, born `CONFIRMED`. No `Payment` row and no `SeatHold` (money is Phase 6); desk/walk-in booking is Day 32. |
+| 2 | Last-seat guard = §15's atomic `UPDATE slots … WHERE booked_count + held_count < max_patients` via `$executeRaw` (Prisma `where` cannot compare two columns); 0 rows → 409 `SLOT_FULL`. The `booked_count + held_count <= max_patients` CHECK is the backstop. The `FOR UPDATE` lock is on the PATIENT row, not the slot. |
+| 3 | Per-patient cap (§15) counts `CONFIRMED`+`ARRIVED` bookings **and** live holds (`released_at IS NULL AND expires_at > now()`), read inside the transaction after `SELECT … FROM users WHERE id = ? FOR UPDATE` — the patient-row lock serializes same-patient attempts so two cannot both pass. |
+| 4 | Same-slot rule = §15's partial unique index, with an explicit pre-check (`ACTIVE_BOOKING_STATUSES = [CONFIRMED, ARRIVED]`) for a clean 409 `ALREADY_BOOKED`; a P2002 race is mapped to the same. |
+| 5 | §6.3 e-mail gate read off the locked row → 403 `EMAIL_NOT_VERIFIED`. §5 bookability re-applied in-transaction via `isBookable`; the five non-capacity hides live in pure `lib/bookingGuard.ts` (fullness deliberately excluded — the guarded UPDATE owns it). |
+| 6 | One transaction writes `Appointment` (snapshots `doctorName`/`feeAmount`/`bookingTime`) + `AppointmentHistory` `BOOKED` + `AuditLog` `APPOINTMENT_BOOKED`. Route `POST /api/v1/appointments`, PATIENT-only (service re-enforces). Queue position stays a rank over `bookingTime` — no stored counter. |
+| 7 | Error codes: 404 `SLOT_NOT_FOUND`/`DOCTOR_NOT_FOUND`; 409 `SLOT_FULL`/`SLOT_DISABLED`/`SLOT_STARTED`/`DOCTOR_UNAVAILABLE`/`ALREADY_BOOKED`/`BOOKING_CAP_REACHED`; 422 `BOOKING_OUTSIDE_HORIZON`; 403 `EMAIL_NOT_VERIFIED`. |
+| 8 | DoD: pure `tests/bookingGuard.test.ts` + scratch `scripts/day19-dod.ts` (concurrent last-seat race, self-cleaning). The DB-backed concurrency suite lands Day 20/36. |
+| 9 | The doctor profile's Book button is live: signed-out → `/login?returnTo=/doctors/:id` (Login honours a relative `returnTo` and refreshes the session query); non-patient → desk message; patient → confirmation panel. |
+
 ### Day 20 — Concurrency + audit
 - `[S]` Double-booking/overbooking tests hammering the last seat (§15, `[T]`).
 - `[S]` `AuditLog` on every state change; `AppointmentHistory` timeline written.
 - **DoD:** concurrency tests green; every booking/cancel/transition is audited + in history.
+
+#### Decisions locked for Day 20
+| # | Decision |
+|---|----------|
+| 1 | Concurrency proof = scratch `scripts/day20-dod.ts` against the seeded local DB (day19-dod style, self-cleaning). The Vitest+Supertest harness stays Day 35; `npm test` stays DB-free. |
+| 2 | Races: 5 patients × 2 seats (exactly 2 winners); same-patient same-slot concurrent → 1 + `ALREADY_BOOKED` (P2002 path); same-patient 4 different slots vs cap 3 → 1 × `BOOKING_CAP_REACHED`; per-winner exactly 1 BOOKED history + 1 audit row, losers write none. Plus a synthetic live `SeatHold` counting toward the cap. |
+| 3 | Audit scope today = completeness sweep of existing writers + the read side. Cancel/attendance/reschedule auditing lands with Days 21–22 services (same in-transaction `writeAudit` contract); nothing pulled forward. |
+| 4 | Audit read = `listAuditEntries` + `GET /api/v1/audit` ADMIN-only, filters `targetType`/`targetId`/`action`, keyset pagination on `(createdAt, id)`. No UI (Day 33), no file export (§42). |
+| 5 | §20 append-only proven by a pure unit test asserting `audit.service.ts` exports no update/delete mutator; DB-level checks stay in `scripts/assert-constraints.ts`; REVOKE grants deferred (§42). |
+| 6 | Wiring: new `scripts/day20-dod.ts`, `npx tsx`, no new npm script; day19-dod untouched. |
 
 ### Day 21 — Status transitions + attendance
 - `[S]` Enforce the §13 matrix server-side (terminal states; no `COMPLETED` directly from
@@ -676,12 +699,38 @@ The correctness-critical phase. Slow down here.
 - `[S]` Patient cancel (before cutoff) and the §12 auto-cancel job.
 - **DoD:** illegal transitions are rejected; check-in flow works.
 
+#### Decisions locked for Day 21
+| # | Decision |
+|---|----------|
+| 1 | Surface = five explicit verb routes, `POST /api/v1/appointments/:id/{arrive,complete,no-show,reject,cancel}` (no single `PATCH status`). A verb names its intent, so the matrix row and its wall are unambiguous at the edge. |
+| 2 | Reason rule: rejecting and a STAFF cancellation require a non-blank `reason` (422 `REASON_REQUIRED`); a patient self-cancel's reason is optional. |
+| 3 | The §13.1 `PENDING`-payment wall on `COMPLETED`/`NO_SHOW` is built now as a no-op (`payment.count`, always 0 until Phase 6) so the guard is in place before money rows exist. |
+| 4 | `REJECTED` refund is DEFERRED to Phase 6 (Day 25). Today writes zero money code and one comment naming the deferred refund; the notification row is still queued (§18). |
+| 5 | Cancellations and rejections queue their §18 `APPOINTMENT_CANCELLED`/`APPOINTMENT_REJECTED` `Notification` row now via `queueNotification`; actual sending is Phase 7. A provisional desk patient with no email is skipped (`recipient` NOT NULL, §16). |
+| 6 | The whole §13 matrix, the clock walls (`SLOT_NOT_STARTED`, `SLOT_NOT_ENDED`, `CUTOFF_REACHED`), the payment/reason guards and the history-event mapping live in the pure `lib/transitionGuard.ts`; the service `appointmentTransition.service.ts` owns only the transaction (load → ownership → matrix → wall → conditional write → history/notification/audit). |
+| 7 | Race backstop = conditional `UPDATE … WHERE id = ? AND status = <status just read>` (`updateMany`, count ≠ 1 → 409 `INVALID_TRANSITION`), matching Day 19/20's guarded-write contract. Ownership is checked BEFORE the matrix so a stranger gets 403 regardless of status. |
+| 8 | DoD: pure `tests/transitionGuard.test.ts` + self-cleaning scratch `scripts/day21-dod.ts` (matrix/wall/reason refusals, ARRIVED→COMPLETED, NO_SHOW seat-keeping, REJECT + patient-cancel seat-freeing, cutoff enforce + clinic-caused waiver, staff-cancel-vs-auto-cancel interplay, concurrent no-show → one winner). The DB-backed HTTP suite stays Day 35; `npm test` stays DB-free. |
+
 ### Day 22 — Rescheduling
 - `[S]` Reschedule = same row, new slot (never a `RESCHEDULED` status). Enforce cutoff +
   capacity; higher fee → payment before commit; lower fee → automatic refund (§14).
 - **DoD:** reschedule moves the appointment, writes a `RESCHEDULED` history event, and
   settles any fee delta.
 - **Phase 5 complete.**
+
+#### Decisions locked for Day 22
+| # | Decision |
+|---|----------|
+| 1 | Fee-delta settlement (§14): `delta = 0` is a no-op; no `PAID` payment → settle by rewriting the `feeAmount`/`doctorName`/`doctorId` snapshots on the row (with the delta in the history metadata), which is every booking reachable until Phase 6; `PAID` + `delta > 0` → 409 `PAYMENT_REQUIRED` (unreachable until money rows exist — Day 24 does payment-before-commit); `PAID` + `delta < 0` → queue a `PENDING` `Refund` (`RefundKind.RESCHEDULE_DELTA`) for the Day 25 executor. |
+| 2 | The §8.5 60-minute cutoff applies to a **patient** self-reschedule only; STAFF/ADMIN are exempt (a desk move is never blocked by a clock). A patient reuses `assertPatientCancelAllowed`, so a clinic-caused move (active unavailability over the slot) is waived exactly as a cancellation is. |
+| 3 | A DOCTOR can never reschedule (moves are the patient's or the desk's), so `RESCHEDULE_ROLES = { PATIENT, ADMIN, STAFF }`. |
+| 4 | Only `CONFIRMED` is reschedulable; any other status → 409 `INVALID_TRANSITION` (reschedule is a slot move, not a §13 status transition). |
+| 5 | Moving off a slot clears the appointment's `doctorUnavailabilityId` marker — the booking is no longer attached to the disruption it was flagged by. |
+| 6 | The original `bookingTime` is preserved on a move so the §15 queue position does not change. |
+| 7 | A reason is mandatory for STAFF/ADMIN and optional for a patient self-reschedule (consistent with Day 21's cancel rule). |
+| 8 | The move queues one §18 `APPOINTMENT_RESCHEDULED` notification to the patient; the desk/staff is not notified. |
+| 9 | Concurrency: one `$transaction` that locks both slot rows `FOR UPDATE` in `id` order, atomically claims the target seat, guarded-releases the old one, and conditionally updates the appointment (`WHERE id = ? AND slotId = <old>` + `status = CONFIRMED`) as a race backstop. A per-patient active-booking cap is **not** re-checked (a move is net-zero). |
+| 10 | DoD: pure `tests/rescheduleGuard.test.ts` covers the judgment layer (roles, ownership, scope, reason, status, same-slot, delta classification); the self-cleaning `scripts/day22-dod.ts` proves the happy path, scope/status/cutoff+waiver refusals, the staff cross-doctor fee-snapshot/delta move, target guards, the last-seat race and the double-move race. DB-backed HTTP coverage stays Day 35; `npm test` stays DB-free. |
 
 ---
 

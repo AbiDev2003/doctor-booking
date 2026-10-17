@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
-import { apiPublicClinic, apiPublicDoctor, apiPublicDoctorAvailability } from "../lib/api";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { apiBookSlot, apiPublicClinic, apiPublicDoctor, apiPublicDoctorAvailability, ApiError } from "../lib/api";
+import type { Appointment, PublicAvailabilitySlot } from "../lib/api";
+import { useSession } from "../hooks/useSession";
 import { formatPaise } from "../lib/money";
 
 /**
- * §26's profile page (Day 13), with Day 17's anonymous slot picker.
+ * §26's profile page (Day 13), with Day 17's anonymous slot picker and Day 19's
+ * booking.
  *
  * The profile itself is everything an anonymous visitor can know, rendered from
  * the public DTO — which deliberately ships no licenseNumber, no email, no
@@ -13,11 +16,12 @@ import { formatPaise } from "../lib/money";
  * API (never a "this doctor exists but is hidden" 403), which this page
  * surfaces as the generic "not found".
  *
- * The picker is read-only by design (Day 17): it lists only genuinely bookable
- * slots the server vouches for (`/public/doctors/:id/availability`) and its
- * Book button is disabled, because the booking transaction (and its seat hold)
- * arrives on Day 19. Showing a real slot list with an honest "coming soon"
- * beats a fake success that a patient would believe.
+ * The picker lists only genuinely bookable slots the server vouches for
+ * (`/public/doctors/:id/availability`). Pressing Book is where Day 17's honest
+ * "coming soon" gives way to the real transaction: a signed-out visitor is sent
+ * to sign in (and returned here), a non-patient is told to use the desk, and a
+ * patient calls `POST /appointments` — the server re-checks every condition
+ * inside its transaction, so a stale listing can only ever fail cleanly.
  *
  * The date input is bounded to the clinic's own `[today, today +
  * bookingHorizonDays]` — the same window the server enforces — computed in the
@@ -44,6 +48,29 @@ function addDays(date: string, days: number): string {
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
+/** A booking refusal, phrased for a patient rather than as a bare code. */
+function bookingErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    switch (err.code) {
+      case "SLOT_FULL":
+        return "Sorry — that seat was just taken. Please pick another time.";
+      case "ALREADY_BOOKED":
+        return "You already have a booking for this slot.";
+      case "EMAIL_NOT_VERIFIED":
+        return "Please verify your email address before booking.";
+      case "SLOT_STARTED":
+        return "That slot has already started. Please pick another time.";
+      case "DOCTOR_UNAVAILABLE":
+        return "The doctor is unavailable at that time. Please pick another slot.";
+      case "BOOKING_OUTSIDE_HORIZON":
+        return "That date is outside the clinic's booking window.";
+      default:
+        return err.message;
+    }
+  }
+  return "Something went wrong. Please try again.";
+}
+
 export default function DoctorProfile() {
   const { id = "" } = useParams();
   const clinic = useQuery({ queryKey: ["public", "clinic"], queryFn: apiPublicClinic });
@@ -65,6 +92,37 @@ export default function DoctorProfile() {
     queryFn: () => apiPublicDoctorAvailability(id, selectedDate as string),
     enabled: id !== "" && selectedDate !== null,
   });
+
+  const navigate = useNavigate();
+  const { user, isAuthenticated, isLoading: sessionLoading } = useSession();
+
+  const [bookingSlotId, setBookingSlotId] = useState<string | null>(null);
+  const [bookingError, setBookingError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<Appointment | null>(null);
+
+  async function book(slot: PublicAvailabilitySlot) {
+    if (sessionLoading) return;
+    if (!isAuthenticated) {
+      // Send the visitor to sign in, then straight back here (§26 storefront).
+      navigate(`/login?returnTo=${encodeURIComponent(`/doctors/${id}`)}`);
+      return;
+    }
+    if (user?.role !== "PATIENT") {
+      setBookingError("Only patient accounts can book online. Please contact the front desk.");
+      return;
+    }
+    setBookingError(null);
+    setBookingSlotId(slot.slotId);
+    try {
+      const { appointment } = await apiBookSlot(slot.slotId);
+      setConfirmation(appointment);
+      void availability.refetch();
+    } catch (err) {
+      setBookingError(bookingErrorMessage(err));
+    } finally {
+      setBookingSlotId(null);
+    }
+  }
 
   if (isPending) {
     return (
@@ -130,7 +188,38 @@ export default function DoctorProfile() {
       <section className="section">
         <h2>Book an appointment</h2>
 
-        {minDate === "" ? (
+        {confirmation ? (
+          <div className="booking-confirmation" role="status">
+            <p>
+              <strong>Booked!</strong> Your appointment is confirmed.
+            </p>
+            <dl className="identity">
+              <div>
+                <dt>Doctor</dt>
+                <dd>{confirmation.doctorName}</dd>
+              </div>
+              <div>
+                <dt>Date</dt>
+                <dd>{confirmation.slotDate}</dd>
+              </div>
+              <div>
+                <dt>Time</dt>
+                <dd>
+                  {confirmation.startTime}–{confirmation.endTime}
+                </dd>
+              </div>
+              <div>
+                <dt>Fee</dt>
+                <dd>
+                  {formatPaise(confirmation.feeAmount, currency)} <span className="hint">— pay at the clinic</span>
+                </dd>
+              </div>
+            </dl>
+            <button type="button" className="button-secondary" onClick={() => setConfirmation(null)}>
+              Book another appointment
+            </button>
+          </div>
+        ) : minDate === "" ? (
           <p className="hint">Loading available dates…</p>
         ) : (
           <>
@@ -143,6 +232,12 @@ export default function DoctorProfile() {
               value={selectedDate ?? ""}
               onChange={(event) => setPickedDate(event.target.value)}
             />
+
+            {bookingError && (
+              <p className="form-error" role="alert">
+                {bookingError}
+              </p>
+            )}
 
             {availability.isPending ? (
               <p className="hint">Checking slots…</p>
@@ -160,15 +255,20 @@ export default function DoctorProfile() {
                     <span className="hint">
                       {slot.remaining} {slot.remaining === 1 ? "seat" : "seats"} left
                     </span>
-                    <button type="button" className="slot-row__book" disabled>
-                      Book
+                    <button
+                      type="button"
+                      className="slot-row__book"
+                      onClick={() => void book(slot)}
+                      disabled={sessionLoading || bookingSlotId !== null}
+                    >
+                      {bookingSlotId === slot.slotId ? "Booking…" : "Book"}
                     </button>
                   </li>
                 ))}
               </ul>
             )}
 
-            <p className="hint">Online booking opens soon — the times above are shown for reference.</p>
+            <p className="hint">Pay at the clinic when you visit — no online payment needed.</p>
           </>
         )}
       </section>

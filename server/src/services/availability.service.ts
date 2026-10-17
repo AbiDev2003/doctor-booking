@@ -1,6 +1,7 @@
 import { prisma } from "../lib/prisma.js";
-import { localDateTimeToUtc, utcToLocalDateTime } from "../lib/time.js";
+import { addCalendarDays, localDateTimeToUtc, utcToLocalDateTime } from "../lib/time.js";
 import {
+  bookingHorizon,
   isSlotBookable,
   isWithinHorizon,
   remainingSeats,
@@ -57,19 +58,6 @@ function dateValue(date: string): Date {
   return new Date(Date.UTC(year, month - 1, day));
 }
 
-/** One calendar day later, as a `YYYY-MM-DD` string (proleptic UTC, DST-safe). */
-function nextDate(date: string): string {
-  return addDays(date, 1);
-}
-
-/** `date` shifted by `days` calendar days, as `YYYY-MM-DD`. */
-function addDays(date: string, days: number): string {
-  const year = Number(date.slice(0, 4));
-  const month = Number(date.slice(5, 7)) - 1;
-  const day = Number(date.slice(8, 10));
-  return new Date(Date.UTC(year, month, day + days)).toISOString().slice(0, 10);
-}
-
 export async function listDoctorAvailability(
   doctorId: string,
   date: string,
@@ -79,7 +67,7 @@ export async function listDoctorAvailability(
   await assertBookableDoctor(doctorId);
 
   const today = utcToLocalDateTime(now, clinic.timezone).date;
-  const horizon = { earliestDate: today, latestDate: addDays(today, clinic.bookingHorizonDays) };
+  const horizon = bookingHorizon(today, clinic.bookingHorizonDays);
 
   // Locked decision 6: outside the horizon there is nothing to show — empty,
   // not an error. Short-circuit before touching the slot tables.
@@ -90,7 +78,7 @@ export async function listDoctorAvailability(
   // The instants bounding the requested clinic-local day, so the unavailability
   // read is scoped to disruptions that could touch this date at all.
   const dayStart = localDateTimeToUtc({ date, time: "00:00:00" }, clinic.timezone);
-  const dayEnd = localDateTimeToUtc({ date: nextDate(date), time: "00:00:00" }, clinic.timezone);
+  const dayEnd = localDateTimeToUtc({ date: addCalendarDays(date, 1), time: "00:00:00" }, clinic.timezone);
 
   const [slots, unavailabilities] = await Promise.all([
     prisma.slot.findMany({

@@ -468,3 +468,45 @@ export interface TodaySlotQueue {
 export function apiDoctorToday(): Promise<{ queue: { date: string; slots: TodaySlotQueue[] } }> {
   return request("/doctors/me/today");
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 19 — booking (§8.1, §15)                                        */
+/* ------------------------------------------------------------------ */
+
+export type AppointmentStatus =
+  | "CONFIRMED"
+  | "ARRIVED"
+  | "COMPLETED"
+  | "CANCELLED"
+  | "REJECTED"
+  | "NO_SHOW"
+  | "PENDING";
+
+/** The booking a patient just made (server twin: `schemas/appointments.ts`). */
+export interface Appointment {
+  id: string;
+  doctorId: string;
+  doctorName: string;
+  patientId: string;
+  slotId: string;
+  /** Clinic-local `YYYY-MM-DD`. */
+  slotDate: string;
+  /** Clinic-local `HH:MM`. */
+  startTime: string;
+  endTime: string;
+  status: AppointmentStatus;
+  /** Paise, snapshotted at booking time. */
+  feeAmount: number;
+  bookingTime: string;
+  createdAt: string;
+}
+
+/**
+ * Books a slot for the signed-in patient (pay-at-clinic). The body is only the
+ * `slotId`; the server derives the doctor, fee and status. A refusal arrives as
+ * an `ApiError` with a code the page branches on (`SLOT_FULL`, `ALREADY_BOOKED`,
+ * `BOOKING_CAP_REACHED`, `EMAIL_NOT_VERIFIED`, …).
+ */
+export function apiBookSlot(slotId: string): Promise<{ message: string; appointment: Appointment }> {
+  return request("/appointments", { method: "POST", body: JSON.stringify({ slotId }) });
+}

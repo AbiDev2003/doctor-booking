@@ -1,3 +1,5 @@
+import { addCalendarDays } from "./time.js";
+
 /**
  * plan.md §11 — the pure predicate that decides whether a dated Slot is
  * BOOKABLE, Day 17.
@@ -84,6 +86,15 @@ export function instantsOverlap(a: InstantWindow, b: InstantWindow): boolean {
 /** True when `slotDate` is inside `[earliestDate, latestDate]` (§10). */
 export function isWithinHorizon(slotDate: string, horizon: BookingHorizon): boolean {
   return slotDate >= horizon.earliestDate && slotDate <= horizon.latestDate;
+}
+
+/**
+ * The §10 booking window from the clinic's own "today": inclusive `[today,
+ * today + horizonDays]`. One definition so the Day 17 read model and the Day 19
+ * booking transaction can never disagree about where the window ends.
+ */
+export function bookingHorizon(today: string, horizonDays: number): BookingHorizon {
+  return { earliestDate: today, latestDate: addCalendarDays(today, horizonDays) };
 }
 
 /**
