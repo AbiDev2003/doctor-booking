@@ -718,6 +718,20 @@ The correctness-critical phase. Slow down here.
   settles any fee delta.
 - **Phase 5 complete.**
 
+#### Decisions locked for Day 22
+| # | Decision |
+|---|----------|
+| 1 | Fee-delta settlement (§14): `delta = 0` is a no-op; no `PAID` payment → settle by rewriting the `feeAmount`/`doctorName`/`doctorId` snapshots on the row (with the delta in the history metadata), which is every booking reachable until Phase 6; `PAID` + `delta > 0` → 409 `PAYMENT_REQUIRED` (unreachable until money rows exist — Day 24 does payment-before-commit); `PAID` + `delta < 0` → queue a `PENDING` `Refund` (`RefundKind.RESCHEDULE_DELTA`) for the Day 25 executor. |
+| 2 | The §8.5 60-minute cutoff applies to a **patient** self-reschedule only; STAFF/ADMIN are exempt (a desk move is never blocked by a clock). A patient reuses `assertPatientCancelAllowed`, so a clinic-caused move (active unavailability over the slot) is waived exactly as a cancellation is. |
+| 3 | A DOCTOR can never reschedule (moves are the patient's or the desk's), so `RESCHEDULE_ROLES = { PATIENT, ADMIN, STAFF }`. |
+| 4 | Only `CONFIRMED` is reschedulable; any other status → 409 `INVALID_TRANSITION` (reschedule is a slot move, not a §13 status transition). |
+| 5 | Moving off a slot clears the appointment's `doctorUnavailabilityId` marker — the booking is no longer attached to the disruption it was flagged by. |
+| 6 | The original `bookingTime` is preserved on a move so the §15 queue position does not change. |
+| 7 | A reason is mandatory for STAFF/ADMIN and optional for a patient self-reschedule (consistent with Day 21's cancel rule). |
+| 8 | The move queues one §18 `APPOINTMENT_RESCHEDULED` notification to the patient; the desk/staff is not notified. |
+| 9 | Concurrency: one `$transaction` that locks both slot rows `FOR UPDATE` in `id` order, atomically claims the target seat, guarded-releases the old one, and conditionally updates the appointment (`WHERE id = ? AND slotId = <old>` + `status = CONFIRMED`) as a race backstop. A per-patient active-booking cap is **not** re-checked (a move is net-zero). |
+| 10 | DoD: pure `tests/rescheduleGuard.test.ts` covers the judgment layer (roles, ownership, scope, reason, status, same-slot, delta classification); the self-cleaning `scripts/day22-dod.ts` proves the happy path, scope/status/cutoff+waiver refusals, the staff cross-doctor fee-snapshot/delta move, target guards, the last-seat race and the double-move race. DB-backed HTTP coverage stays Day 35; `npm test` stays DB-free. |
+
 ---
 
 ## Phase 6 — Payments (Days 23–26)

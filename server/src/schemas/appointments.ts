@@ -41,6 +41,21 @@ export const rejectAppointmentSchema = z.object({ reason });
 export const cancelAppointmentSchema = z.object({ reason: reason.optional() });
 
 /**
+ * Day 22 request shape — §14's reschedule.
+ *
+ * The body carries the TARGET slot and nothing else that matters: the
+ * appointment is the path param and the actor is `req.user`, so neither the
+ * current slot, the doctor, the fee nor the status is client-supplied (the same
+ * §3.4 rule as Day 19's booking). `reason` is optional at the schema because a
+ * patient's own move needs none; the service is where STAFF/ADMIN's mandatory
+ * reason is enforced, since the schema cannot see who is calling.
+ */
+export const rescheduleAppointmentSchema = z.object({
+  slotId: z.uuid("Invalid slot id"),
+  reason: reason.optional(),
+});
+
+/**
  * The appointment a booking returns. Times are the clinic-local `HH:MM` wall
  * clock and `YYYY-MM-DD` date the client renders (the `AvailableSlot` twin in
  * `availability.service.ts`), plus the booking-time snapshots (`doctorName`,

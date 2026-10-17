@@ -11,6 +11,7 @@ import {
   cancelAppointmentSchema,
   createBookingSchema,
   rejectAppointmentSchema,
+  rescheduleAppointmentSchema,
 } from "../schemas/appointments.js";
 import { bookAppointment } from "../services/booking.service.js";
 import {
@@ -20,6 +21,7 @@ import {
   markNoShow,
   rejectAppointment,
 } from "../services/appointmentTransition.service.js";
+import { rescheduleAppointment } from "../services/reschedule.service.js";
 import type { ActorContext } from "../services/doctor.service.js";
 
 /**
@@ -32,6 +34,7 @@ import type { ActorContext } from "../services/doctor.service.js";
  *   POST /api/v1/appointments/:id/no-show   CONFIRMED → NO_SHOW  (ADMIN, STAFF)
  *   POST /api/v1/appointments/:id/reject    CONFIRMED → REJECTED (ADMIN, STAFF, reason)
  *   POST /api/v1/appointments/:id/cancel    … → CANCELLED        (PATIENT own / ADMIN / STAFF)
+ *   POST /api/v1/appointments/:id/reschedule  same row → new slot (PATIENT own+same doctor / ADMIN / STAFF)
  *
  * **Booking is PATIENT only.** Pay-at-clinic self-booking is Day 19's scope; the
  * desk actor (STAFF/ADMIN booking on a patient's behalf) is Day 32's walk-in
@@ -40,10 +43,14 @@ import type { ActorContext } from "../services/doctor.service.js";
  *
  * **Transitions follow §13's matrix.** The attendance verbs are ADMIN/STAFF
  * (Doctors may view the queue but never change attendance, §13.1); cancel is
- * open to a patient for their own booking plus ADMIN/STAFF. The matrix itself —
- * including "no `COMPLETED` straight from `CONFIRMED`" and terminal states — is
- * enforced in the pure `lib/transitionGuard.ts` inside each service transaction,
- * not here: the route's job is the coarse role gate and the mandatory reason.
+ * open to a patient for their own booking plus ADMIN/STAFF. **Reschedule is not
+ * a transition** — it moves the same row to a new slot (§14), so it has its own
+ * route and its own service; a patient stays within the same doctor, staff may
+ * cross, and the fee delta is settled inside the service (§14/§17).
+ * The matrix itself — including "no `COMPLETED` straight from `CONFIRMED`" and
+ * terminal states — is enforced in the pure `lib/transitionGuard.ts` inside each
+ * service transaction, not here: the route's job is the coarse role gate and the
+ * mandatory reason.
  *
  * The booking body carries only a `slotId` (`schemas/appointments.ts`): the
  * patient is `req.user`, and the doctor, fee and status are all derived
@@ -56,6 +63,7 @@ appointmentsRouter.use(requireAuth);
 const patientOnly = requireRole($Enums.UserRole.PATIENT);
 const staffOnly = requireRole($Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
 const cancelAllowed = requireRole($Enums.UserRole.PATIENT, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
+const rescheduleAllowed = requireRole($Enums.UserRole.PATIENT, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
 
 /** The `req.user` behind `requireAuth`, or a 401 if a future route miswires (pattern: routes/slots.ts). */
 function authenticatedUser(req: Request): NonNullable<Request["user"]> {
@@ -151,6 +159,24 @@ appointmentsRouter.post("/:id/cancel", cancelAllowed, async (req, res, next) => 
       ...requestMeta(req, res),
     });
     res.status(200).json({ message: "Appointment cancelled.", appointment });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /:id/reschedule — move the same row to a new slot (§14); a patient stays with the same doctor. */
+appointmentsRouter.post("/:id/reschedule", rescheduleAllowed, async (req, res, next) => {
+  try {
+    const { id } = appointmentIdParamSchema.parse(req.params);
+    const { slotId, reason } = rescheduleAppointmentSchema.parse(req.body);
+    const appointment = await rescheduleAppointment({
+      actor: actorOf(req),
+      appointmentId: id,
+      slotId,
+      reason: reason ?? null,
+      ...requestMeta(req, res),
+    });
+    res.status(200).json({ message: "Appointment rescheduled.", appointment });
   } catch (err) {
     next(err);
   }
