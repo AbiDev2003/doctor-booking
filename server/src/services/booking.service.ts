@@ -4,6 +4,7 @@ import { AppError } from "../lib/appError.js";
 import { utcToLocalDateTime } from "../lib/time.js";
 import { bookingHorizon } from "../lib/availability.js";
 import { isBookable } from "../lib/doctorState.js";
+import { deriveConsultationFee } from "../lib/fee.js";
 import {
   ACTIVE_BOOKING_STATUSES,
   assertNoDuplicateForSlot,
@@ -167,7 +168,9 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Appo
       }
 
       /* 7. The row, its snapshot fields, its timeline event and its audit row. */
-      const feeAmount = profile.consultationFee ?? clinic.defaultConsultationFee;
+      // The shared §3.2 derivation (lib/fee.ts): Day 23 charges this exact
+      // number for the order that pays BEFORE this transaction runs.
+      const feeAmount = deriveConsultationFee(profile.consultationFee, clinic.defaultConsultationFee);
 
       const created = await tx.appointment.create({
         data: {

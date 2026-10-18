@@ -17,6 +17,7 @@ import { slotsRouter } from "./routes/slots.js";
 import { clinicsRouter } from "./routes/clinics.js";
 import { unavailabilitiesRouter } from "./routes/unavailability.js";
 import { appointmentsRouter } from "./routes/appointments.js";
+import { paymentsRouter } from "./routes/payments.js";
 import { auditRouter } from "./routes/audit.js";
 
 export function createApp() {
@@ -76,6 +77,9 @@ export function createApp() {
   // §15 booking (Day 19). PATIENT self-booking; the last-seat guard, per-patient
   // cap and same-slot rule all live inside the booking transaction.
   app.use("/api/v1/appointments", appointmentsRouter);
+  // §17 online payments (Day 23). PATIENT order creation for the hold-first
+  // flow; the seat hold that turns an order into a booking is Day 24's.
+  app.use("/api/v1/payments", paymentsRouter);
   // §20 audit read surface (Day 20). ADMIN-only, read-only: the write side has
   // existed since Day 11, and this is the "reads/exports" half Day 11 deferred.
   app.use("/api/v1/audit", auditRouter);

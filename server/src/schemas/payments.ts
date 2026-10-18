@@ -1,0 +1,33 @@
+import { z } from "zod";
+
+/**
+ * Day 23 request shapes — §17's online-payment surface.
+ *
+ * Same rule as Day 19's booking body (`schemas/appointments.ts`): the client
+ * sends a slot id and NOTHING else. No amount, no currency, no patientId — the
+ * server derives all three, so a caller cannot name its own price (§3.4).
+ * A future reschedule top-up (§14's `PAYMENT_REQUIRED`, Day 24) gets its own
+ * shape here rather than growing this one.
+ */
+export const createPaymentOrderSchema = z.object({
+  slotId: z.uuid("Invalid slot id"),
+});
+
+export type CreatePaymentOrderShape = z.infer<typeof createPaymentOrderSchema>;
+
+/**
+ * The order the browser's checkout opens with (server twin of the client's
+ * `PaymentOrder` in `lib/api.ts`).
+ *
+ * `keyId` is deliberately public — it is Razorpay's publishable key, the one
+ * value checkout.js needs to identify the merchant, and it is why the client
+ * carries no Razorpay env var of its own. The secret key never appears in any
+ * DTO. `amountPaise` is integer subunits (§3.2/§24): paise in, paise out,
+ * no float ever crosses the API edge.
+ */
+export interface PaymentOrderDto {
+  readonly orderId: string;
+  readonly keyId: string;
+  readonly amountPaise: number;
+  readonly currency: string;
+}

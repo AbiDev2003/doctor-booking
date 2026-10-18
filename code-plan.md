@@ -741,6 +741,20 @@ The correctness-critical phase. Slow down here.
   snapshot). `[C]` Razorpay checkout UI.
 - **DoD:** an order is created and the checkout opens.
 
+#### Decisions locked for Day 23
+| # | Decision |
+|---|----------|
+| 1 | Surface: `POST /api/v1/payments/orders`, PATIENT-only (route + service double-enforced), body `{slotId}`, 201 → `{message, order: {orderId, keyId, amountPaise, currency}}`. `keyId` is the publishable key shipped inside the response — no client env var, and the secret never reaches a browser. |
+| 2 | Day 23 persists a `PENDING` `Payment` (`appointmentId` null) BEFORE the gateway call. **No `SeatHold`, no capacity claim** — Day 24's hold transaction adds both; Day 23's DoD asserts counters are byte-identical afterwards. |
+| 3 | The gateway call is NEVER inside a DB transaction: insert row → gateway call outside any tx → guarded `UPDATE … WHERE status='PENDING' AND order_id IS NULL` linking the gateway orderId + `PAYMENT_ORDER_CREATED` audit in one tx. Gateway failure → guarded `PENDING→FAILED` + `PAYMENT_ORDER_FAILED` audit → 502 `PAYMENT_GATEWAY_ERROR`. |
+| 4 | Amount = `deriveConsultationFee(profile.consultationFee, clinic.defaultConsultationFee)` from the new shared `lib/fee.ts` (also refactored into booking.service so both paths quote the same number). `fee <= 0` → 422 `ZERO_CONSULTATION_FEE` (the Day 6 `CHECK (amount_paise > 0)`). The "check against the booking-time `feeAmount` snapshot" of the day brief is vacuous on Day 23 — no appointment exists yet to snapshot; it starts mattering on Day 24. |
+| 5 | Currency = `clinic.currency` everywhere (unpatchable; seed = INR per §3.2). |
+| 6 | Gateway seam: `PaymentGateway` interface + `createRazorpayGateway` factory (official `razorpay` npm SDK v2.9.8). Missing keys → 503 `PAYMENTS_NOT_CONFIGURED` checked BEFORE any row is written. Verification/webhooks are Day 24. |
+| 7 | The `ensureEmailVerified` wall runs before any row; slot/doctor 404s mirror booking (`SLOT_NOT_FOUND`/`DOCTOR_NOT_FOUND`, generic per §26). The §8.5/§10/§12/cap/same-slot guards are NOT implemented on Day 23 — Day 24's hold transaction owns them. |
+| 8 | Audit: exactly one `PAYMENT_ORDER_CREATED` (happy path) or `PAYMENT_ORDER_FAILED` (gateway refusal) per attempt, written via in-transaction `writeAudit`. |
+| 9 | UI: a second explicit **Pay online** button beside **Book** in each `.slot-row` of `DoctorProfile.tsx` — two flows, two server paths, no mode flag on `POST /appointments`. `client/src/lib/razorpay.ts` lazily loads checkout.js on first use; paid → "verification pending" copy, dismissed → "not charged" copy — Day 23 never claims a booking. |
+| 10 | DoD: key-free pure tests (`tests/paymentOrder.test.ts`, `npm test` stays DB-free) + self-cleaning `scripts/day23-dod.ts` against the real DB + real Razorpay TEST API (loud skip, exit 0, when keys are absent; fixtures purged + `finally` cleanup). The checkout OPENING in a browser is the one manual DoD item. |
+
 ### Day 24 — Seat hold + conversion
 - `[S]` **Seat hold** before payment: create `SeatHold` + `PENDING` payment, 10-min expiry
   = `min(now+10min, slot.startAt)`; the seat is held, not booked (§8.6).
