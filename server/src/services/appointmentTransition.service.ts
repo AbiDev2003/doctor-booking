@@ -16,6 +16,7 @@ import { cancellationRefundKind } from "../lib/refundPolicy.js";
 import { getClinicSettings } from "./clinic.service.js";
 import { writeAudit } from "./audit.service.js";
 import { queueNotification } from "./notification.service.js";
+import { voidPendingPaymentForAppointment } from "./offlinePayment.service.js";
 import { queueRefundForAppointment } from "./refund.service.js";
 import type { AppointmentDto } from "../schemas/appointments.js";
 import type { ActorContext } from "./doctor.service.js";
@@ -213,15 +214,27 @@ async function performTransition(input: PerformInput): Promise<AppointmentDto> {
               actorRole: input.actor.role,
               clinicCaused: appointment.doctorUnavailabilityId !== null,
             });
+      const refundReason =
+        reason ??
+        (input.to === $Enums.AppointmentStatus.REJECTED
+          ? "Booking rejected"
+          : `Appointment cancelled by ${input.actor.role.toLowerCase()}`);
+
+      // An unpaid pay-at-clinic receivable is written off, not refunded. This
+      // runs before the refund lookup so a PENDING payment cannot remain live
+      // on a cancelled appointment; a PAID one is untouched and queues below.
+      await voidPendingPaymentForAppointment(tx, {
+        appointmentId: appointment.id,
+        reason: refundReason,
+        actor: { id: input.actor.id, role: input.actor.role, name: input.actor.name },
+        ip: input.ip,
+        requestId: input.requestId,
+      });
 
       await queueRefundForAppointment(tx, {
         appointmentId: appointment.id,
         kind,
-        reason:
-          reason ??
-          (input.to === $Enums.AppointmentStatus.REJECTED
-            ? "Booking rejected"
-            : `Appointment cancelled by ${input.actor.role.toLowerCase()}`),
+        reason: refundReason,
         actor: { id: input.actor.id, role: input.actor.role, name: input.actor.name },
         ip: input.ip,
         requestId: input.requestId,

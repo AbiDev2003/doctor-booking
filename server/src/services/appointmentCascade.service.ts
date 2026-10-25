@@ -4,6 +4,7 @@ import type { DbClient } from "../lib/prisma.js";
 import { selectOnlyConfirmed } from "../lib/unavailability.js";
 import { writeAudit } from "./audit.service.js";
 import { queueNotification } from "./notification.service.js";
+import { voidPendingPaymentForAppointment } from "./offlinePayment.service.js";
 import { queueRefundForAppointment } from "./refund.service.js";
 import type { ActorContext } from "./doctor.service.js";
 
@@ -214,6 +215,14 @@ async function autoCancelOne(appointmentId: string, now: Date): Promise<boolean>
         slotId: appointment.slotId,
       });
     }
+
+    // The clinic cancels an unpaid booking at slot end: void the receivable.
+    // A PAID booking keeps its money row and queues a hand-back below.
+    await voidPendingPaymentForAppointment(tx, {
+      appointmentId,
+      reason,
+      actor: { name: "system" },
+    });
 
     await queueRefundForAppointment(tx, {
       appointmentId,

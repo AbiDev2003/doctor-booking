@@ -9,10 +9,23 @@ import { verifyPaymentSignature, verifyWebhookSignature } from "../lib/paymentSi
 import { requireAuth } from "../middleware/auth.js";
 import { requireRole } from "../middleware/rbac.js";
 import { getRequestId } from "../middleware/requestId.js";
-import { createPaymentOrderSchema, verifyPaymentSchema } from "../schemas/payments.js";
+import {
+  collectOfflinePaymentSchema,
+  completeHandBackSchema,
+  createPaymentOrderSchema,
+  refundIdParamSchema,
+  verifyPaymentSchema,
+  voidOfflinePaymentSchema,
+} from "../schemas/payments.js";
 import { createPaymentOrder } from "../services/paymentOrder.service.js";
 import { convertPayment } from "../services/paymentConvert.service.js";
-import { kickRefundWorker } from "../services/refund.service.js";
+import { collectOfflinePayment, voidOfflinePayment } from "../services/offlinePayment.service.js";
+import {
+  completeDeskHandBack,
+  kickRefundWorker,
+  listPendingDeskHandBacks,
+  retryFailedRefund,
+} from "../services/refund.service.js";
 import type { ActorContext } from "../services/doctor.service.js";
 
 /**
@@ -22,7 +35,18 @@ import type { ActorContext } from "../services/doctor.service.js";
  *   POST /api/v1/payments/verify   checkout triple → converted booking (200)
  *   POST /api/v1/payments/webhook  Razorpay's own report of the same event (200)
  *
- * All three converge on one conversion function; the two edges differ only in
+ * Day 26 adds the DESK side of §17:
+ *
+ *   POST /api/v1/payments/offline/collect          record CASH/CARD/UPI at the desk
+ *   POST /api/v1/payments/offline/void             write off an unpaid receivable
+ *   GET  /api/v1/payments/refunds/desk-hand-backs  pending physical refunds
+ *   POST /api/v1/payments/refunds/:id/hand-back    record CASH/UPI hand-back
+ *   POST /api/v1/payments/refunds/:id/retry        ADMIN retry of a FAILED gateway refund
+ *
+ * The first four are STAFF/ADMIN; retry is ADMIN-only. None of them calls a
+ * gateway: the staff member is reporting money that physically moved.
+ *
+ * All three online routes converge on one conversion function; the two edges differ only in
  * HOW THEY PROVE THE PAYMENT — the browser proves it with the checkout
  * signature over the key secret, the webhook proves it with the raw-body
  * signature over the webhook secret (both checks live here, in front of the
@@ -41,6 +65,8 @@ export const paymentsRouter = Router();
 paymentsRouter.use(requireAuth);
 
 const patientOnly = requireRole($Enums.UserRole.PATIENT);
+const staffOnly = requireRole($Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
+const adminOnly = requireRole($Enums.UserRole.ADMIN);
 
 /** The `req.user` behind `requireAuth`, or a 401 if a future route miswires (pattern: routes/appointments.ts). */
 function authenticatedUser(req: Request): NonNullable<Request["user"]> {
@@ -59,6 +85,82 @@ function actorOf(req: Request): ActorContext {
 function requestMeta(req: Request, res: Response): { ip: string | null; requestId: string } {
   return { ip: getClientIp(req), requestId: getRequestId(res) };
 }
+
+/** POST /offline/collect — record money taken at the desk for an existing booking. */
+paymentsRouter.post("/offline/collect", staffOnly, async (req, res, next) => {
+  try {
+    const body = collectOfflinePaymentSchema.parse(req.body);
+    const payment = await collectOfflinePayment({
+      actor: actorOf(req),
+      appointmentId: body.appointmentId,
+      method: body.method,
+      amountPaise: body.amountPaise,
+      ...requestMeta(req, res),
+    });
+    res.json({ message: "Pay-at-clinic payment recorded.", payment });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /offline/void — write off an unpaid receivable (reason required). */
+paymentsRouter.post("/offline/void", staffOnly, async (req, res, next) => {
+  try {
+    const body = voidOfflinePaymentSchema.parse(req.body);
+    const payment = await voidOfflinePayment({
+      actor: actorOf(req),
+      appointmentId: body.appointmentId,
+      reason: body.reason,
+      ...requestMeta(req, res),
+    });
+    res.json({ message: "Unpaid pay-at-clinic payment voided.", payment });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /refunds/desk-hand-backs — the staff queue of physical refunds owed. */
+paymentsRouter.get("/refunds/desk-hand-backs", staffOnly, async (_req, res, next) => {
+  try {
+    const handBacks = await listPendingDeskHandBacks();
+    res.json({ handBacks });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /refunds/:id/hand-back — record the CASH/UPI paid back to the patient. */
+paymentsRouter.post("/refunds/:id/hand-back", staffOnly, async (req, res, next) => {
+  try {
+    const { id } = refundIdParamSchema.parse(req.params);
+    const { method } = completeHandBackSchema.parse(req.body);
+    const refund = await completeDeskHandBack({
+      refundId: id,
+      method,
+      actor: actorOf(req),
+      ...requestMeta(req, res),
+    });
+    res.json({ message: "Refund handed back.", refund });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** POST /refunds/:id/retry — ADMIN puts a FAILED gateway refund back in the worker queue. */
+paymentsRouter.post("/refunds/:id/retry", adminOnly, async (req, res, next) => {
+  try {
+    const { id } = refundIdParamSchema.parse(req.params);
+    const refund = await retryFailedRefund({
+      refundId: id,
+      actor: actorOf(req),
+      ...requestMeta(req, res),
+    });
+    kickRefundWorker();
+    res.json({ message: "Refund retry queued.", refund });
+  } catch (err) {
+    next(err);
+  }
+});
 
 /** POST /orders — §8.6's seat hold + the gateway order the checkout opens with (§17 step 1). */
 paymentsRouter.post("/orders", patientOnly, async (req, res, next) => {

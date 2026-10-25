@@ -796,7 +796,7 @@ The correctness-critical phase. Slow down here.
 | 5 | Refund execution is best-effort after commit: route-level `kickRefundWorker()` schedules `executePendingRefunds()`; the sweep runs PENDING rows oldest-first and leaves them PENDING when Razorpay is not configured. Day 29 will own the periodic sweep. |
 | 6 | The gateway seam gained `refundPayment`; Razorpay sends the amount in paise with the local `Refund.id` in notes and the adapter refuses an amount echo mismatch (a currency mismatch is refused too). No new env vars. |
 | 7 | `executeRefund` is single-flight per refund id in-process and guards `PENDING → SUCCESS/FAILED` with `updateMany`; a successful refund stores `gatewayRefundId`, queues `REFUND_COMPLETED` (or `PAYMENT_LATE_REFUND` for an expired hold) and audits `REFUND_SUCCEEDED`. A gateway error marks `FAILED` + `REFUND_FAILED`; FAILED is deliberately not auto-retried (Day 26 admin queue). |
-| 8 | Refunds against a payment with no gateway `paymentId` (offline money) are labelled `DESK_HAND_BACK` and left PENDING for the Day 26 staff hand-back surface; no gateway call is attempted. |
+| 8 | Refunds against a payment with no gateway `paymentId` (offline money) are labelled `DESK_HAND_BACK` and left PENDING for the Day 26 staff hand-back surface; no gateway call is attempted. **Superseded on Day 26:** offline money keeps its POLICY kind (`CANCELLATION`, `RESCHEDULE_DELTA`, `CLINIC_CAUSED`, …) and the desk queue selects `payment.paymentId IS NULL` instead of relabelling. |
 | 9 | Refund notification targeting reuses `Notification`: `appointmentId` when the payment has one, else the slot recovered from the hold by `orderId`; a provisional patient with no email is skipped (§16/§18). |
 | 10 | Schema: `SeatHoldReleaseReason` gains `CONVERSION_FAILED` via a hand-written enum migration; `RefundKind`/`RefundStatus` were already complete. |
 | 11 | Day 24's expired-hold DoD expectation is updated to the Day 25 contract (PAID, hold released EXPIRED, seat freed, full PENDING refund) instead of “payment stays PENDING”. |
@@ -808,6 +808,22 @@ The correctness-critical phase. Slow down here.
 - `[S]` Cash/UPI hand-back recorded against the refund (staff dashboard, no gateway).
 - **DoD:** the whole non-online money path works end-to-end.
 - **Phase 6 complete.**
+
+#### Decisions locked for Day 26
+| # | Decision |
+|---|----------|
+| 1 | Booking now creates the pay-at-clinic receivable inside its own transaction: one `PENDING` `Payment` with `amountPaise = feeAmount`, no method/gateway ids, `paymentId`/`paymentStatus` echoed in `APPOINTMENT_BOOKED`. A zero-fee booking creates no row (`amountPaise > 0` is a database CHECK). |
+| 2 | Keep the refund POLICY kind for offline money; do not override it to `DESK_HAND_BACK`. Offline is identified by `Payment.paymentId === null`. This supersedes Day 25 decision 8 and lets one offline payment carry a `RESCHEDULE_DELTA` and a later `CANCELLATION` as two rows. |
+| 3 | `POST /payments/offline/collect` (STAFF/ADMIN, CASH/CARD/UPI): locks the appointment row first, requires `CONFIRMED`/`ARRIVED`, requires exactly one `PENDING` payment, stores `PAID` + method + `paidAt` + collector + `collectedAt`, queues `PAYMENT_SUCCESSFUL` and audits `PAYMENT_COLLECTED`. |
+| 4 | Collection may be LESS than the fee (a concession): optional `amountPaise` in `1..outstanding` becomes the stored amount and therefore the refundable baseline. It may never exceed the outstanding amount, and no second payment row is created. |
+| 5 | `POST /payments/offline/void` (STAFF/ADMIN, reason required) writes off one `PENDING` receivable as `VOIDED` + `PAYMENT_VOIDED`, regardless of appointment state; a paid row is never voided. Cancel/reject/auto-cancel use the same rule through `voidPendingPaymentForAppointment` inside their existing transaction. |
+| 6 | Offline delta math uses actual captured money: `remainingRefundablePaise(payment.amountPaise, existing refunds)` instead of the booking-time fee snapshot. Online refunds keep Day 22's snapshot rule. |
+| 7 | Rescheduling an UNPAID offline booking rewrites its `PENDING` amount to the new fee in the same transaction (+ `PAYMENT_AMOUNT_ADJUSTED` audit). Known edge: a move to a zero-fee slot leaves the old positive amount untouched because the schema forbids `amountPaise = 0`. |
+| 8 | `GET /payments/refunds/desk-hand-backs` lists `PENDING` refunds whose payment has no gateway id, oldest first, carrying the policy kind and patient identity. `POST /payments/refunds/:id/hand-back` (STAFF/ADMIN) completes the exact queued amount as CASH or UPI only, overwrites the refund actor with the person who handed the money over, queues `REFUND_COMPLETED` and audits `REFUND_HANDED_BACK`. No partial hand-back. |
+| 9 | `POST /payments/refunds/:id/retry` is ADMIN-only and only moves an ONLINE `FAILED` refund back to `PENDING` (+ `REFUND_RETRY_REQUESTED`, worker kick). An offline hand-back is refused `REFUND_NOT_GATEWAY`; any non-FAILED row is refused `REFUND_NOT_FAILED`. |
+| 10 | Collection and cancellation serialize on the appointment row (`SELECT … FOR UPDATE` in both paths): either collection wins and cancellation queues the hand-back, or cancellation wins and collection refuses `APPOINTMENT_NOT_PAYABLE`. A cancelled appointment never keeps a `PENDING` receivable. |
+| 11 | No schema migration and no backfill: `Refund.method` already existed; old appointments simply have no receivable until touched. Day 26 is backend-only (no desk UI), answering Day 25's deferred hand-back and retry surfaces. |
+| 12 | DoD: `scripts/day26-dod.ts` is DB-backed, key-free and self-cleaning. It proves collection/concession, actual-based delta + later cancellation remainder, unpaid reschedule amount adjustment, void, cancel-unpaid, clinic-caused auto-cancel for paid and unpaid, FAILED gateway retry vs offline refusal, and a live collect-vs-cancel race. |
 
 ---
 

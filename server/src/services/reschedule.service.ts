@@ -21,6 +21,7 @@ import {
   assertReschedulableStatus,
   classifyRescheduleDelta,
 } from "../lib/rescheduleGuard.js";
+import { remainingRefundablePaise } from "../lib/refundPolicy.js";
 import { getClinicSettings } from "./clinic.service.js";
 import { writeAudit } from "./audit.service.js";
 import { queueNotification } from "./notification.service.js";
@@ -219,10 +220,31 @@ export async function rescheduleAppointment(input: RescheduleInput): Promise<App
 
       /* 9. §14's fee delta against the booking-time snapshot and the payment state. */
       const nextFeeAmount = profile.consultationFee ?? clinic.defaultConsultationFee;
-      const paidPayments = await tx.payment.count({
+      const paidPayment = await tx.payment.findFirst({
         where: { appointmentId: appointment.id, status: $Enums.PaymentStatus.PAID },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          amountPaise: true,
+          paymentId: true,
+          refunds: { select: { amountPaise: true } },
+        },
       });
-      const delta = classifyRescheduleDelta(appointment.feeAmount, nextFeeAmount, paidPayments > 0);
+      const pendingPayment = await tx.payment.findFirst({
+        where: { appointmentId: appointment.id, status: $Enums.PaymentStatus.PENDING },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, amountPaise: true },
+      });
+
+      // For an offline PAID booking the effective current price is what the
+      // patient actually handed over MINUS refunds already owed/made (a desk
+      // concession may have collected less than the fee snapshot). Online money
+      // keeps using the booking-time snapshot, exactly as Day 22 defined it.
+      const currentFeeForDelta =
+        paidPayment !== null && paidPayment.paymentId === null
+          ? remainingRefundablePaise(paidPayment.amountPaise, paidPayment.refunds)
+          : appointment.feeAmount;
+      const delta = classifyRescheduleDelta(currentFeeForDelta, nextFeeAmount, paidPayment !== null);
 
       /* 10. §15's explicit two-row lock, in one global order (id) so opposite moves cannot deadlock. */
       await tx.$queryRaw`
@@ -271,6 +293,27 @@ export async function rescheduleAppointment(input: RescheduleInput): Promise<App
           "INVALID_TRANSITION",
           `The appointment changed while this request was in flight (now ${current?.status ?? "unknown"}).`,
         );
+      }
+
+      /* 12b. An unpaid pay-at-clinic receivable follows the new fee snapshot. */
+      if (pendingPayment !== null && nextFeeAmount > 0 && nextFeeAmount !== pendingPayment.amountPaise) {
+        const adjusted = await tx.payment.updateMany({
+          where: { id: pendingPayment.id, status: $Enums.PaymentStatus.PENDING },
+          data: { amountPaise: nextFeeAmount },
+        });
+        if (adjusted.count === 1) {
+          await writeAudit(tx, {
+            action: "PAYMENT_AMOUNT_ADJUSTED",
+            targetType: "payment",
+            targetId: pendingPayment.id,
+            actor: { id: input.actor.id, role: input.actor.role, name: input.actor.name },
+            before: { amountPaise: pendingPayment.amountPaise, feeAmount: appointment.feeAmount },
+            after: { amountPaise: nextFeeAmount, feeAmount: nextFeeAmount },
+            reason: input.reason ?? "Appointment rescheduled; pay-at-clinic amount follows the new fee",
+            ip: input.ip ?? null,
+            requestId: input.requestId ?? null,
+          });
+        }
       }
 
       /* 13. A cheaper move against money already paid queues the §17 refund row. */

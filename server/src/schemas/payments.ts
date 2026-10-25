@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { $Enums } from "../generated/prisma/client.js";
 
 /**
  * Day 23 request shapes — §17's online-payment surface.
@@ -48,3 +49,70 @@ export const verifyPaymentSchema = z.object({
 });
 
 export type VerifyPaymentShape = z.infer<typeof verifyPaymentSchema>;
+
+/**
+ * Day 26 — the pay-at-clinic desk surface (§17).
+ *
+ * Collection is keyed by appointment, not payment id: the desk starts from the
+ * patient in front of it. `amountPaise` is optional so the normal path collects
+ * the fee snapshot; when supplied it is the ACTUAL cash/UPI amount (a concession
+ * may collect less), and the service rejects anything above the outstanding fee.
+ * The method is the desk's report of what it took, never inferred.
+ */
+export const collectOfflinePaymentSchema = z.object({
+  appointmentId: z.uuid("Invalid appointment id"),
+  method: z.enum([$Enums.PaymentMethod.CASH, $Enums.PaymentMethod.CARD, $Enums.PaymentMethod.UPI]),
+  amountPaise: z.number().int().positive("Amount must be a positive number of paise").optional(),
+});
+
+export type CollectOfflinePaymentShape = z.infer<typeof collectOfflinePaymentSchema>;
+
+/** Voiding an unpaid receivable needs a reason because it writes an audit row. */
+export const voidOfflinePaymentSchema = z.object({
+  appointmentId: z.uuid("Invalid appointment id"),
+  reason: z.string().trim().min(1, "A reason is required").max(1000),
+});
+
+export type VoidOfflinePaymentShape = z.infer<typeof voidOfflinePaymentSchema>;
+
+/**
+ * A hand-back is CASH or UPI only (§17): CARD is collection vocabulary, and no
+ * gateway is involved. The amount is the queued refund's own amount — never a
+ * request field, so a hand-back cannot pay out more or less than was queued.
+ */
+export const completeHandBackSchema = z.object({
+  method: z.enum([$Enums.PaymentMethod.CASH, $Enums.PaymentMethod.UPI]),
+});
+
+export type CompleteHandBackShape = z.infer<typeof completeHandBackSchema>;
+
+export const refundIdParamSchema = z.object({
+  id: z.uuid("Invalid refund id"),
+});
+
+/** What collection/void returns; the desk never needs gateway ids for offline money. */
+export interface OfflinePaymentDto {
+  readonly paymentId: string;
+  readonly appointmentId: string;
+  readonly patientId: string;
+  readonly amountPaise: number;
+  readonly currency: string;
+  readonly status: $Enums.PaymentStatus;
+  readonly method: $Enums.PaymentMethod | null;
+  readonly paidAt: string | null;
+  readonly collectedById: string | null;
+  readonly collectedAt: string | null;
+}
+
+/** One row in the staff desk hand-back queue. */
+export interface DeskHandBackDto {
+  readonly refundId: string;
+  readonly paymentId: string;
+  readonly appointmentId: string | null;
+  readonly patientId: string;
+  readonly patientName: string;
+  readonly amountPaise: number;
+  readonly kind: $Enums.RefundKind;
+  readonly reason: string;
+  readonly createdAt: string;
+}

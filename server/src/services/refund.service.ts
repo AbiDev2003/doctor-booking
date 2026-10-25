@@ -12,6 +12,8 @@ import { refundNotificationType, remainingRefundablePaise } from "../lib/refundP
 import { writeAudit } from "./audit.service.js";
 import type { AuditActor } from "./audit.service.js";
 import { queueNotification } from "./notification.service.js";
+import type { DeskHandBackDto } from "../schemas/payments.js";
+import type { ActorContext } from "./doctor.service.js";
 
 export interface QueueRefundInput {
   readonly paymentId: string;
@@ -67,7 +69,11 @@ export async function queueRefund(client: DbClient, input: QueueRefundInput): Pr
     throw new AppError(404, "PAYMENT_NOT_FOUND", "Payment not found");
   }
 
-  const kind = payment.payment_id === null ? $Enums.RefundKind.DESK_HAND_BACK : input.kind;
+  // Keep the POLICY kind for offline payments too. The old DESK_HAND_BACK
+  // override collapsed a reschedule delta and a later cancellation into one
+  // unique key; the hand-back queue is selected by `payment.paymentId IS NULL`,
+  // not by relabelling the reason money is owed.
+  const kind = input.kind;
 
   const existing = await client.refund.findMany({
     where: { paymentId: payment.id },
@@ -105,7 +111,6 @@ export async function queueRefund(client: DbClient, input: QueueRefundInput): Pr
       kind,
       amountPaise,
       status: $Enums.RefundStatus.PENDING,
-      requestedKind: input.kind,
     },
     reason: input.reason,
     ip: input.ip ?? null,
@@ -312,5 +317,254 @@ export function kickRefundWorker(limit = 25): void {
     void executePendingRefunds({ limit }).catch((err: unknown) => {
       logger.error({ err }, "refund worker sweep failed");
     });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Day 26 — desk hand-backs and the admin retry queue (§17)
+// ---------------------------------------------------------------------------
+
+function assertDeskActor(actor: ActorContext): void {
+  if (actor.role !== $Enums.UserRole.ADMIN && actor.role !== $Enums.UserRole.STAFF) {
+    throw new AppError(403, "FORBIDDEN", "You do not have access to this resource");
+  }
+}
+
+function assertAdminActor(actor: ActorContext): void {
+  if (actor.role !== $Enums.UserRole.ADMIN) {
+    throw new AppError(403, "FORBIDDEN", "You do not have access to this resource");
+  }
+}
+
+export interface CompleteDeskHandBackInput {
+  readonly refundId: string;
+  readonly method: $Enums.PaymentMethod;
+  readonly actor: ActorContext;
+  readonly ip?: string | null | undefined;
+  readonly requestId?: string | null | undefined;
+}
+
+export interface DeskHandBackResult {
+  readonly refundId: string;
+  readonly status: $Enums.RefundStatus;
+  readonly amountPaise: number;
+  readonly method: $Enums.PaymentMethod;
+}
+
+export interface RetryRefundInput {
+  readonly refundId: string;
+  readonly actor: ActorContext;
+  readonly ip?: string | null | undefined;
+  readonly requestId?: string | null | undefined;
+}
+
+export interface RetryRefundResult {
+  readonly refundId: string;
+  readonly outcome: "retry_queued";
+}
+
+/**
+ * The staff dashboard's work list: every PENDING refund whose payment never
+ * reached a gateway. Deliberately keyed off the payment row's null gateway id,
+ * not `RefundKind.DESK_HAND_BACK`, so the policy that created the refund stays
+ * visible after Day 26 stopped relabelling it.
+ */
+export async function listPendingDeskHandBacks(): Promise<readonly DeskHandBackDto[]> {
+  const rows = await prisma.refund.findMany({
+    where: {
+      status: $Enums.RefundStatus.PENDING,
+      payment: { paymentId: null },
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      kind: true,
+      amountPaise: true,
+      reason: true,
+      createdAt: true,
+      payment: {
+        select: {
+          id: true,
+          appointmentId: true,
+          patientId: true,
+          patient: { select: { fullName: true } },
+        },
+      },
+    },
+  });
+
+  return rows.map((row) => ({
+    refundId: row.id,
+    paymentId: row.payment.id,
+    appointmentId: row.payment.appointmentId,
+    patientId: row.payment.patientId,
+    patientName: row.payment.patient.fullName,
+    amountPaise: row.amountPaise,
+    kind: row.kind,
+    reason: row.reason,
+    createdAt: row.createdAt.toISOString(),
+  }));
+}
+
+/**
+ * Completes an offline refund by recording the physical hand-back. The amount
+ * is the refund row's own amount (never a request value), the method is CASH or
+ * UPI, and the actor fields are overwritten with the person who actually handed
+ * the money over. The original queueing actor survives in the REFUND_QUEUED
+ * audit row.
+ */
+export async function completeDeskHandBack(input: CompleteDeskHandBackInput): Promise<DeskHandBackResult> {
+  assertDeskActor(input.actor);
+  return prisma.$transaction(async (tx) => {
+    const refund = await tx.refund.findUnique({
+      where: { id: input.refundId },
+      select: {
+        id: true,
+        status: true,
+        kind: true,
+        amountPaise: true,
+        payment: {
+          select: {
+            id: true,
+            paymentId: true,
+            appointmentId: true,
+            orderId: true,
+            patient: { select: { email: true } },
+            appointment: { select: { slotId: true } },
+          },
+        },
+      },
+    });
+
+    if (!refund) {
+      throw new AppError(404, "REFUND_NOT_FOUND", "Refund not found");
+    }
+    if (refund.payment.paymentId !== null) {
+      throw new AppError(
+        409,
+        "REFUND_NOT_OFFLINE",
+        "This refund came from an online payment; use the gateway retry path instead.",
+      );
+    }
+    if (refund.status !== $Enums.RefundStatus.PENDING) {
+      throw new AppError(409, "REFUND_NOT_PENDING", `This refund is already ${refund.status.toLowerCase()}.`);
+    }
+    if (input.method !== $Enums.PaymentMethod.CASH && input.method !== $Enums.PaymentMethod.UPI) {
+      throw new AppError(422, "INVALID_HAND_BACK_METHOD", "A desk hand-back can only be CASH or UPI.");
+    }
+
+    const updated = await tx.refund.updateMany({
+      where: { id: refund.id, status: $Enums.RefundStatus.PENDING },
+      data: {
+        status: $Enums.RefundStatus.SUCCESS,
+        method: input.method,
+        actorId: input.actor.id,
+        actorRole: input.actor.role,
+        actorName: input.actor.name,
+      },
+    });
+    if (updated.count !== 1) {
+      throw new AppError(409, "REFUND_NOT_PENDING", "The refund changed while this request was in flight.");
+    }
+
+    let slotId = refund.payment.appointment?.slotId ?? null;
+    if (slotId === null && refund.payment.orderId !== null) {
+      const hold = await tx.seatHold.findFirst({
+        where: { paymentOrderId: refund.payment.orderId },
+        select: { slotId: true },
+      });
+      slotId = hold?.slotId ?? null;
+    }
+
+    if (refund.payment.patient.email !== null) {
+      await queueNotification(tx, {
+        type: $Enums.NotificationType.REFUND_COMPLETED,
+        recipient: refund.payment.patient.email,
+        appointmentId: refund.payment.appointmentId,
+        slotId,
+      });
+    }
+
+    await writeAudit(tx, {
+      action: "REFUND_HANDED_BACK",
+      targetType: "refund",
+      targetId: refund.id,
+      actor: { id: input.actor.id, role: input.actor.role, name: input.actor.name },
+      before: {
+        status: $Enums.RefundStatus.PENDING,
+        kind: refund.kind,
+        amountPaise: refund.amountPaise,
+      },
+      after: {
+        status: $Enums.RefundStatus.SUCCESS,
+        method: input.method,
+        amountPaise: refund.amountPaise,
+      },
+      reason: "Pay-at-clinic refund handed back at the desk",
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+
+    return {
+      refundId: refund.id,
+      status: $Enums.RefundStatus.SUCCESS,
+      amountPaise: refund.amountPaise,
+      method: input.method,
+    };
+  });
+}
+
+/**
+ * ADMIN retry for a gateway refund that ended FAILED. The worker only sweeps
+ * PENDING, so this is the human decision that puts the row back in its queue;
+ * it never touches an offline hand-back (there is no gateway to retry).
+ */
+export async function retryFailedRefund(input: RetryRefundInput): Promise<RetryRefundResult> {
+  assertAdminActor(input.actor);
+  return prisma.$transaction(async (tx) => {
+    const refund = await tx.refund.findUnique({
+      where: { id: input.refundId },
+      select: {
+        id: true,
+        status: true,
+        payment: { select: { paymentId: true } },
+      },
+    });
+
+    if (!refund) {
+      throw new AppError(404, "REFUND_NOT_FOUND", "Refund not found");
+    }
+    if (refund.payment.paymentId === null) {
+      throw new AppError(
+        409,
+        "REFUND_NOT_GATEWAY",
+        "This refund is an offline hand-back; complete it from the desk queue instead.",
+      );
+    }
+    if (refund.status !== $Enums.RefundStatus.FAILED) {
+      throw new AppError(409, "REFUND_NOT_FAILED", `Only a FAILED refund can be retried (this one is ${refund.status.toLowerCase()}).`);
+    }
+
+    const updated = await tx.refund.updateMany({
+      where: { id: refund.id, status: $Enums.RefundStatus.FAILED },
+      data: { status: $Enums.RefundStatus.PENDING },
+    });
+    if (updated.count !== 1) {
+      throw new AppError(409, "REFUND_NOT_FAILED", "The refund changed while this request was in flight.");
+    }
+
+    await writeAudit(tx, {
+      action: "REFUND_RETRY_REQUESTED",
+      targetType: "refund",
+      targetId: refund.id,
+      actor: { id: input.actor.id, role: input.actor.role, name: input.actor.name },
+      before: { status: $Enums.RefundStatus.FAILED },
+      after: { status: $Enums.RefundStatus.PENDING },
+      reason: "Admin retried a failed gateway refund",
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+
+    return { refundId: refund.id, outcome: "retry_queued" };
   });
 }
