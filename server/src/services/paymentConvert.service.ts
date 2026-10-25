@@ -1,9 +1,15 @@
 import { $Enums } from "../generated/prisma/client.js";
 import { prisma, isUniqueConstraintViolation } from "../lib/prisma.js";
 import { AppError } from "../lib/appError.js";
+import { logger } from "../lib/logger.js";
 import { isBookable } from "../lib/doctorState.js";
 import { ACTIVE_BOOKING_STATUSES, assertNoDuplicateForSlot } from "../lib/bookingGuard.js";
+import {
+  conversionFailureRefundKind,
+  conversionFailureReleaseReason,
+} from "../lib/refundPolicy.js";
 import { writeAudit } from "./audit.service.js";
+import { queueRefund } from "./refund.service.js";
 import type { AuditActor } from "./audit.service.js";
 import type { AppointmentDto } from "../schemas/appointments.js";
 import type { DbClient } from "../lib/prisma.js";
@@ -22,11 +28,11 @@ import type { DbClient } from "../lib/prisma.js";
  *      verify + webhook serialize HERE, the loser reads `PAID` and returns the
  *      stored appointment with zero writes (§17: "retried webhooks, client
  *      retries, double-clicks ... converge to one processed event").
- *   2. Pre-tx refusals change NOTHING: unknown order (404, no oracle),
- *      another patient's payment (404), a non-`PENDING` payment (409), a
- *      released hold (409) or an expired hold (409) — §17's step 4. The money,
- *      if captured, is Day 25's refund to return; this day's job is to never
- *      book a seat that was not honestly held.
+ *   2. Pre-tx refusals book NOTHING: unknown order (404, no oracle), another
+ *      patient's payment (404), a non-`PENDING` payment (409), a released hold
+ *      (409) or an expired hold (409) — §17's step 4. On Day 25 a signed
+ *      payment behind such a refusal is settled OUTSIDE the rolled-back tx:
+ *      `PAID`, hold released, seat handed back, full refund queued.
  *   3. Re-checks against live rows INSIDE the transaction: doctor still
  *      bookable, slot not disabled, no active same-slot booking (§15) — a
  *      hold was valid when taken, and ten minutes is long enough for any of
@@ -46,10 +52,12 @@ import type { DbClient } from "../lib/prisma.js";
  * money row — re-deriving would let a fee edit between hold and payment
  * rewrite what the patient actually paid.
  *
- * Rejections roll the transaction back and leave the payment `PENDING` with
- * the hold unreleased — deliberately: marking money the gateway already took
- * as `PENDING`-no-more requires the `PAID` + `Refund` pair, which is Day 25's
- * refund executor, not a half-measure written today.
+ * Rejections roll the transaction back, then `settleFailedConversion` records
+ * the captured money as `PAID` + a full `Refund` and releases the hold. The
+ * settlement runs in a second transaction because the first one is already
+ * aborted; the caller still receives the original refusal. `PAYMENT_NOT_FOUND`
+ * (including another patient's order) and signature failures never settle —
+ * there is no proven captured payment to return.
  */
 
 export interface ConvertPaymentInput {
@@ -134,6 +142,111 @@ function hhmm(value: Date): string {
   return value.toISOString().slice(11, 16);
 }
 
+interface FailurePaymentRow {
+  readonly id: string;
+  readonly patient_id: string;
+  readonly status: $Enums.PaymentStatus;
+  readonly appointment_id: string | null;
+  readonly payment_id: string | null;
+}
+
+async function settleFailedConversion(input: ConvertPaymentInput, error: AppError): Promise<void> {
+  const kind = conversionFailureRefundKind(error.code);
+  if (kind === null) return;
+
+  await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<FailurePaymentRow[]>`
+      SELECT id, patient_id, status, appointment_id, payment_id
+      FROM payments WHERE order_id = ${input.orderId} FOR UPDATE
+    `;
+    const payment = locked[0];
+    if (!payment) return;
+    if (
+      input.expectedPatientId !== undefined &&
+      input.expectedPatientId !== null &&
+      payment.patient_id !== input.expectedPatientId
+    ) {
+      return;
+    }
+    if (payment.appointment_id !== null) return;
+
+    const now = new Date();
+    if (payment.status !== $Enums.PaymentStatus.PAID) {
+      await tx.payment.updateMany({
+        where: { id: payment.id },
+        data: {
+          status: $Enums.PaymentStatus.PAID,
+          paymentId: payment.payment_id ?? input.gatewayPaymentId,
+          paidAt: now,
+        },
+      });
+    } else if (payment.payment_id === null) {
+      await tx.payment.updateMany({
+        where: { id: payment.id },
+        data: { paymentId: input.gatewayPaymentId },
+      });
+    }
+
+    const hold = await tx.seatHold.findFirst({
+      where: { paymentOrderId: input.orderId },
+      select: { id: true, slotId: true, releasedAt: true },
+    });
+
+    let holdReleased = false;
+    if (hold && hold.releasedAt === null) {
+      const released = await tx.seatHold.updateMany({
+        where: { id: hold.id, releasedAt: null },
+        data: {
+          releasedAt: now,
+          releaseReason: conversionFailureReleaseReason(kind),
+        },
+      });
+      if (released.count === 1) {
+        holdReleased = true;
+        await tx.$executeRaw`
+          UPDATE slots SET held_count = held_count - 1
+          WHERE id = ${hold.slotId}::uuid AND held_count > 0
+        `;
+      }
+    }
+
+    const refundId = await queueRefund(tx, {
+      paymentId: payment.id,
+      kind,
+      reason:
+        kind === $Enums.RefundKind.EXPIRED_HOLD
+          ? "Payment captured after the seat hold expired (§8.6)"
+          : error.message,
+      actor: input.actor,
+      ip: input.ip,
+      requestId: input.requestId,
+    });
+
+    await writeAudit(tx, {
+      action: "PAYMENT_CONVERSION_FAILED",
+      targetType: "payment",
+      targetId: payment.id,
+      actor: input.actor,
+      before: {
+        status: payment.status,
+        paymentId: payment.payment_id,
+      },
+      after: {
+        status: $Enums.PaymentStatus.PAID,
+        paymentId: payment.payment_id ?? input.gatewayPaymentId,
+        orderId: input.orderId,
+        failureCode: error.code,
+        refundKind: kind,
+        refundId,
+        holdReleased,
+      },
+      reason: error.message,
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+  });
+}
+
 export async function convertPayment(input: ConvertPaymentInput): Promise<AppointmentDto> {
   try {
     return await prisma.$transaction(async (tx) => {
@@ -176,8 +289,8 @@ export async function convertPayment(input: ConvertPaymentInput): Promise<Appoin
         throw new AppError(409, "HOLD_RELEASED", "The reserved seat for this payment was released.");
       }
       if (hold.expiresAt.getTime() <= now.getTime()) {
-        // §8.6/§17: money that arrived after expiry is refunded in full —
-        // Day 25 executes the refund; today the seat is simply not booked.
+        // §8.6/§17: the seat is not booked; the catch below settles the
+        // captured money as PAID + a full EXPIRED_HOLD refund.
         throw new AppError(409, "HOLD_EXPIRED", "The reservation expired before payment completed. You will not be charged for this booking.");
       }
 
@@ -336,9 +449,18 @@ export async function convertPayment(input: ConvertPaymentInput): Promise<Appoin
     // The same-slot partial unique index (§15) is the guarantee; the explicit
     // check above is the clean path. A race that slips past it maps to the
     // 409 a client already knows (and rolls everything back — money untouched).
-    if (isUniqueConstraintViolation(err)) {
-      throw new AppError(409, "ALREADY_BOOKED", "You already have a booking for this slot.");
+    const failure =
+      isUniqueConstraintViolation(err)
+        ? new AppError(409, "ALREADY_BOOKED", "You already have a booking for this slot.")
+        : err;
+
+    if (failure instanceof AppError) {
+      try {
+        await settleFailedConversion(input, failure);
+      } catch (settlementError) {
+        logger.error({ err: settlementError, orderId: input.orderId }, "failed to settle captured payment");
+      }
     }
-    throw err;
+    throw failure;
   }
 }

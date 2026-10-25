@@ -1,0 +1,1 @@
+ALTER TYPE "seat_hold_release_reason" ADD VALUE 'CONVERSION_FAILED' AFTER 'CONVERTED';

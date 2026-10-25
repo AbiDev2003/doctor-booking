@@ -25,13 +25,13 @@
 //      with ZERO further writes (§17: verify + webhook double-delivery
 //      converge), and another patient's id against this order is a 404 that
 //      reveals nothing.
-//   4. THE REFUSALS, each leaving the payment PENDING (money-first rules:
-//      nothing is half-marked) — an expired hold → 409 HOLD_EXPIRED with the
-//      counters untouched; a full slot (maxPatients 1, one seat already held)
-//      → 409 SLOT_FULL before any row exists; the same patient re-ordering an
-//      already-booked slot → 409 ALREADY_BOOKED before money; a second
-//      checkout abandoning the first → the old hold released ABANDONED with
-//      its held_count handed back.
+//   4. THE REFUSALS — an expired hold → 409 HOLD_EXPIRED, now settled the
+//      Day 25 way (payment PAID, hold released EXPIRED, seat handed back and
+//      a full EXPIRED_HOLD refund queued PENDING); a full slot (maxPatients 1,
+//      one seat already held) → 409 SLOT_FULL before any row exists; the same
+//      patient re-ordering an already-booked slot → 409 ALREADY_BOOKED before
+//      money; a second checkout abandoning the first → the old hold released
+//      ABANDONED with its held_count handed back.
 //
 // NOT exercised here: the route-level signature REJECTION (pure-tested in
 // tests/paymentSignature.test.ts), the raw-body webhook wiring (app.ts —
@@ -134,8 +134,14 @@ async function removeFixtures(state: RunState): Promise<void> {
     select: { id: true },
   });
   const appointmentIds = appointments.map((row) => row.id);
+  const payments = await prisma.payment.findMany({
+    where: { patientId: { in: state.patientIds } },
+    select: { id: true },
+  });
+  const paymentIds = payments.map((row) => row.id);
 
   await prisma.appointmentHistory.deleteMany({ where: { appointmentId: { in: appointmentIds } } });
+  await prisma.refund.deleteMany({ where: { paymentId: { in: paymentIds } } });
   await prisma.seatHold.deleteMany({ where: { patientId: { in: state.patientIds } } });
   await prisma.payment.deleteMany({ where: { patientId: { in: state.patientIds } } });
   await prisma.auditLog.deleteMany({ where: { actorId: { in: userIds } } });
@@ -356,7 +362,8 @@ async function main(): Promise<void> {
     console.log("replay       : same appointment, zero writes; wrong patient is a 404 that reveals nothing");
 
     /* ---------------------------------------------------------------- */
-    /* 4. THE REFUSALS — each leaves the payment PENDING.                 */
+    /* 4. THE REFUSALS — pre-money refusals write nothing; an expired    */
+    /*    hold after signed money is Day 25's PAID + refund settlement.  */
     /* ---------------------------------------------------------------- */
     /* (a) Same slot, already booked: refused BEFORE money, no new row.   */
     const paymentsForP1Before = await prisma.payment.count({ where: { patientId: p1.id } });
@@ -368,7 +375,7 @@ async function main(): Promise<void> {
       "the ALREADY_BOOKED refusal created no payment row",
     );
 
-    /* (b) Expired hold: conversion refuses, nothing changes.             */
+    /* (b) Expired hold: no booking, but Day 25 settles the captured money. */
     const orderB = await createPaymentOrder({ actor: p2, slotId: slotB.id, requestId: "day24-dod-exp" });
     const holdB = await prisma.seatHold.findFirst({ where: { patientId: p2.id, paymentOrderId: orderB.orderId } });
     expect(holdB !== null, "the second hold exists");
@@ -384,14 +391,21 @@ async function main(): Promise<void> {
       }),
     );
     const paymentB = await prisma.payment.findFirst({ where: { patientId: p2.id, orderId: orderB.orderId } });
-    expect(paymentB?.status === $Enums.PaymentStatus.PENDING, "the refused payment stays PENDING (money-first: nothing half-marked)");
+    expect(paymentB?.status === $Enums.PaymentStatus.PAID, "the captured payment is recorded PAID, never left pretending it was not taken");
+    expect(paymentB?.appointmentId === null, "no appointment was born from expired money");
+    expect(paymentB?.paymentId === "pay_expired_scenario", "the settlement stores the gateway payment id");
     const holdBAfter = await prisma.seatHold.findUnique({ where: { id: holdB.id } });
-    expect(holdBAfter?.releasedAt === null, "the expired hold is not silently released by the failed conversion");
+    expect(holdBAfter?.releaseReason === $Enums.SeatHoldReleaseReason.EXPIRED, "the expired hold is released EXPIRED");
+    expect(holdBAfter?.releasedAt !== null, "…with a release timestamp");
     expect(
-      (await prisma.slot.findUnique({ where: { id: slotB.id }, select: { heldCount: true } }))?.heldCount === 1,
-      "slot B's counters are untouched by the refusal",
+      (await prisma.slot.findUnique({ where: { id: slotB.id }, select: { heldCount: true } }))?.heldCount === 0,
+      "slot B's seat is handed back (held 1→0)",
     );
-    expect((await prisma.appointment.count({ where: { patientId: p2.id } })) === 0, "no appointment was born from expired money");
+    const refundB = paymentB === null
+      ? null
+      : await prisma.refund.findUnique({ where: { paymentId_kind: { paymentId: paymentB.id, kind: $Enums.RefundKind.EXPIRED_HOLD } } });
+    expect(refundB?.status === $Enums.RefundStatus.PENDING, "a full EXPIRED_HOLD refund is queued PENDING");
+    expect(refundB?.amountPaise === expectedFee, `the refund is the full captured amount (${expectedFee}p), got ${refundB?.amountPaise ?? "none"}p`);
 
     /* (c) Full slot: the capacity claim refuses before any row exists.   */
     await createPaymentOrder({ actor: p3, slotId: slotC.id, requestId: "day24-dod-fill" }); // maxPatients 1 → held 0→1
@@ -428,7 +442,7 @@ async function main(): Promise<void> {
       (await prisma.slot.findUnique({ where: { id: slotE.id }, select: { heldCount: true } }))?.heldCount === 1,
       "slot E holds the replacement seat",
     );
-    console.log("refusals     : ALREADY_BOOKED (pre-money), HOLD_EXPIRED (payment stays PENDING), SLOT_FULL (no rows), ABANDONED release (seat handed back)");
+    console.log("refusals     : ALREADY_BOOKED (pre-money), HOLD_EXPIRED (PAID + EXPIRED_HOLD refund queued), SLOT_FULL (no rows), ABANDONED release (seat handed back)");
 
     console.log("");
     console.log("Day 24 DoD passed — hold before money, one conversion, replay-safe, refusals leave nothing half-written.");

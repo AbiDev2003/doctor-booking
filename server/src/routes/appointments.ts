@@ -22,6 +22,7 @@ import {
   rejectAppointment,
 } from "../services/appointmentTransition.service.js";
 import { rescheduleAppointment } from "../services/reschedule.service.js";
+import { kickRefundWorker } from "../services/refund.service.js";
 import type { ActorContext } from "../services/doctor.service.js";
 
 /**
@@ -141,6 +142,7 @@ appointmentsRouter.post("/:id/reject", staffOnly, async (req, res, next) => {
       reason,
       ...requestMeta(req, res),
     });
+    kickRefundWorker();
     res.status(200).json({ message: "Booking rejected.", appointment });
   } catch (err) {
     next(err);
@@ -158,6 +160,7 @@ appointmentsRouter.post("/:id/cancel", cancelAllowed, async (req, res, next) => 
       reason: reason ?? null,
       ...requestMeta(req, res),
     });
+    kickRefundWorker();
     res.status(200).json({ message: "Appointment cancelled.", appointment });
   } catch (err) {
     next(err);
@@ -176,6 +179,7 @@ appointmentsRouter.post("/:id/reschedule", rescheduleAllowed, async (req, res, n
       reason: reason ?? null,
       ...requestMeta(req, res),
     });
+    kickRefundWorker();
     res.status(200).json({ message: "Appointment rescheduled.", appointment });
   } catch (err) {
     next(err);

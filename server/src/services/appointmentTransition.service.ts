@@ -12,9 +12,11 @@ import {
   assertTransition,
   historyEventFor,
 } from "../lib/transitionGuard.js";
+import { cancellationRefundKind } from "../lib/refundPolicy.js";
 import { getClinicSettings } from "./clinic.service.js";
 import { writeAudit } from "./audit.service.js";
 import { queueNotification } from "./notification.service.js";
+import { queueRefundForAppointment } from "./refund.service.js";
 import type { AppointmentDto } from "../schemas/appointments.js";
 import type { ActorContext } from "./doctor.service.js";
 
@@ -199,6 +201,32 @@ async function performTransition(input: PerformInput): Promise<AppointmentDto> {
     }
 
     const reason = input.reason ?? null;
+
+    if (
+      input.to === $Enums.AppointmentStatus.CANCELLED ||
+      input.to === $Enums.AppointmentStatus.REJECTED
+    ) {
+      const kind =
+        input.to === $Enums.AppointmentStatus.REJECTED
+          ? $Enums.RefundKind.CLINIC_CAUSED
+          : cancellationRefundKind({
+              actorRole: input.actor.role,
+              clinicCaused: appointment.doctorUnavailabilityId !== null,
+            });
+
+      await queueRefundForAppointment(tx, {
+        appointmentId: appointment.id,
+        kind,
+        reason:
+          reason ??
+          (input.to === $Enums.AppointmentStatus.REJECTED
+            ? "Booking rejected"
+            : `Appointment cancelled by ${input.actor.role.toLowerCase()}`),
+        actor: { id: input.actor.id, role: input.actor.role, name: input.actor.name },
+        ip: input.ip,
+        requestId: input.requestId,
+      });
+    }
 
     await tx.appointmentHistory.create({
       data: {

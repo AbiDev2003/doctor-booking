@@ -132,6 +132,7 @@ enum SeatHoldReleaseReason {
   ABANDONED
   PAYMENT_FAILED
   CONVERTED
+  CONVERSION_FAILED
   DELETED_WITH_ACCOUNT
 
   @@map("seat_hold_release_reason")

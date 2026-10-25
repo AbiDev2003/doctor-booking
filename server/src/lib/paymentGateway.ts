@@ -34,12 +34,28 @@ export interface GatewayOrder {
   readonly keyId: string;
 }
 
+/** What the refund executor asks the gateway to return — paise, never rupees. */
+export interface GatewayRefundParams {
+  readonly paymentId: string;
+  readonly amountPaise: number;
+  readonly currency: string;
+  /** Local `Refund.id`, sent as the gateway idempotency note. */
+  readonly refundId: string;
+}
+
+export interface GatewayRefund {
+  readonly refundId: string;
+  readonly amountPaise: number;
+  readonly status: string;
+}
+
 /**
  * The seam itself. Day 24's verify/conversion tests inject a fake implementing
  * this interface; production wires `createRazorpayGateway`.
  */
 export interface PaymentGateway {
   createOrder(params: GatewayOrderParams): Promise<GatewayOrder>;
+  refundPayment(params: GatewayRefundParams): Promise<GatewayRefund>;
 }
 
 /**
@@ -59,6 +75,15 @@ export function toGatewayOrderParams(input: {
     amountPaise: input.amountPaise,
     currency: input.currency,
     receipt: input.paymentId,
+  };
+}
+
+export function toGatewayRefundParams(input: GatewayRefundParams): GatewayRefundParams {
+  return {
+    paymentId: input.paymentId,
+    amountPaise: input.amountPaise,
+    currency: input.currency,
+    refundId: input.refundId,
   };
 }
 
@@ -94,6 +119,26 @@ export function createRazorpayGateway(keyId: string, keySecret: string): Payment
       }
 
       return { orderId: order.id, amountPaise, currency: order.currency, keyId };
+    },
+
+    async refundPayment(params: GatewayRefundParams): Promise<GatewayRefund> {
+      const refund = await razorpay.payments.refund(params.paymentId, {
+        amount: params.amountPaise,
+        notes: { refund_id: params.refundId },
+      });
+
+      const amountPaise = Number(refund.amount);
+      if (!Number.isInteger(amountPaise) || amountPaise !== params.amountPaise) {
+        throw new Error(
+          `Razorpay refund echo mismatch: asked ${params.amountPaise}, got ${String(refund.amount)}`,
+        );
+      }
+      const currency = typeof refund.currency === "string" ? refund.currency : params.currency;
+      if (currency !== params.currency) {
+        throw new Error(`Razorpay refund currency mismatch: asked ${params.currency}, got ${currency}`);
+      }
+
+      return { refundId: refund.id, amountPaise, status: refund.status };
     },
   };
 }

@@ -4,6 +4,7 @@ import type { DbClient } from "../lib/prisma.js";
 import { selectOnlyConfirmed } from "../lib/unavailability.js";
 import { writeAudit } from "./audit.service.js";
 import { queueNotification } from "./notification.service.js";
+import { queueRefundForAppointment } from "./refund.service.js";
 import type { ActorContext } from "./doctor.service.js";
 
 /**
@@ -214,7 +215,12 @@ async function autoCancelOne(appointmentId: string, now: Date): Promise<boolean>
       });
     }
 
-    await settleClinicCausedRefund(tx, appointmentId, reason);
+    await queueRefundForAppointment(tx, {
+      appointmentId,
+      kind: $Enums.RefundKind.CLINIC_CAUSED,
+      reason,
+      actor: { name: "system" },
+    });
 
     await writeAudit(tx, {
       action: "APPOINTMENT_AUTO_CANCELLED",
@@ -227,38 +233,5 @@ async function autoCancelOne(appointmentId: string, now: Date): Promise<boolean>
     });
 
     return true;
-  });
-}
-
-/**
- * §17 case 1's backend-raised full refund, as a seam.
- *
- * There is no `Payment` row until Phase 5 (Days 23–26), so today this is a
- * no-op for every real appointment. When a PAID payment exists it raises the
- * `CLINIC_CAUSED` refund the plan requires, `PENDING` because the gateway call
- * is Day 25's executor. Keyed by the `(paymentId, kind)` unique index and
- * upserted so a retried auto-cancel cannot double-refund.
- */
-async function settleClinicCausedRefund(client: DbClient, appointmentId: string, reason: string): Promise<void> {
-  const payment = await client.payment.findFirst({
-    where: { appointmentId, status: $Enums.PaymentStatus.PAID },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, amountPaise: true },
-  });
-  if (!payment) return;
-
-  await client.refund.upsert({
-    where: { paymentId_kind: { paymentId: payment.id, kind: $Enums.RefundKind.CLINIC_CAUSED } },
-    create: {
-      paymentId: payment.id,
-      kind: $Enums.RefundKind.CLINIC_CAUSED,
-      amountPaise: payment.amountPaise,
-      status: $Enums.RefundStatus.PENDING,
-      reason,
-      actorId: null,
-      actorRole: null,
-      actorName: "system",
-    },
-    update: {},
   });
 }

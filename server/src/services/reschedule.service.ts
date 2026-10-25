@@ -24,7 +24,7 @@ import {
 import { getClinicSettings } from "./clinic.service.js";
 import { writeAudit } from "./audit.service.js";
 import { queueNotification } from "./notification.service.js";
-import type { DbClient } from "../lib/prisma.js";
+import { queueRefundForAppointment } from "./refund.service.js";
 import type { AppointmentDto } from "../schemas/appointments.js";
 import type { ActorContext } from "./doctor.service.js";
 
@@ -275,7 +275,15 @@ export async function rescheduleAppointment(input: RescheduleInput): Promise<App
 
       /* 13. A cheaper move against money already paid queues the §17 refund row. */
       if (delta.action === "QUEUE_REFUND") {
-        await queueRescheduleRefund(tx, appointment.id, delta.refundAmountPaise, input.reason ?? null, input.actor);
+        await queueRefundForAppointment(tx, {
+          appointmentId: appointment.id,
+          kind: $Enums.RefundKind.RESCHEDULE_DELTA,
+          amountPaise: delta.refundAmountPaise,
+          reason: input.reason ?? "Rescheduled to a lower-fee slot/doctor (§14)",
+          actor: input.actor,
+          ip: input.ip,
+          requestId: input.requestId,
+        });
       }
 
       /* 14. History, notification and audit — one transaction with the move. */
@@ -363,42 +371,4 @@ export async function rescheduleAppointment(input: RescheduleInput): Promise<App
     }
     throw err;
   }
-}
-
-/**
- * §14/§17: the `PENDING` `RESCHEDULE_DELTA` refund owed when a paid booking
- * moves to a cheaper slot/doctor. Keyed by `(paymentId, kind)` and upserted, so
- * a retried reschedule cannot double-refund while a later cancellation refund
- * against the same payment still can (§24's pair-key note). Unreachable until
- * Phase 6 has `Payment` rows — the seam is built now so the refund executor
- * (Day 25) has the row waiting for it.
- */
-async function queueRescheduleRefund(
-  client: DbClient,
-  appointmentId: string,
-  refundAmountPaise: number,
-  reason: string | null,
-  actor: ActorContext,
-): Promise<void> {
-  const payment = await client.payment.findFirst({
-    where: { appointmentId, status: $Enums.PaymentStatus.PAID },
-    orderBy: { createdAt: "desc" },
-    select: { id: true },
-  });
-  if (!payment) return;
-
-  await client.refund.upsert({
-    where: { paymentId_kind: { paymentId: payment.id, kind: $Enums.RefundKind.RESCHEDULE_DELTA } },
-    create: {
-      paymentId: payment.id,
-      kind: $Enums.RefundKind.RESCHEDULE_DELTA,
-      amountPaise: refundAmountPaise,
-      status: $Enums.RefundStatus.PENDING,
-      reason: reason ?? "Rescheduled to a lower-fee slot/doctor (§14)",
-      actorId: actor.id,
-      actorRole: actor.role,
-      actorName: actor.name,
-    },
-    update: {},
-  });
 }

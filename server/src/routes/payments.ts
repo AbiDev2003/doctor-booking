@@ -12,6 +12,7 @@ import { getRequestId } from "../middleware/requestId.js";
 import { createPaymentOrderSchema, verifyPaymentSchema } from "../schemas/payments.js";
 import { createPaymentOrder } from "../services/paymentOrder.service.js";
 import { convertPayment } from "../services/paymentConvert.service.js";
+import { kickRefundWorker } from "../services/refund.service.js";
 import type { ActorContext } from "../services/doctor.service.js";
 
 /**
@@ -102,8 +103,10 @@ paymentsRouter.post("/verify", patientOnly, async (req, res, next) => {
       actor,
       ...requestMeta(req, res),
     });
+    kickRefundWorker();
     res.json({ message: "Payment verified.", appointment });
   } catch (err) {
+    kickRefundWorker();
     next(err);
   }
 });
@@ -120,9 +123,10 @@ paymentsRouter.post("/verify", patientOnly, async (req, res, next) => {
  * Response policy: a signature-valid request is ACKNOWLEDGED with 200 even
  * when the conversion rejects (expired hold, duplicate, …) — Razorpay retries
  * non-2xx forever, and retrying an expired hold will never convert it; the
- * rejection is logged, and Day 25 turns captured-but-unbooked into a refund.
- * A non-AppError (the database being down) still surfaces as a 500 so the
- * retry DOES make sense there.
+ * rejection is logged, Day 25 has already turned captured-but-unbooked money
+ * into a queued refund, and the worker kick tries to execute it. A non-AppError
+ * (the database being down) still surfaces as a 500 so the retry DOES make
+ * sense there.
  */
 paymentsRouter.post("/webhook", async (req, res, next) => {
   try {
@@ -174,12 +178,14 @@ paymentsRouter.post("/webhook", async (req, res, next) => {
         actor: { name: "system" },
         ...requestMeta(req, res),
       });
+      kickRefundWorker();
       res.json({ status: "processed" });
     } catch (err) {
       if (err instanceof AppError) {
         // Signature-valid but not convertible: 200 ends the retry loop; the
-        // log carries the reason for reconciliation (Day 25 works this queue).
+        // log carries the reason and the settlement has queued any refund.
         logger.warn({ code: err.code, orderId, paymentId }, "webhook conversion rejected");
+        kickRefundWorker();
         res.json({ status: "rejected", code: err.code });
         return;
       }
