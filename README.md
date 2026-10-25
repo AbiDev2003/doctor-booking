@@ -47,6 +47,150 @@ the repo root and from `server/`. To apply schema changes to the database,
 The database starts out nearly empty — Day 3 only creates a throwaway `Placeholder`
 table. The real tables arrive with the Day 4 schema.
 
+## Appointment lifecycle
+
+An appointment is born `CONFIRMED` and moves through a small, explicit state
+machine. Every interactive change goes through `appointmentTransition.service.ts`,
+which checks the transition matrix, actor role, the clock, the cancellation cutoff
+and any open receivable before writing history and audit rows.
+
+```mermaid
+stateDiagram-v2
+    [*] --> CONFIRMED : book (pay at clinic or verified online payment)
+
+    CONFIRMED --> ARRIVED : staff check-in (from slot start)
+    CONFIRMED --> CANCELLED : patient before cutoff / staff
+    CONFIRMED --> REJECTED : staff (reason required)
+    CONFIRMED --> NO_SHOW : staff (after slot end)
+
+    ARRIVED --> COMPLETED : staff closes visit
+    ARRIVED --> CANCELLED : staff (reason required)
+
+    COMPLETED --> [*]
+    NO_SHOW --> [*]
+    CANCELLED --> [*]
+    REJECTED --> [*]
+```
+
+- `ARRIVED` opens at the slot's start; `NO_SHOW` is allowed only after its end.
+- Patients may cancel only before the cutoff. The cutoff is waived for a
+  clinic-caused appointment; staff are not bound by it.
+- A visit cannot be closed while a pay-at-clinic payment is still `PENDING`.
+- Rescheduling is not a status change: the appointment stays `CONFIRMED` and moves
+  to the new slot.
+- The doctor-unavailability sweep is the one system-only path into `CANCELLED`;
+  it bypasses the interactive matrix and records `actorName = "system"`.
+
+## Doctor unavailability cascade
+
+Marking a doctor unavailable does not delete slots. It writes one
+`DoctorUnavailability` row; the availability read model hides overlapping slots,
+and existing `CONFIRMED` appointments in that window are flagged for a
+clinic-caused cancellation.
+
+```mermaid
+flowchart TD
+    MARK["Doctor marked unavailable"] --> TX["Single transaction"]
+    TX --> ROW["Insert DoctorUnavailability row"]
+    ROW --> HIDE["Overlapping slots disappear<br/>from availability reads"]
+    ROW --> IMPACT{"CONFIRMED appointments<br/>overlap the window?"}
+    IMPACT -->|"no"| COMMIT["Commit"]
+    IMPACT -->|"yes"| FLAG["Flag appointment as clinic-caused<br/>store doctorUnavailabilityId"]
+    FLAG --> NOTIFY["Queue DOCTOR_UNAVAILABLE notification"]
+    NOTIFY --> COMMIT
+    COMMIT --> SWEEP["After the slot ends:<br/>auto-cancel sweep"]
+    SWEEP --> STILL{"Still CONFIRMED?"}
+    STILL -->|"no"| LEAVE["Leave arrived / completed /<br/>already-cancelled rows alone"]
+    STILL -->|"yes"| CANCEL["Cancel as system<br/>reason: doctor unavailable"]
+    CANCEL --> NOTICE["Queue auto-cancel notification"]
+    NOTICE --> MONEY{"Payment state"}
+    MONEY -->|"unpaid"| VOID["Void receivable"]
+    MONEY -->|"paid"| REFUND["Queue clinic-caused refund"]
+    VOID --> FINISH["Free the seat<br/>history + audit"]
+    REFUND --> FINISH
+```
+
+- The cascade flags appointments; it does not cancel them immediately. The
+  auto-cancel runs once the slot has ended, and only for rows still `CONFIRMED`.
+- `doctorUnavailabilityId` is the durable "clinic caused this" marker. It waives
+  the patient cancellation cutoff and selects the `CLINIC_CAUSED` refund policy.
+  When disruptions overlap, the first marker wins.
+- A window that any appointment references cannot be deleted; removing an unused
+  window simply reopens its slots.
+- The sweep body is implemented today. Interval scheduling lands with the Phase 7
+  jobs.
+
+## Auth and sessions
+
+Access is a short-lived JWT (15 minutes by default) held in memory. Renewal uses an
+opaque refresh token in an `httpOnly` cookie, stored server-side only as a SHA-256
+hash for seven days. Refresh tokens rotate on every use; the old token is revoked
+in the same transaction.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser
+    participant A as API
+    participant D as PostgreSQL
+
+    Note over B,A: Register
+    B->>A: POST /auth/register
+    A->>D: user (email unverified) + verification token
+    A-->>B: 201 generic success
+    B->>A: GET /auth/verify-email?token=…
+    A->>D: consume token, set emailVerifiedAt
+    A-->>B: verified
+
+    Note over B,A: Invited staff / doctor
+    B->>A: POST /auth/claim-account
+    A->>D: set password, consume claim token
+    A-->>B: claimed — sign in next
+
+    Note over B,A: Sign in
+    B->>A: POST /auth/login
+    A->>D: check attempt limit + password
+    A->>D: store hashed refresh token
+    A-->>B: access JWT (15m) + refresh cookie (7d)
+
+    Note over B,A: Authenticated request
+    B->>A: Authorization: Bearer access
+    A->>D: re-read role, deactivation and doctor status
+    A-->>B: response
+
+    opt access token expired
+        B->>A: POST /auth/refresh (cookie)
+        A->>D: revoke old refresh, create new
+        A-->>B: new access + rotated cookie
+        B->>A: replay the original request
+    end
+
+    Note over B,A: Sign out
+    B->>A: POST /auth/logout
+    A->>D: revoke refresh token
+    A-->>B: clear cookie
+
+    Note over B,A: Recovery and revocation
+    B->>A: POST /auth/forgot-password
+    A-->>B: generic response
+    B->>A: POST /auth/reset-password
+    A->>D: consume token, set password hash, revoke all sessions
+    A-->>B: reset complete — sign in again
+```
+
+- Login returns one error for an unknown email and a wrong password, and applies
+  database-backed attempt limits before the password comparison.
+- Email verification gates booking, not login. An unverified patient can still
+  sign in and reach the verification flow.
+- Password reset revokes every refresh token. Deactivation, suspension and
+  archiving do the same. `requireAuth` also re-reads status and role on every
+  request, so an access token already held by the client stops working
+  immediately rather than at its 15-minute expiry.
+- Claiming an invitation sets the first password and marks the email verified. It
+  does not create a session; the user signs in normally afterward.
+- Development builds log verification, invitation and reset links to the server
+  log. Transactional email is a Phase 7 job.
+
 ## Payments
 
 Days 23–26 cover both money paths, and the payment phase is complete on the server:
