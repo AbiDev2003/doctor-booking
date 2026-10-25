@@ -94,6 +94,14 @@ const envSchema = z.object({
   RESEND_API_KEY: optionalSecret,
   RAZORPAY_KEY_ID: optionalSecret,
   RAZORPAY_KEY_SECRET: optionalSecret,
+  // Day 24: the secret the Razorpay DASHBOARD is configured with for webhook
+  // signing — a DIFFERENT secret from RAZORPAY_KEY_SECRET, deliberately.
+  // Key secret signs our calls to Razorpay (the checkout signature); webhook
+  // secret signs Razorpay's calls to us (X-Razorpay-Signature over the raw
+  // body). Unset is a normal local state: /payments/webhook then answers 503
+  // and the browser-verify path carries conversions (§17), same fail-fast
+  // shape as RAZORPAY_* above.
+  RAZORPAY_WEBHOOK_SECRET: optionalSecret,
 })
   // The owner is a single row, so HALF of it is not a valid configuration, in
   // either direction: an email with no name fails at the `users.full_name` NOT

@@ -31,3 +31,20 @@ export interface PaymentOrderDto {
   readonly amountPaise: number;
   readonly currency: string;
 }
+
+/**
+ * Day 24 — what the browser posts after checkout hands it the triple (§17
+ * step 3). Field names are the gateway's own (razorpay_*), kept verbatim: this
+ * body is a pass-through of values the customer's payment window produced, and
+ * renaming them would only create a second vocabulary for one fact. Nothing
+ * here is trusted — the signature is recomputed server-side from the order id
+ * and payment id (lib/paymentSignature.ts), and the amount is never among the
+ * inputs; the money was frozen when the order was created (Day 23).
+ */
+export const verifyPaymentSchema = z.object({
+  razorpay_order_id: z.string().min(1, "Missing order id"),
+  razorpay_payment_id: z.string().min(1, "Missing payment id"),
+  razorpay_signature: z.string().min(1, "Missing payment signature"),
+});
+
+export type VerifyPaymentShape = z.infer<typeof verifyPaymentSchema>;

@@ -1,28 +1,34 @@
 import type { PaymentOrder } from "./api";
 
 /**
- * Day 23 — the browser half of §17: Razorpay's hosted checkout.
+ * Days 23–24 — the browser half of §17: Razorpay's hosted checkout.
  *
  * checkout.js is loaded lazily from Razorpay's CDN on the FIRST "Pay online"
  * tap, so the storefront's normal page loads pay nothing for a payment provider
  * nobody has asked yet. The module holds at most one loader promise; a failed
  * load clears it so the next tap retries.
  *
- * The window itself is honest about Day 23's scope: an opened checkout proves
- * an order exists (the server's DoD), and NOTHING is trusted from what comes
- * back here — `handler`'s `order_id/payment_id/signature` triple is verified
- * server-side on Day 24 (§17 step 3), and the appointment is born there too
- * (§17 step 5). Until then a completed payment can only be described as
- * "received, verification pending", never as "booked".
+ * This layer is a MESSENGER and knows it: it opens the window and hands back
+ * either the gateway's `order_id/payment_id/signature` triple (→ the page
+ * POSTs it to /payments/verify) or `"dismissed"`. It never claims a payment
+ * succeeded — only the server's signature recomputation does (§17 step 3) —
+ * and it never claims a booking: the appointment is born in the verify
+ * transaction, not here.
  */
 
-/** What an opened checkout resolves to: the patient finished, or backed out. */
-export type CheckoutOutcome = "paid" | "dismissed";
+/**
+ * What an opened checkout settles to: the gateway's success triple, or the
+ * patient backing out. `"dismissed"` is not a verdict on money — the gateway
+ * may not even have attempted anything — which is exactly why it is the only
+ * outcome this module names itself.
+ */
+export type CheckoutResult = CheckoutSuccess | "dismissed";
 
 /**
- * The triple Razorpay hands the browser after a successful payment. Named and
- * typed now so Day 24's verify step has one vocabulary for it; today's handler
- * deliberately ignores the contents.
+ * The triple Razorpay hands the browser after a successful payment, in the
+ * gateway's own field names (the server schema mirrors them verbatim). Passed
+ * through untouched: every field is worthless until the server recomputes the
+ * signature over it.
  */
 export interface CheckoutSuccess {
   razorpay_order_id: string;
@@ -69,18 +75,19 @@ function loadCheckoutScript(): Promise<void> {
 }
 
 /**
- * Opens checkout for an order and settles when the window closes —
- * `"paid"` when the patient completed the gateway flow, `"dismissed"` when
- * they backed out (charged or not, this layer cannot and must not decide;
- * Day 24's verification is the only authority on that).
+ * Opens checkout for an order and settles when the window closes — the
+ * gateway's success triple when the patient completed the flow, `"dismissed"`
+ * when they backed out. Verification is the CALLER's next step (§17 step 3),
+ * deliberately outside this module: a closing window says nothing about money.
  *
  * `handler` and `modal.ondismiss` may BOTH fire as the modal closes on some
- * paths, so the promise settles exactly once.
+ * paths, so the promise settles exactly once (first outcome wins — the handler
+ * always runs before the dismiss callback on Razorpay's success path).
  */
 export async function openRazorpayCheckout(
   order: PaymentOrder,
   options: { merchantName?: string } = {},
-): Promise<CheckoutOutcome> {
+): Promise<CheckoutResult> {
   await loadCheckoutScript();
 
   const Checkout = window.Razorpay;
@@ -88,9 +95,9 @@ export async function openRazorpayCheckout(
     throw new Error("The payment window failed to load. Try again.");
   }
 
-  return new Promise<CheckoutOutcome>((resolve) => {
+  return new Promise<CheckoutResult>((resolve) => {
     let settled = false;
-    const settle = (outcome: CheckoutOutcome): void => {
+    const settle = (outcome: CheckoutResult): void => {
       if (!settled) {
         settled = true;
         resolve(outcome);
@@ -101,7 +108,7 @@ export async function openRazorpayCheckout(
       key: order.keyId,
       order_id: order.orderId,
       ...(options.merchantName !== undefined && { name: options.merchantName }),
-      handler: () => settle("paid"),
+      handler: (response) => settle(response),
       modal: { ondismiss: () => settle("dismissed") },
     });
     checkout.open();

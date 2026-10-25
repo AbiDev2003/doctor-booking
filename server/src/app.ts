@@ -46,6 +46,15 @@ export function createApp() {
   app.use(requestId);
 
   app.use(cors({ origin: config.CLIENT_URL, credentials: true }));
+
+  // §17 webhook: Razorpay signs the RAW bytes of the body, so this path is
+  // parsed with express.raw BEFORE any JSON parser runs — body-parser's own
+  // `_body` flag then makes the express.json() below skip it, and the route
+  // verifies HMAC over exactly what arrived. Mounted on the full path (not on
+  // the router) because middleware order, not router order, decides which
+  // parser sees the bytes first.
+  app.use("/api/v1/payments/webhook", express.raw({ type: "application/json", limit: "1mb" }));
+
   app.use(express.json({ limit: "1mb" }));
   // Reads the refresh cookie on /auth/refresh and /auth/logout. Setting and
   // clearing are handled by lib/cookies.ts via Express's own res.cookie.
@@ -77,8 +86,8 @@ export function createApp() {
   // §15 booking (Day 19). PATIENT self-booking; the last-seat guard, per-patient
   // cap and same-slot rule all live inside the booking transaction.
   app.use("/api/v1/appointments", appointmentsRouter);
-  // §17 online payments (Day 23). PATIENT order creation for the hold-first
-  // flow; the seat hold that turns an order into a booking is Day 24's.
+  // §17 online payments (Days 23–24): PATIENT order creation (hold-first) and
+  // verify, plus the signature-authenticated webhook mounted above raw-body-first.
   app.use("/api/v1/payments", paymentsRouter);
   // §20 audit read surface (Day 20). ADMIN-only, read-only: the write side has
   // existed since Day 11, and this is the "reads/exports" half Day 11 deferred.

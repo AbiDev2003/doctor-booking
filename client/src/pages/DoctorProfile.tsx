@@ -7,6 +7,7 @@ import {
   apiPublicClinic,
   apiPublicDoctor,
   apiPublicDoctorAvailability,
+  apiVerifyPayment,
   ApiError,
 } from "../lib/api";
 import type { Appointment, PublicAvailabilitySlot } from "../lib/api";
@@ -28,12 +29,14 @@ import { formatPaise } from "../lib/money";
  * (`/public/doctors/:id/availability`). Each slot offers BOTH §17 paths as two
  * explicit buttons, because they are two different server flows, not a mode
  * flag: **Book** is Day 19's pay-at-clinic (appointment born `CONFIRMED`
- * immediately), **Pay online** is Day 23's order → checkout (a `SeatHold` and
- * the appointment only arrive with Day 24's verification). Pressing either is
- * where Day 17's honest "coming soon" gives way to the real transaction: a
- * signed-out visitor is sent to sign in (and returned here), a non-patient is
- * told to use the desk, and a stale listing can only ever fail cleanly — the
- * server re-checks every condition inside its own transaction.
+ * immediately), **Pay online** is Days 23–24's order → checkout → verify: the
+ * server reserves the seat with a `SeatHold` before asking for money, and the
+ * appointment is born `CONFIRMED` only when the verified payment converts that
+ * hold (exactly once, replay-safe). Pressing either is where Day 17's honest
+ * "coming soon" gives way to the real transaction: a signed-out visitor is
+ * sent to sign in (and returned here), a non-patient is told to use the desk,
+ * and a stale listing can only ever fail cleanly — the server re-checks every
+ * condition inside its own transaction.
  *
  * The date input is bounded to the clinic's own `[today, today +
  * bookingHorizonDays]` — the same window the server enforces — computed in the
@@ -84,10 +87,14 @@ function bookingErrorMessage(err: unknown): string {
 }
 
 /**
- * An online-payment refusal (Day 23), phrased the same way. The codes come
- * from `paymentOrder.service.ts`; `PAYMENTS_NOT_CONFIGURED` is the normal
- * local state of an un-keyed `.env`, so it points back at pay-at-clinic rather
- * than looking like an outage.
+ * An online-payment refusal (Days 23–24), phrased the same way. The
+ * payment-specific codes come from `paymentOrder.service.ts` /
+ * `paymentConvert.service.ts`; everything else (SLOT_FULL, ALREADY_BOOKED,
+ * BOOKING_CAP_REACHED, …) is the shared booking guard the hold transaction
+ * reuses, so those fall through to `bookingErrorMessage` — one phrase per code
+ * across both flows rather than two phrasings of one refusal. The local
+ * un-keyed-`.env` state points back at pay-at-clinic instead of looking like
+ * an outage.
  */
 function paymentErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
@@ -98,16 +105,22 @@ function paymentErrorMessage(err: unknown): string {
         return "We couldn't start the payment. Please try again, or pay at the clinic.";
       case "PAYMENT_ORDER_CONFLICT":
         return "That payment session is no longer open. Please start again.";
+      case "PAYMENT_SIGNATURE_INVALID":
+        return "The payment could not be verified. Please contact the clinic — you will not be charged twice.";
+      case "PAYMENT_NOT_PENDING":
+        return "This payment has already been settled. Please check your bookings.";
+      case "HOLD_EXPIRED":
+        return "The reservation expired before payment finished — you have not been charged. Please try again.";
+      case "HOLD_RELEASED":
+      case "HOLD_NOT_FOUND":
+        return "The reserved seat is no longer yours — you have not been charged. Please try again.";
+      case "CONVERSION_FAILED":
+        return "We couldn't complete your booking after payment. The clinic will follow up — you will not be charged without a booking.";
       case "ZERO_CONSULTATION_FEE":
         return "No fee is payable online for this consultation — please book at the clinic.";
-      case "EMAIL_NOT_VERIFIED":
-        return "Please verify your email address before paying online.";
-      case "SLOT_NOT_FOUND":
-        return "That slot is no longer available. Please pick another time.";
-      case "DOCTOR_NOT_FOUND":
-        return "This doctor is not available right now. Please pick another slot.";
       default:
-        return err.message;
+        // The §8.5/§10/§15 guards the hold transaction shares with booking.
+        return bookingErrorMessage(err);
     }
   }
   return "Something went wrong. Please try again.";
@@ -143,6 +156,7 @@ export default function DoctorProfile() {
   const [confirmation, setConfirmation] = useState<Appointment | null>(null);
 
   const [payingSlotId, setPayingSlotId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
 
@@ -171,13 +185,17 @@ export default function DoctorProfile() {
   }
 
   /**
-   * Day 23's flow: create the server's `PENDING` order, then open the hosted
-   * checkout against it. NOTHING is claimed or booked here — no seat, no
-   * appointment — so the availability list is deliberately NOT refetched; Day
-   * 24's hold is what changes capacity, and Day 24 is when a completed payment
-   * becomes a booking. Until that lands, both outcomes are described honestly:
-   * paid → verification pending, dismissed → not charged (the gateway may not
-   * even have taken anything, and this layer is not the authority either way).
+   * The full §17 loop, Days 23+24: create the hold + order, open the hosted
+   * checkout, and on completion POST the gateway's triple to /payments/verify,
+   * which converts the hold into exactly one CONFIRMED appointment (or names
+   * the refusal). The confirmation panel and the availability refetch reuse
+   * booking's own — the two flows converge on one rendered result.
+   *
+   * The one non-ApiError case is kept deliberately optimistic: if the verify
+   * call itself dies (network, not business refusal), the payment DID happen
+   * and the server-side webhook will finish the conversion — saying "you will
+   * be charged without a booking" there would be a lie, and saying "failed"
+   * would send the patient to pay again.
    */
   async function payOnline(slot: PublicAvailabilitySlot) {
     if (sessionLoading) return;
@@ -195,10 +213,23 @@ export default function DoctorProfile() {
     try {
       const { order } = await apiCreatePaymentOrder(slot.slotId);
       const outcome = await openRazorpayCheckout(order, { merchantName: clinic.data?.clinic.name });
-      if (outcome === "paid") {
-        setPaymentNotice("Payment received. Your booking is confirmed as soon as the payment is verified — usually a few seconds.");
-      } else {
+      if (outcome === "dismissed") {
         setPaymentNotice("Checkout closed — you have not been charged. Press Pay online to try again.");
+        return;
+      }
+      setConfirming(true);
+      try {
+        const { appointment } = await apiVerifyPayment(outcome);
+        setConfirmation(appointment);
+        void availability.refetch();
+      } catch (err) {
+        if (err instanceof ApiError) {
+          setPaymentError(paymentErrorMessage(err));
+        } else {
+          setPaymentNotice("Payment received — your booking will complete automatically within minutes.");
+        }
+      } finally {
+        setConfirming(false);
       }
     } catch (err) {
       setPaymentError(paymentErrorMessage(err));
@@ -351,9 +382,10 @@ export default function DoctorProfile() {
                       {slot.remaining} {slot.remaining === 1 ? "seat" : "seats"} left
                     </span>
                     {/* Two flows, two server paths (§17): a pay-at-clinic booking
-                        born CONFIRMED, or a Day 23 order whose seat is only held
-                        and booked once payment is verified (Day 24). One action
-                        at a time, so the two can't interleave in the UI. */}
+                        born CONFIRMED, or a hold-first online payment whose seat
+                        is reserved before checkout and converted to CONFIRMED by
+                        /payments/verify. One action at a time, so the two can't
+                        interleave in the UI. */}
                     <span className="slot-row__actions">
                       <button
                         type="button"
@@ -369,7 +401,11 @@ export default function DoctorProfile() {
                         onClick={() => void payOnline(slot)}
                         disabled={sessionLoading || bookingSlotId !== null || payingSlotId !== null}
                       >
-                        {payingSlotId === slot.slotId ? "Opening…" : "Pay online"}
+                        {payingSlotId === slot.slotId
+                          ? confirming
+                            ? "Confirming…"
+                            : "Opening…"
+                          : "Pay online"}
                       </button>
                     </span>
                   </li>

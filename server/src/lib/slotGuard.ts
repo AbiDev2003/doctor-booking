@@ -76,6 +76,17 @@ export function holdIsLive(hold: { readonly releasedAt: Date | null; readonly ex
   return hold.releasedAt === null && hold.expiresAt.getTime() > now.getTime();
 }
 
+/**
+ * §8.6's expiry formula, taken whole: `min(now + holdDuration, slot.startAt)`.
+ * The cap is why "a hold never extends into a running slot" needs no separate
+ * rule at release time (schema.prisma:675) — a hold on a slot starting in two
+ * minutes is a two-minute hold. Day 24's hold transaction writes whatever this
+ * returns; `now` is the transaction's own clock, never a client-supplied one.
+ */
+export function holdExpiresAt(now: Date, holdDurationMs: number, slotStartAt: Date): Date {
+  return new Date(Math.min(now.getTime() + holdDurationMs, slotStartAt.getTime()));
+}
+
 /** The seat-or-hold test (loophole B3): any holding appointment or live hold? */
 export function slotHoldsSeatOrLiveHold(
   appointments: readonly { readonly status: $Enums.AppointmentStatus; readonly slotEndAt: Date }[],

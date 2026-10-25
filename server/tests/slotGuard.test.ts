@@ -5,6 +5,7 @@ import { $Enums } from "../src/generated/prisma/client.js";
 import {
   assertCapacityNotBelowCounters,
   assertNoSeatOrLiveHold,
+  holdExpiresAt,
   holdIsLive,
   slotHoldsSeatOrLiveHold,
   statusHoldsSeat,
@@ -153,5 +154,26 @@ describe("assertCapacityNotBelowCounters", () => {
     // A slot with zero live rows but a stale counter is still refused: the
     // counter is what the booking transaction incremented (§8.1).
     assert.throws(() => assertCapacityNotBelowCounters(0, 1, 0));
+  });
+});
+describe("holdExpiresAt — §8.6's expiry formula (Day 24)", () => {
+  const NOW = new Date("2026-10-18T10:00:00.000Z");
+  const TEN_MIN = 10 * 60_000;
+
+  it("caps a ten-minute hold at now + 10 minutes when the slot is far off", () => {
+    const slotStart = new Date("2026-10-18T11:00:00.000Z");
+    assert.deepEqual(holdExpiresAt(NOW, TEN_MIN, slotStart), new Date("2026-10-18T10:10:00.000Z"));
+  });
+
+  it("clamps to slot.startAt when the slot starts inside the hold window — a hold never outlives its slot", () => {
+    const slotStart = new Date("2026-10-18T10:03:00.000Z");
+    assert.deepEqual(holdExpiresAt(NOW, TEN_MIN, slotStart), slotStart);
+  });
+
+  it("is monotonic in the duration: a longer duration never expires earlier", () => {
+    const slotStart = new Date("2026-10-18T23:59:00.000Z");
+    const short = holdExpiresAt(NOW, 5 * 60_000, slotStart).getTime();
+    const long = holdExpiresAt(NOW, 30 * 60_000, slotStart).getTime();
+    assert.ok(long >= short);
   });
 });
