@@ -75,6 +75,8 @@ async function cleanup(state: RunState): Promise<void> {
     await prisma.notification.deleteMany({ where: { appointmentId: { in: ids } } });
     await prisma.appointmentHistory.deleteMany({ where: { appointmentId: { in: ids } } });
     await prisma.seatHold.deleteMany({ where: { appointmentId: { in: ids } } });
+    // Day 26: every booking now owns a PENDING pay-at-clinic receivable.
+    await prisma.payment.deleteMany({ where: { appointmentId: { in: ids } } });
     await prisma.appointment.deleteMany({ where: { id: { in: ids } } });
   }
   await prisma.slot.update({
@@ -135,6 +137,7 @@ async function main(): Promise<void> {
   // Start clean even after a crashed previous attempt: an empty slot cannot
   // legitimately carry an appointment, so purging ours is safe.
   await prisma.appointmentHistory.deleteMany({ where: { appointment: { slotId } } });
+  await prisma.payment.deleteMany({ where: { appointment: { slotId } } });
   await prisma.appointment.deleteMany({ where: { slotId } });
 
   // Exactly one free seat.

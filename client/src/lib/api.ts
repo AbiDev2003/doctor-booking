@@ -510,3 +510,53 @@ export interface Appointment {
 export function apiBookSlot(slotId: string): Promise<{ message: string; appointment: Appointment }> {
   return request("/appointments", { method: "POST", body: JSON.stringify({ slotId }) });
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 23 — online payment orders (§17)                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The order a Razorpay checkout opens with (server twin:
+ * `schemas/payments.ts`). The AMOUNT never comes from here — the client sends
+ * only a slotId and the server derives the price (§3.4) — so what this carries
+ * is what the server decided: `amountPaise` in integer subunits, and `keyId`,
+ * the publishable key checkout.js needs (the secret never reaches a browser).
+ * By the time this response exists the server has already reserved the seat
+ * (`SeatHold`, §8.6) — the checkout's job is to convert it, not to start.
+ */
+export interface PaymentOrder {
+  orderId: string;
+  keyId: string;
+  amountPaise: number;
+  currency: string;
+}
+
+/**
+ * Creates the `PENDING` payment, the `SeatHold` behind it and the gateway
+ * order — all before the checkout opens (§8.6/§17 step 1). Refusals arrive as
+ * an ApiError with a code the page phrases for the patient: the shared booking
+ * guards (SLOT_FULL, ALREADY_BOOKED, BOOKING_CAP_REACHED), `PAYMENTS_NOT_
+ * CONFIGURED` (no keys), `ZERO_CONSULTATION_FEE`, `PAYMENT_GATEWAY_ERROR`.
+ */
+export function apiCreatePaymentOrder(slotId: string): Promise<{ message: string; order: PaymentOrder }> {
+  return request("/payments/orders", { method: "POST", body: JSON.stringify({ slotId }) });
+}
+
+/** The gateway's post-checkout triple — passed through untouched, verified server-side (§17 step 3). */
+export interface PaymentVerifyPayload {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+/**
+ * Day 24 — posts the checkout triple; the server recomputes the signature,
+ * re-checks the hold and converts it into exactly one `CONFIRMED` appointment
+ * (or answers a specific refusal: HOLD_EXPIRED, ALREADY_BOOKED, …). The
+ * response is the SAME `Appointment` shape `apiBookSlot` returns, so the page
+ * renders one confirmation for both flows. A replay returns the stored booking
+ * — convergence, not an error (§17 idempotency).
+ */
+export function apiVerifyPayment(payload: PaymentVerifyPayload): Promise<{ message: string; appointment: Appointment }> {
+  return request("/payments/verify", { method: "POST", body: JSON.stringify(payload) });
+}

@@ -741,12 +741,40 @@ The correctness-critical phase. Slow down here.
   snapshot). `[C]` Razorpay checkout UI.
 - **DoD:** an order is created and the checkout opens.
 
+#### Decisions locked for Day 23
+| # | Decision |
+|---|----------|
+| 1 | Surface: `POST /api/v1/payments/orders`, PATIENT-only (route + service double-enforced), body `{slotId}`, 201 → `{message, order: {orderId, keyId, amountPaise, currency}}`. `keyId` is the publishable key shipped inside the response — no client env var, and the secret never reaches a browser. |
+| 2 | Day 23 persists a `PENDING` `Payment` (`appointmentId` null) BEFORE the gateway call. **No `SeatHold`, no capacity claim** — Day 24's hold transaction adds both; Day 23's DoD asserts counters are byte-identical afterwards. |
+| 3 | The gateway call is NEVER inside a DB transaction: insert row → gateway call outside any tx → guarded `UPDATE … WHERE status='PENDING' AND order_id IS NULL` linking the gateway orderId + `PAYMENT_ORDER_CREATED` audit in one tx. Gateway failure → guarded `PENDING→FAILED` + `PAYMENT_ORDER_FAILED` audit → 502 `PAYMENT_GATEWAY_ERROR`. |
+| 4 | Amount = `deriveConsultationFee(profile.consultationFee, clinic.defaultConsultationFee)` from the new shared `lib/fee.ts` (also refactored into booking.service so both paths quote the same number). `fee <= 0` → 422 `ZERO_CONSULTATION_FEE` (the Day 6 `CHECK (amount_paise > 0)`). The "check against the booking-time `feeAmount` snapshot" of the day brief is vacuous on Day 23 — no appointment exists yet to snapshot; it starts mattering on Day 24. |
+| 5 | Currency = `clinic.currency` everywhere (unpatchable; seed = INR per §3.2). |
+| 6 | Gateway seam: `PaymentGateway` interface + `createRazorpayGateway` factory (official `razorpay` npm SDK v2.9.8). Missing keys → 503 `PAYMENTS_NOT_CONFIGURED` checked BEFORE any row is written. Verification/webhooks are Day 24. |
+| 7 | The `ensureEmailVerified` wall runs before any row; slot/doctor 404s mirror booking (`SLOT_NOT_FOUND`/`DOCTOR_NOT_FOUND`, generic per §26). The §8.5/§10/§12/cap/same-slot guards are NOT implemented on Day 23 — Day 24's hold transaction owns them. |
+| 8 | Audit: exactly one `PAYMENT_ORDER_CREATED` (happy path) or `PAYMENT_ORDER_FAILED` (gateway refusal) per attempt, written via in-transaction `writeAudit`. |
+| 9 | UI: a second explicit **Pay online** button beside **Book** in each `.slot-row` of `DoctorProfile.tsx` — two flows, two server paths, no mode flag on `POST /appointments`. `client/src/lib/razorpay.ts` lazily loads checkout.js on first use; paid → "verification pending" copy, dismissed → "not charged" copy — Day 23 never claims a booking. |
+| 10 | DoD: key-free pure tests (`tests/paymentOrder.test.ts`, `npm test` stays DB-free) + self-cleaning `scripts/day23-dod.ts` against the real DB + real Razorpay TEST API (loud skip, exit 0, when keys are absent; fixtures purged + `finally` cleanup). The checkout OPENING in a browser is the one manual DoD item. |
+
 ### Day 24 — Seat hold + conversion
 - `[S]` **Seat hold** before payment: create `SeatHold` + `PENDING` payment, 10-min expiry
   = `min(now+10min, slot.startAt)`; the seat is held, not booked (§8.6).
 - `[S]` Webhook + verify → one transaction: hold→`CONVERTED`, seat `held→booked`,
   `Appointment` created `CONFIRMED`, `Payment`→`PAID` (§17 step 5).
 - **DoD:** paying converts the hold into exactly one confirmed appointment.
+
+#### Decisions locked for Day 24
+| # | Decision |
+|---|----------|
+| 1 | Hold folded into `POST /payments/orders` — no separate hold endpoint. One call runs the §15 guards (patient row `FOR UPDATE`, shared `bookingGuard`, same-slot pre-money, own unreleased holds released `ABANDONED`/`EXPIRED` with paired `heldCount-1`, per-patient cap counted after release), claims capacity with the raw guarded `UPDATE … booked+held < max_patients` (0 rows → 409 `SLOT_FULL`), then creates `SeatHold` + `PENDING` `Payment` in one tx — the gateway call happens only AFTER all of that, outside any transaction. |
+| 2 | Hold duration = `clinic.holdDurationMinutes` read from the existing `ClinicSettings` row (seed default 10), **not** a new config constant; expiry stored as `min(now + duration, slot.startAt)` through the new pure `holdExpiresAt` in `lib/slotGuard.ts` (unit-tested). |
+| 3 | Two edges, one core: `POST /payments/verify` (PATIENT, gateway triple, `KEY_SECRET` HMAC → 400 `PAYMENT_SIGNATURE_INVALID`, ownership via `expectedPatientId` → 404) and `POST /payments/webhook` (no auth; `RAZORPAY_WEBHOOK_SECRET` unset → 503 `WEBHOOK_NOT_CONFIGURED`, non-Buffer body → 400, sig → 403, `order.paid` event only, actor `{name:"system"}`). Signature checking lives ONLY at the edges — `paymentConvert.service.ts` never sees one. |
+| 4 | `RAZORPAY_WEBHOOK_SECRET` is an `optionalSecret` distinct from `KEY_SECRET` (different credentials); the webhook route is mounted on `express.raw({type:"application/json"})` in `app.ts` BEFORE `express.json` (byte-exact HMAC needs the Buffer), otherwise 503-until-configured. |
+| 5 | Conversion = `paymentConvert.service.ts` `convertPayment`, keyed by `order_id`: `SELECT … FOR UPDATE` on the payment row IS the idempotency (replay → stored appointment, zero writes; concurrent verify+webhook serialize). Pre-tx refusals (`PAYMENT_NOT_FOUND`, `PAYMENT_NOT_PENDING`, `HOLD_NOT_FOUND/RELEASED/EXPIRED`) change NOTHING — payment stays `PENDING`; refunding captured-but-unbooked money is Day 25's. **Superseded on Day 25:** a signed captured payment behind a refusal is now settled `PAID` + full refund; see Day 25 decisions 1–12. |
+| 6 | Inside the conversion tx: doctor/slot/same-slot re-checks, seat move `held-1/booked+1 WHERE held_count>0` (0 rows → 409 `CONVERSION_FAILED`), appointment created `CONFIRMED` with `feeAmount = payments.amount_paise` (the PAID number, never re-derived), hold → `CONVERTED` and payment → `PAID` both guarded, `BOOKED` history + `APPOINTMENT_BOOKED`/`PAYMENT_PAID` audits — one tx; unique-index race → 409 `ALREADY_BOOKED`. |
+| 7 | Webhook error contract: `AppError` → HTTP 200 `{status:"rejected",code}` (stops Razorpay's retries — a refusal will not become a success), unexpected → 500 (retry is right), unparsable/foreign events → 200 `{status:"ignored"}`. A wrong-patient order id is the SAME 404 as a nonexistent one (§26). |
+| 8 | Client: `openRazorpayCheckout` now resolves `CheckoutSuccess \| "dismissed"` (the handler passes the triple out — no more "paid" placeholder); `payOnline` posts it to `apiVerifyPayment`, shows "Confirming…", on success reuses booking's own confirmation panel + availability refetch (both flows converge on one rendered result); network failure during verify → "Payment received — your booking will complete automatically", never "failed". |
+| 9 | One phrase per code: `paymentErrorMessage` handles payment-specific codes then DELEGATES to `bookingErrorMessage` — the hold tx shares §8.5/§10/§15's codes and the two flows must not phrase the same refusal differently. |
+| 10 | DoD: `scripts/day24-dod.ts` against the real DB + real TEST gateway, with its OWN fixture doctor/slots/patients (seed read-free, self-cleaning). **Deviation (decision B3): §17 step 4's re-fetch of `pay_…` from the gateway is skipped** — the script fabricates a `pay_` id and computes the HMAC locally with the TEST key secret (the exact construction `/verify` checks), so it never claims the gateway vouched for it. Scenario set: hold+link+expiry math, conversion invariants, idempotent replay, wrong patient 404, expired hold, full slot, same-slot, `ABANDONED` release. Raw-body webhook wiring + a real test-card payment remain MANUAL (printed by the script). **Updated on Day 25:** the expired-hold expectation is now `PAID` + released `EXPIRED` seat + full queued refund. |
 
 ### Day 25 — Failure, idempotency, refunds
 - `[S]` **Any** step-5 rejection after payment → no appointment + full auto-refund, per
@@ -758,12 +786,44 @@ The correctness-critical phase. Slow down here.
   amount dispute, gateway-failed retry) (§17).
 - **DoD:** every refund scenario behaves per §17 and notifies the patient (Phase 7).
 
+#### Decisions locked for Day 25
+| # | Decision |
+|---|----------|
+| 1 | Refund policy is pure (`lib/refundPolicy.ts`): remaining-amount math, cancel/reject kind selection, conversion-failure kind + hold-release reason, and notification type. `refund.service.ts` owns the transactions and the gateway call. |
+| 2 | `queueRefund` locks the `Payment` row, computes `remaining = payment.amountPaise − every existing refund amount` (PENDING, SUCCESS **and** FAILED — a FAILED row is still an unpaid obligation), caps the new amount to that remainder, and writes one PENDING `Refund` + `REFUND_QUEUED` audit inside the caller's transaction. |
+| 3 | Staff/admin cancellation and rejection are always `CLINIC_CAUSED` full refunds. A patient cancellation allowed by §8.5 is `CLINIC_CAUSED` when the booking is clinic-caused, otherwise `CANCELLATION`; the transition service queues it only after the guarded status write. |
+| 4 | Captured payment + failed conversion: the conversion tx rolls back, then a separate settlement tx marks the payment `PAID` (storing the signed gateway payment id + `paidAt`), releases the live hold (`EXPIRED` for `HOLD_EXPIRED`, new `CONVERSION_FAILED` otherwise) with its paired `heldCount-1`, queues the full refund (`EXPIRED_HOLD` / `CONVERSION_FAILED`) and audits `PAYMENT_CONVERSION_FAILED`. The original AppError is still returned; no appointment exists. |
+| 5 | Refund execution is best-effort after commit: route-level `kickRefundWorker()` schedules `executePendingRefunds()`; the sweep runs PENDING rows oldest-first and leaves them PENDING when Razorpay is not configured. Day 29 will own the periodic sweep. |
+| 6 | The gateway seam gained `refundPayment`; Razorpay sends the amount in paise with the local `Refund.id` in notes and the adapter refuses an amount echo mismatch (a currency mismatch is refused too). No new env vars. |
+| 7 | `executeRefund` is single-flight per refund id in-process and guards `PENDING → SUCCESS/FAILED` with `updateMany`; a successful refund stores `gatewayRefundId`, queues `REFUND_COMPLETED` (or `PAYMENT_LATE_REFUND` for an expired hold) and audits `REFUND_SUCCEEDED`. A gateway error marks `FAILED` + `REFUND_FAILED`; FAILED is deliberately not auto-retried (Day 26 admin queue). |
+| 8 | Refunds against a payment with no gateway `paymentId` (offline money) are labelled `DESK_HAND_BACK` and left PENDING for the Day 26 staff hand-back surface; no gateway call is attempted. **Superseded on Day 26:** offline money keeps its POLICY kind (`CANCELLATION`, `RESCHEDULE_DELTA`, `CLINIC_CAUSED`, …) and the desk queue selects `payment.paymentId IS NULL` instead of relabelling. |
+| 9 | Refund notification targeting reuses `Notification`: `appointmentId` when the payment has one, else the slot recovered from the hold by `orderId`; a provisional patient with no email is skipped (§16/§18). |
+| 10 | Schema: `SeatHoldReleaseReason` gains `CONVERSION_FAILED` via a hand-written enum migration; `RefundKind`/`RefundStatus` were already complete. |
+| 11 | Day 24's expired-hold DoD expectation is updated to the Day 25 contract (PAID, hold released EXPIRED, seat freed, full PENDING refund) instead of “payment stays PENDING”. |
+| 12 | DoD: `scripts/day25-dod.ts` is DB-backed and key-free — a deterministic injectable `FakeGateway` proves exact paise/currency, double-sweep single execution, success notifications/audits, staff vs patient cancel kinds, reject refund, delta-then-cancel remainder, and gateway-failure visibility with no auto-retry. A real TEST-mode refund remains MANUAL/optional. Refund-queue UI, admin approve/retry and staff hand-back endpoints are deferred to Day 26/Phase 8. |
+
 ### Day 26 — Pay-at-clinic + offline hand-back
 - `[S]` Record offline payment; desk voids unpaid; the auto-cancel job closes out the
   remaining `CONFIRMED` after the slot (§17).
 - `[S]` Cash/UPI hand-back recorded against the refund (staff dashboard, no gateway).
 - **DoD:** the whole non-online money path works end-to-end.
 - **Phase 6 complete.**
+
+#### Decisions locked for Day 26
+| # | Decision |
+|---|----------|
+| 1 | Booking now creates the pay-at-clinic receivable inside its own transaction: one `PENDING` `Payment` with `amountPaise = feeAmount`, no method/gateway ids, `paymentId`/`paymentStatus` echoed in `APPOINTMENT_BOOKED`. A zero-fee booking creates no row (`amountPaise > 0` is a database CHECK). |
+| 2 | Keep the refund POLICY kind for offline money; do not override it to `DESK_HAND_BACK`. Offline is identified by `Payment.paymentId === null`. This supersedes Day 25 decision 8 and lets one offline payment carry a `RESCHEDULE_DELTA` and a later `CANCELLATION` as two rows. |
+| 3 | `POST /payments/offline/collect` (STAFF/ADMIN, CASH/CARD/UPI): locks the appointment row first, requires `CONFIRMED`/`ARRIVED`, requires exactly one `PENDING` payment, stores `PAID` + method + `paidAt` + collector + `collectedAt`, queues `PAYMENT_SUCCESSFUL` and audits `PAYMENT_COLLECTED`. |
+| 4 | Collection may be LESS than the fee (a concession): optional `amountPaise` in `1..outstanding` becomes the stored amount and therefore the refundable baseline. It may never exceed the outstanding amount, and no second payment row is created. |
+| 5 | `POST /payments/offline/void` (STAFF/ADMIN, reason required) writes off one `PENDING` receivable as `VOIDED` + `PAYMENT_VOIDED`, regardless of appointment state; a paid row is never voided. Cancel/reject/auto-cancel use the same rule through `voidPendingPaymentForAppointment` inside their existing transaction. |
+| 6 | Offline delta math uses actual captured money: `remainingRefundablePaise(payment.amountPaise, existing refunds)` instead of the booking-time fee snapshot. Online refunds keep Day 22's snapshot rule. |
+| 7 | Rescheduling an UNPAID offline booking rewrites its `PENDING` amount to the new fee in the same transaction (+ `PAYMENT_AMOUNT_ADJUSTED` audit). Known edge: a move to a zero-fee slot leaves the old positive amount untouched because the schema forbids `amountPaise = 0`. |
+| 8 | `GET /payments/refunds/desk-hand-backs` lists `PENDING` refunds whose payment has no gateway id, oldest first, carrying the policy kind and patient identity. `POST /payments/refunds/:id/hand-back` (STAFF/ADMIN) completes the exact queued amount as CASH or UPI only, overwrites the refund actor with the person who handed the money over, queues `REFUND_COMPLETED` and audits `REFUND_HANDED_BACK`. No partial hand-back. |
+| 9 | `POST /payments/refunds/:id/retry` is ADMIN-only and only moves an ONLINE `FAILED` refund back to `PENDING` (+ `REFUND_RETRY_REQUESTED`, worker kick). An offline hand-back is refused `REFUND_NOT_GATEWAY`; any non-FAILED row is refused `REFUND_NOT_FAILED`. |
+| 10 | Collection and cancellation serialize on the appointment row (`SELECT … FOR UPDATE` in both paths): either collection wins and cancellation queues the hand-back, or cancellation wins and collection refuses `APPOINTMENT_NOT_PAYABLE`. A cancelled appointment never keeps a `PENDING` receivable. |
+| 11 | No schema migration and no backfill: `Refund.method` already existed; old appointments simply have no receivable until touched. Day 26 is backend-only (no desk UI), answering Day 25's deferred hand-back and retry surfaces. |
+| 12 | DoD: `scripts/day26-dod.ts` is DB-backed, key-free and self-cleaning. It proves collection/concession, actual-based delta + later cancellation remainder, unpaid reschedule amount adjustment, void, cancel-unpaid, clinic-caused auto-cancel for paid and unpaid, FAILED gateway retry vs offline refusal, and a live collect-vs-cancel race. |
 
 ---
 

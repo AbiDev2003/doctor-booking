@@ -113,6 +113,15 @@ async function cleanup(state: RunState): Promise<void> {
   await prisma.seatHold.deleteMany({
     where: { OR: [{ patientId: { in: patientIds } }, { slotId: { in: slotIds } }] },
   });
+  // Day 26: booking creates a PENDING receivable; it must go before the
+  // appointment (payments.appointment_id is Restrict).
+  const payments = await prisma.payment.findMany({
+    where: { OR: [{ appointmentId: { in: appointmentIds } }, { patientId: { in: patientIds } }] },
+    select: { id: true },
+  });
+  const paymentIds = payments.map((row) => row.id);
+  await prisma.refund.deleteMany({ where: { paymentId: { in: paymentIds } } });
+  await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
   await prisma.appointment.deleteMany({ where: { id: { in: appointmentIds } } });
   // The synthetic patients wrote audit rows as actors; those must go before the
   // users they attribute to (audit_logs.actor_id is Restrict). See the header.
@@ -173,6 +182,13 @@ async function purgeStaleFixtures(): Promise<number> {
     await prisma.appointmentHistory.deleteMany({ where: { appointmentId: { in: appointmentIds } } });
   }
   await prisma.seatHold.deleteMany({ where: { patientId: { in: patientIds } } });
+  const payments = await prisma.payment.findMany({
+    where: { patientId: { in: patientIds } },
+    select: { id: true },
+  });
+  const paymentIds = payments.map((row) => row.id);
+  await prisma.refund.deleteMany({ where: { paymentId: { in: paymentIds } } });
+  await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
   await prisma.appointment.deleteMany({ where: { patientId: { in: patientIds } } });
   await prisma.auditLog.deleteMany({ where: { actorId: { in: patientIds } } });
   await prisma.user.deleteMany({ where: { id: { in: patientIds } } });

@@ -4,6 +4,7 @@ import { AppError } from "../lib/appError.js";
 import { utcToLocalDateTime } from "../lib/time.js";
 import { bookingHorizon } from "../lib/availability.js";
 import { isBookable } from "../lib/doctorState.js";
+import { deriveConsultationFee } from "../lib/fee.js";
 import {
   ACTIVE_BOOKING_STATUSES,
   assertNoDuplicateForSlot,
@@ -37,12 +38,16 @@ import type { ActorContext } from "./doctor.service.js";
  *      rows affected is `SLOT_FULL`. Prisma's `where` cannot express a
  *      column-vs-column comparison, so it is raw SQL (§15's literal statement).
  *   7. Create the appointment born `CONFIRMED` with its booking-time snapshots,
- *      then its `AppointmentHistory` BOOKED event and its audit row — all in the
- *      same transaction, so the seat, the booking and its records commit or none.
+ *      its PENDING pay-at-clinic receivable (when the fee is non-zero), its
+ *      `AppointmentHistory` BOOKED event and its audit row — all in the same
+ *      transaction, so the seat, the booking, its receivable and its records
+ *      commit or none.
  *
- * No `Payment` row and no `SeatHold` here: pay-at-clinic has no money upfront and
- * nothing to hold (§17). Both, and the queue position (a rank over `bookingTime`,
- * never a stored counter), fall out of this row later.
+ * No `SeatHold` here: pay-at-clinic has no money upfront and nothing to hold
+ * (§17). The `Payment` row is the desk's receivable, born `PENDING` and settled
+ * by the Day 26 collection route or voided when the booking is cancelled. The
+ * queue position (a rank over `bookingTime`, never a stored counter) falls out
+ * of this row later.
  */
 
 export interface BookAppointmentInput {
@@ -167,7 +172,9 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Appo
       }
 
       /* 7. The row, its snapshot fields, its timeline event and its audit row. */
-      const feeAmount = profile.consultationFee ?? clinic.defaultConsultationFee;
+      // The shared §3.2 derivation (lib/fee.ts): Day 23 charges this exact
+      // number for the order that pays BEFORE this transaction runs.
+      const feeAmount = deriveConsultationFee(profile.consultationFee, clinic.defaultConsultationFee);
 
       const created = await tx.appointment.create({
         data: {
@@ -181,6 +188,22 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Appo
         },
         select: { id: true, status: true, feeAmount: true, bookingTime: true, createdAt: true },
       });
+
+      // Pay-at-clinic receivable (§17): no gateway ids and no method yet. A
+      // zero-fee booking has nothing to collect, so it deliberately has no row
+      // (amountPaise > 0 is a database CHECK).
+      const payment =
+        feeAmount > 0
+          ? await tx.payment.create({
+              data: {
+                appointmentId: created.id,
+                patientId,
+                amountPaise: feeAmount,
+                currency: clinic.currency,
+              },
+              select: { id: true },
+            })
+          : null;
 
       await tx.appointmentHistory.create({
         data: {
@@ -209,6 +232,8 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Appo
           slotId: slot.id,
           slotDate,
           feeAmount,
+          paymentId: payment?.id ?? null,
+          paymentStatus: payment === null ? null : $Enums.PaymentStatus.PENDING,
         },
         ip: input.ip ?? null,
         requestId: input.requestId ?? null,

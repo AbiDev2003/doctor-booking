@@ -388,3 +388,28 @@ button:disabled {
   padding: 0.375rem 0.75rem;
   font-size: 0.8125rem;
 }
+
+/* --- Day 23: two explicit actions per slot (§17) ------------------ */
+
+.slot-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* The grey counterpart to the blue Book: same size as .slot-row__book so the
+   row stays balanced, and an explicit disabled state because this class would
+   otherwise outrank `button:disabled` by source order. */
+.slot-row__pay {
+  margin: 0;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.slot-row__pay:disabled {
+  background: #94a3b8;
+  color: #fff;
+  cursor: not-allowed;
+}
