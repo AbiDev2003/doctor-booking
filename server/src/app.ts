@@ -3,7 +3,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { pinoHttp } from "pino-http";
 import { config } from "./config.js";
-import { logger } from "./lib/logger.js";
+import { logger, sanitizeRequestUrl } from "./lib/logger.js";
 import { genRequestId, requestId } from "./middleware/requestId.js";
 import { notFound } from "./middleware/notFound.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -11,6 +11,7 @@ import { healthRouter } from "./routes/health.js";
 import { authRouter } from "./routes/auth.js";
 import { accountRouter } from "./routes/account.js";
 import { doctorsRouter, staffRouter } from "./routes/doctors.js";
+import { usersRouter } from "./routes/users.js";
 import { publicRouter } from "./routes/public.js";
 import { schedulesRouter } from "./routes/schedules.js";
 import { slotsRouter } from "./routes/slots.js";
@@ -39,7 +40,7 @@ export function createApp() {
       customProps: (req) => ({ requestId: req.id }),
 
       serializers: {
-        req: (req) => ({ method: req.method, url: req.url }),
+        req: (req) => ({ method: req.method, url: sanitizeRequestUrl(req.url ?? "") }),
       },
     }),
   );
@@ -71,6 +72,9 @@ export function createApp() {
   // two prefixes — see routes/doctors.ts for why both live in one file.
   app.use("/api/v1/doctors", doctorsRouter);
   app.use("/api/v1/staff", staffRouter);
+  // §6.3/§18 account security, Day 27: ADMIN-only session revocation. Separate
+  // from `/auth` because it targets another account, not the caller's own.
+  app.use("/api/v1/users", usersRouter);
   // §11 schedule templates + slot materialisation (Day 15). Authenticated
   // like the doctors router — every route is gated, none are public.
   app.use("/api/v1/schedules", schedulesRouter);

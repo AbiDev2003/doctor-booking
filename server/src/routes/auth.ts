@@ -22,6 +22,14 @@ import { getClientIp } from "../lib/clientIp.js";
 import { requireAuth } from "../middleware/auth.js";
 import { authBurstGuard } from "../middleware/rateLimit.js";
 import { getRequestId } from "../middleware/requestId.js";
+import { dispatchNotificationInBackground } from "../services/notification.service.js";
+import { durationLabel } from "../lib/duration.js";
+import {
+  emailVerificationEmail,
+  passwordResetCompletedEmail,
+  passwordResetEmail,
+} from "../lib/emailTemplates.js";
+import { EMAIL_VERIFICATION_TOKEN_EXPIRY_MINUTES } from "../lib/auth.js";
 
 export const authRouter = Router();
 
@@ -60,7 +68,14 @@ authRouter.post("/register", async (req, res, next) => {
     });
 
     const verificationUrl = `${config.CLIENT_URL}/verify-email?token=${result.rawToken}`;
-    req.log.info({ userId: result.userId }, `Email verification link: ${verificationUrl}`);
+    dispatchNotificationInBackground(
+      result.notificationId,
+      emailVerificationEmail({
+        fullName: parsed.fullName,
+        link: verificationUrl,
+        expiresIn: `${EMAIL_VERIFICATION_TOKEN_EXPIRY_MINUTES} minutes`,
+      }),
+    );
 
     res.status(201).json({
       message: "Registration successful. Please verify your email.",
@@ -173,10 +188,10 @@ authRouter.get("/me", requireAuth, (req: Request, res: Response) => {
  *
  * The response body is written HERE and is byte-identical whether or not an
  * account exists: `forgotPassword` reports `sent` only so this route knows
- * whether there is anything to log. The dev-mode link/OTP line below is the
- * Phase 7 email stub, same as Day 7's verification link — it goes to the
- * server log, never to the client, because the response must not distinguish
- * the branches it just refused to distinguish in its body either.
+ * whether there is anything to send. The link/OTP itself travels in the email
+ * only — never in the response, never in a log line — because the response must
+ * not distinguish the branches it just refused to distinguish in its body
+ * either. Dispatch is fire-and-forget (§18).
  */
 authRouter.post("/forgot-password", async (req, res, next) => {
   try {
@@ -190,12 +205,21 @@ authRouter.post("/forgot-password", async (req, res, next) => {
     });
 
     if (result.sent) {
-      if (result.method === "LINK") {
-        const resetUrl = `${config.CLIENT_URL}/reset-password?token=${result.rawToken}`;
-        req.log.info({ userId: result.userId }, `Password reset link: ${resetUrl}`);
-      } else {
-        req.log.info({ userId: result.userId }, `Password reset OTP: ${result.rawToken}`);
-      }
+      const resetUrl =
+        result.method === "LINK"
+          ? `${config.CLIENT_URL}/reset-password?token=${result.rawToken}`
+          : undefined;
+
+      dispatchNotificationInBackground(
+        result.notificationId,
+        passwordResetEmail({
+          fullName: result.fullName,
+          method: result.method,
+          link: resetUrl,
+          otp: result.method === "OTP" ? result.rawToken : undefined,
+          expiresIn: durationLabel(config.PASSWORD_RESET_TTL),
+        }),
+      );
     }
 
     res.status(200).json({
@@ -216,12 +240,19 @@ authRouter.post("/reset-password", async (req, res, next) => {
   try {
     const parsed = resetPasswordSchema.parse(req.body);
 
-    await resetPassword({
+    const result = await resetPassword({
       token: parsed.token,
       password: parsed.password,
       ip: getClientIp(req),
       requestId: getRequestId(res),
     });
+
+    if (result.notificationId !== null) {
+      dispatchNotificationInBackground(
+        result.notificationId,
+        passwordResetCompletedEmail({ fullName: result.fullName }),
+      );
+    }
 
     // The client clears any stored session state on this response: the reset
     // revoked every refresh token server-side, and a client still holding an

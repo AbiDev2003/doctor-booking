@@ -12,6 +12,9 @@ import { getRequestId } from "../middleware/requestId.js";
 import { verifyEmailSchema } from "../schemas/auth.js";
 import { changeEmailSchema, changePhoneSchema, deleteAccountSchema } from "../schemas/account.js";
 import { changeEmail, verifyEmailChange, changePhone, deleteAccount } from "../services/account.service.js";
+import { dispatchNotificationInBackground } from "../services/notification.service.js";
+import { durationLabel } from "../lib/duration.js";
+import { accountDeactivatedEmail, emailChangeVerificationEmail } from "../lib/emailTemplates.js";
 
 /**
  * plan.md §6.1 — patient account management. Mounted at `/api/v1/auth` beside
@@ -61,18 +64,24 @@ accountRouter.post("/change-email", requireAuth, patientOnly, async (req, res, n
     const user = authenticatedUser(req);
     const parsed = changeEmailSchema.parse(req.body);
 
-    const { rawToken } = await changeEmail({
+    const result = await changeEmail({
       userId: user.id,
       email: parsed.email,
       ip: getClientIp(req),
       requestId: getRequestId(res),
     });
 
-    // Phase 7's email is a console stub, exactly like Day 7's verification
-    // link: it goes to the server log only. The client's response carries no
-    // token — the new address must receive it, or the flow proves nothing.
-    const verifyUrl = `${config.CLIENT_URL}/verify-email-change?token=${rawToken}`;
-    req.log.info({ userId: user.id }, `Email change verification link: ${verifyUrl}`);
+    // The client's response carries no token — the new address must receive it,
+    // or the flow proves nothing.
+    const verifyUrl = `${config.CLIENT_URL}/verify-email-change?token=${result.rawToken}`;
+    dispatchNotificationInBackground(
+      result.notificationId,
+      emailChangeVerificationEmail({
+        fullName: user.name,
+        link: verifyUrl,
+        expiresIn: durationLabel(config.PASSWORD_RESET_TTL),
+      }),
+    );
 
     res.status(200).json({ message: "Verification link sent to the new email address." });
   } catch (err) {
@@ -114,12 +123,19 @@ accountRouter.post("/delete-account", requireAuth, patientOnly, async (req, res,
     const user = authenticatedUser(req);
     const parsed = deleteAccountSchema.parse(req.body);
 
-    await deleteAccount({
+    const result = await deleteAccount({
       userId: user.id,
       password: parsed.password,
       ip: getClientIp(req),
       requestId: getRequestId(res),
     });
+
+    if (result.notificationId !== null) {
+      dispatchNotificationInBackground(
+        result.notificationId,
+        accountDeactivatedEmail({ fullName: user.name }),
+      );
+    }
 
     // The server revoked every refresh token in the same transaction as the
     // deletion; clearing the cookie is the client's half — the browser must

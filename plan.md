@@ -485,7 +485,7 @@ Rules (backend-enforced):
 - Refresh tokens are opaque random strings stored **hashed (SHA-256)** in a `refresh_tokens` table with `id, userId, tokenHash (unique), expiresAt, revokedAt, ip, userAgent, createdAt`.
 - Every refresh issues a **new token** and revokes the previous one (rotation) — a stolen token is usable once.
 - Presenting an already-revoked token simply **fails**; the user re-authenticates. *(Token-family theft detection — the `familyId` column and the "revoke the whole family" response — is **not** in MVP: it is invisible to legitimate users, adds a second revocation concept, and buys nothing against the threat that matters here, which is a live session belonging to a suspended doctor. A future authenticated session listing (§42) supersedes it.)*
-- **"Revoke every session" means one statement:** set `revokedAt` on every `refresh_tokens` row for that user. It is used on password reset (§6.2), account deactivation, staff deactivation (§5.1) and doctor suspension/archive (§5.2) — so suspending a doctor logs him out everywhere, immediately, in the same transaction as the status change.
+- **"Revoke every session" means one statement:** set `revokedAt` on every `refresh_tokens` row for that user. It is used on password reset (§6.2), account deactivation, staff deactivation (§5.1) and doctor suspension/archive (§5.2) — so suspending a doctor logs him out everywhere, immediately, in the same transaction as the status change. An ADMIN can also force it for any account via `POST /api/v1/users/:id/revoke-sessions`; that action is audited, triggers the §18 security notice, and does not deactivate the account. Already-issued access tokens remain valid until their 15-minute TTL — only account-status changes are re-checked per request.
 - **Access tokens are short-lived** (default **15 minutes**) — they are never a durable credential.
 - **Per-request status re-check (backstop):** besides verifying the signature, the authenticated-request guard re-checks the account's current state on every request for DOCTOR / STAFF / ADMIN (bookable / not suspended / not archived / not deactivated, §5). A short TTL alone is **not** sufficient: a suspension, archive or staff deactivation must take effect **immediately**, not at the next token expiry (§5.1, §5.2).
 
@@ -1089,7 +1089,7 @@ Required notification events include:
 - Email-change verification link (sent to the new email, §6.1)
 - Password reset requested (link or OTP, §6.2)
 - Password reset completed (§6.2)
-- Security notice when all sessions are revoked by an admin action (§6.3)
+- Security notice when all sessions are revoked by an admin action (§6.3) — the ADMIN-only `POST /api/v1/users/:id/revoke-sessions` revokes every live refresh token, audits the actor/reason, and sends this notice only when at least one session was actually revoked.
 - Account deleted / deactivated confirmation (patient, §6.1)
 
 **Doctor management (§5):**

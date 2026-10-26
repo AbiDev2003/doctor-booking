@@ -31,6 +31,9 @@ import {
   unarchiveDoctor,
 } from "../services/doctor.service.js";
 import { getClinicSettings } from "../services/clinic.service.js";
+import { dispatchNotificationInBackground } from "../services/notification.service.js";
+import { durationLabel } from "../lib/duration.js";
+import { accountInvitationEmail } from "../lib/emailTemplates.js";
 import type { ActorContext } from "../services/doctor.service.js";
 
 /**
@@ -84,9 +87,12 @@ function doctorIdOf(req: Request): string {
 }
 
 /**
- * §5.2's "STAFF action → admin notification" (D6): a console/log stub today,
- * a real email in Phase 7. Only STAFF-performed actions are summarized — an
- * ADMIN is the authority the summary would be addressed to.
+ * §5.2's "STAFF action → admin notification" (D6): still a console/log stub.
+ * Day 27 wires the auth/account emails; the doctor-management notification set
+ * (this admin summary, plus doctor-directed verified/suspended/archived mail)
+ * is a separate surface and is intentionally not claimed as done here. Only
+ * STAFF-performed actions are summarized — an ADMIN is the authority the
+ * summary would be addressed to.
  */
 function adminSummaryStub(
   req: Request,
@@ -113,11 +119,10 @@ function requestMeta(req: Request, res: Response): { ip: string | null; requestI
 /**
  * Invite a doctor — ADMIN or STAFF (§5.2 lets staff create doctors).
  *
- * 201 + no token in the body: the claim link is logged server-side exactly
- * like Day 7's verification link and Day 11's reset link (Phase 7 sends the
- * real email). Returning the raw token to the INVITER would let anyone who
- * can invite also claim-as, which collapses §5.1's invitation into a
- * password-set endpoint with extra steps.
+ * 201 + no token in the body: the claim link travels in the invitation email
+ * only. Returning the raw token to the INVITER would let anyone who can invite
+ * also claim-as, which collapses §5.1's invitation into a password-set
+ * endpoint with extra steps. Dispatch is fire-and-forget (§18).
  */
 doctorsRouter.post("/", requireRole($Enums.UserRole.ADMIN, $Enums.UserRole.STAFF), async (req, res, next) => {
   try {
@@ -132,7 +137,15 @@ doctorsRouter.post("/", requireRole($Enums.UserRole.ADMIN, $Enums.UserRole.STAFF
     });
 
     const claimUrl = `${config.CLIENT_URL}/claim-account?token=${result.rawToken}`;
-    req.log.info({ userId: result.userId }, `Account claim link: ${claimUrl}`);
+    dispatchNotificationInBackground(
+      result.notificationId,
+      accountInvitationEmail({
+        fullName: parsed.fullName,
+        link: claimUrl,
+        roleLabel: "doctor",
+        expiresIn: durationLabel(config.ACCOUNT_CLAIM_TTL),
+      }),
+    );
     adminSummaryStub(req, "DOCTOR_INVITED", result.userId);
 
     res.status(201).json({ message: "Doctor invited.", userId: result.userId });
@@ -347,7 +360,15 @@ staffRouter.post("/", requireRole($Enums.UserRole.ADMIN), async (req, res, next)
     });
 
     const claimUrl = `${config.CLIENT_URL}/claim-account?token=${result.rawToken}`;
-    req.log.info({ userId: result.userId }, `Account claim link: ${claimUrl}`);
+    dispatchNotificationInBackground(
+      result.notificationId,
+      accountInvitationEmail({
+        fullName: parsed.fullName,
+        link: claimUrl,
+        roleLabel: "staff member",
+        expiresIn: durationLabel(config.ACCOUNT_CLAIM_TTL),
+      }),
+    );
 
     res.status(201).json({ message: "Staff member invited.", userId: result.userId });
   } catch (err) {
