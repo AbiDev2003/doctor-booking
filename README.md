@@ -362,14 +362,14 @@ flowchart TD
   N --> R["runSlotGeneration() → materializeSlots()"]
   O --> B
 
-    classDef hold fill:transparent,stroke:#2f9c3c,stroke-width:1px,color:#fff
-    classDef queue fill:transparent,stroke:#f5a623,stroke-width:1px,color:#fff
-    classDef pay fill:transparent,stroke:#8e24aa,stroke-width:1px,color:#fff
-    classDef book fill:transparent,stroke:#2563eb,stroke-width:1px,color:#fff
-    classDef resched fill:transparent,stroke:#7cb342,stroke-width:1px,color:#fff
-    classDef refund fill:transparent,stroke:#e53935,stroke-width:1px,color:#fff
-    classDef auto fill:transparent,stroke:#616161,stroke-width:1px,color:#fff
-    classDef late fill:transparent,stroke:#fbc02d,stroke-width:1px,color:#fff
+    classDef hold fill:transparent,stroke:#9ca3af,stroke-width:1px,color:#fff
+    classDef queue fill:transparent,stroke:#9ca3af,stroke-width:1px,color:#fff
+    classDef pay fill:transparent,stroke:#9ca3af,stroke-width:1px,color:#fff
+    classDef book fill:transparent,stroke:#9ca3af,stroke-width:1px,color:#fff
+    classDef resched fill:transparent,stroke:#9ca3af,stroke-width:1px,color:#fff
+    classDef refund fill:transparent,stroke:#9ca3af,stroke-width:1px,color:#fff
+    classDef auto fill:transparent,stroke:#9ca3af,stroke-width:1px,color:#fff
+    classDef late fill:transparent,stroke:#9ca3af,stroke-width:1px,color:#fff
     class A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R book
 ```
 
