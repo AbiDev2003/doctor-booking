@@ -108,9 +108,6 @@ flowchart TD
     MONEY -->|"paid"| REFUND["Queue clinic-caused refund"]
     VOID --> FINISH["Free the seat<br/>history + audit"]
     REFUND --> FINISH
-
-    classDef stage fill:transparent,stroke:#2563eb,stroke-width:1px,color:#fff
-    class MARK,TX,ROW,HIDE,IMPACT,COMMIT,FLAG,NOTIFY,SWEEP,STILL,LEAVE,CANCEL,NOTICE,MONEY,VOID,REFUND,FINISH stage
 ```
 
 - The cascade flags appointments; it does not cancel them immediately. The
@@ -311,9 +308,6 @@ flowchart TD
     CANCEL -->|"paid"| QUEUE
     AUTO -->|"paid"| QUEUE
     LATE --> QUEUE
-
-    classDef stage fill:transparent,stroke:#2563eb,stroke-width:1px,color:#fff
-    class PATIENT,CHOICE,BOOK,COLLECT,PAID_OFFLINE,VOID,ORDER,CHECKOUT,EDGE,CONVERT,PAID_ONLINE,LATE,DISMISSED,REFUSED,ORDER_FAILED,RESCHED,CANCEL,AUTO,QUEUE,KIND,WORKER,FAILED,RETRY,DESKQ,HAND,DONE stage
 ```
 
 Key rules:
@@ -368,8 +362,15 @@ flowchart TD
   N --> R["runSlotGeneration() → materializeSlots()"]
   O --> B
 
-  classDef stage fill:transparent,stroke:#2563eb,stroke-width:1px,color:#fff
-  class A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R stage
+    classDef hold fill:transparent,stroke:#2f9c3c,stroke-width:1px,color:#fff
+    classDef queue fill:transparent,stroke:#f5a623,stroke-width:1px,color:#fff
+    classDef pay fill:transparent,stroke:#8e24aa,stroke-width:1px,color:#fff
+    classDef book fill:transparent,stroke:#2563eb,stroke-width:1px,color:#fff
+    classDef resched fill:transparent,stroke:#7cb342,stroke-width:1px,color:#fff
+    classDef refund fill:transparent,stroke:#e53935,stroke-width:1px,color:#fff
+    classDef auto fill:transparent,stroke:#616161,stroke-width:1px,color:#fff
+    classDef late fill:transparent,stroke:#fbc02d,stroke-width:1px,color:#fff
+    class A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R book
 ```
 
 ### Detailed Code Flow
