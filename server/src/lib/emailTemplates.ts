@@ -257,3 +257,214 @@ export function accountDeactivatedEmail(input: BaseTemplateInput): EmailContent 
     ),
   };
 }
+
+export interface AppointmentEmailInput extends BaseTemplateInput {
+  readonly appointmentId: string;
+  readonly doctorName?: string;
+  readonly slotDate?: string;
+  readonly startTime?: string;
+  readonly endTime?: string;
+  readonly amountPaise?: number;
+  readonly reason?: string;
+}
+
+function formatAmount(amountPaise?: number): string | undefined {
+  if (amountPaise === undefined || amountPaise === null) return undefined;
+  const rupees = amountPaise / 100;
+  return `₹${rupees.toFixed(2)}`;
+}
+
+export function appointmentBookedEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.doctorName) details.push(`Doctor: ${input.doctorName}`);
+  if (input.slotDate) details.push(`Date: ${input.slotDate}`);
+  if (input.startTime && input.endTime) details.push(`Time: ${input.startTime} - ${input.endTime}`);
+  else if (input.startTime) details.push(`Time: ${input.startTime}`);
+  if (input.amountPaise !== undefined && input.amountPaise !== null) {
+    const amt = formatAmount(input.amountPaise);
+    if (amt) details.push(`Fee: ${amt}`);
+  }
+  details.push(`Appointment ID: ${input.appointmentId}`);
+
+  return {
+    subject: `Booking confirmation - ${brand}`,
+    html: layout(
+      brand,
+      "Booking confirmed",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Your appointment has been confirmed.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "We look forward to seeing you.",
+    ),
+    text: text(input.fullName, ["Your appointment has been confirmed.", "", ...details], brand),
+  };
+}
+
+export function appointmentCancelledEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.doctorName) details.push(`Doctor: ${input.doctorName}`);
+  if (input.slotDate) details.push(`Date: ${input.slotDate}`);
+  if (input.startTime && input.endTime) details.push(`Time: ${input.startTime} - ${input.endTime}`);
+  details.push(`Appointment ID: ${input.appointmentId}`);
+  if (input.reason) details.push(`Reason: ${input.reason}`);
+
+  return {
+    subject: `Appointment cancelled - ${brand}`,
+    html: layout(
+      brand,
+      "Appointment cancelled",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Your appointment has been cancelled.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "If you have questions, please contact the clinic.",
+    ),
+    text: text(input.fullName, ["Your appointment has been cancelled.", "", ...details], brand),
+  };
+}
+
+export function appointmentRescheduledEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.doctorName) details.push(`Doctor: ${input.doctorName}`);
+  if (input.slotDate) details.push(`New date: ${input.slotDate}`);
+  if (input.startTime && input.endTime) details.push(`New time: ${input.startTime} - ${input.endTime}`);
+  details.push(`Appointment ID: ${input.appointmentId}`);
+  if (input.amountPaise !== undefined && input.amountPaise !== null) {
+    const amt = formatAmount(input.amountPaise);
+    if (amt) details.push(`Fee: ${amt}`);
+  }
+
+  return {
+    subject: `Appointment rescheduled - ${brand}`,
+    html: layout(
+      brand,
+      "Appointment rescheduled",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Your appointment has been rescheduled.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "Please arrive on time for your new slot.",
+    ),
+    text: text(input.fullName, ["Your appointment has been rescheduled.", "", ...details], brand),
+  };
+}
+
+export function appointmentRejectedEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.doctorName) details.push(`Doctor: ${input.doctorName}`);
+  if (input.slotDate) details.push(`Date: ${input.slotDate}`);
+  if (input.startTime && input.endTime) details.push(`Time: ${input.startTime} - ${input.endTime}`);
+  details.push(`Appointment ID: ${input.appointmentId}`);
+  if (input.reason) details.push(`Reason: ${input.reason}`);
+
+  return {
+    subject: `Appointment rejected - ${brand}`,
+    html: layout(
+      brand,
+      "Appointment rejected",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Your appointment request has been rejected.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "If you have questions, please contact the clinic.",
+    ),
+    text: text(input.fullName, ["Your appointment request has been rejected.", "", ...details], brand),
+  };
+}
+
+export function doctorUnavailableEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.doctorName) details.push(`Doctor: ${input.doctorName}`);
+  if (input.slotDate) details.push(`Date: ${input.slotDate}`);
+  if (input.startTime && input.endTime) details.push(`Time: ${input.startTime} - ${input.endTime}`);
+  details.push(`Appointment ID: ${input.appointmentId}`);
+  if (input.reason) details.push(`Reason: ${input.reason}`);
+
+  return {
+    subject: `Doctor unavailable - ${brand}`,
+    html: layout(
+      brand,
+      "Doctor unavailable",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Your doctor is unavailable for this appointment.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "We will help you reschedule or cancel as needed.",
+    ),
+    text: text(input.fullName, ["Your doctor is unavailable for this appointment.", "", ...details], brand),
+  };
+}
+
+export function appointmentAutoCancelledEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.doctorName) details.push(`Doctor: ${input.doctorName}`);
+  if (input.slotDate) details.push(`Date: ${input.slotDate}`);
+  if (input.startTime && input.endTime) details.push(`Time: ${input.startTime} - ${input.endTime}`);
+  details.push(`Appointment ID: ${input.appointmentId}`);
+  if (input.reason) details.push(`Reason: ${input.reason}`);
+
+  return {
+    subject: `Appointment auto-cancelled - ${brand}`,
+    html: layout(
+      brand,
+      "Appointment auto-cancelled",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Your appointment has been automatically cancelled.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "If you have questions, please contact the clinic.",
+    ),
+    text: text(input.fullName, ["Your appointment has been automatically cancelled.", "", ...details], brand),
+  };
+}
+
+export function paymentReceiptEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.doctorName) details.push(`Doctor: ${input.doctorName}`);
+  if (input.slotDate) details.push(`Date: ${input.slotDate}`);
+  if (input.startTime && input.endTime) details.push(`Time: ${input.startTime} - ${input.endTime}`);
+  if (input.amountPaise !== undefined && input.amountPaise !== null) {
+    const amt = formatAmount(input.amountPaise);
+    if (amt) details.push(`Amount paid: ${amt}`);
+  }
+  details.push(`Appointment ID: ${input.appointmentId}`);
+
+  return {
+    subject: `Payment receipt - ${brand}`,
+    html: layout(
+      brand,
+      "Payment received",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Thank you for your payment. Your receipt is below.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "This is your payment receipt.",
+    ),
+    text: text(input.fullName, ["Payment received. Thank you.", "", ...details], brand),
+  };
+}
+
+export function refundCompletedEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.amountPaise !== undefined && input.amountPaise !== null) {
+    const amt = formatAmount(input.amountPaise);
+    if (amt) details.push(`Amount refunded: ${amt}`);
+  }
+  details.push(`Appointment ID: ${input.appointmentId}`);
+  if (input.reason) details.push(`Reason: ${input.reason}`);
+
+  return {
+    subject: `Refund completed - ${brand}`,
+    html: layout(
+      brand,
+      "Refund completed",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Your refund has been processed.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "The amount may take a few days to appear in your account.",
+    ),
+    text: text(input.fullName, ["Your refund has been processed.", "", ...details], brand),
+  };
+}
