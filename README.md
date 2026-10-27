@@ -331,7 +331,48 @@ Code map: `paymentOrder.service.ts` (hold + order), `paymentConvert.service.ts`
 (verify/webhook conversion), `offlinePayment.service.ts` (desk collect/void) and
 `refund.service.ts` (worker, hand-backs, retry) under `server/src/services/`.
 
+## Notifications & Jobs (Phase 7)
+
+- **Queue in-transaction**: `queueNotification(client, input)` writes a `PENDING` `Notification` inside the caller's transaction so intent commits with the state change.
+- **Dispatch post-commit**: `dispatchNotification(notificationId, content)` reads the row and calls the mailer. `dispatchNotificationInBackground()` uses `setImmediate()` for fire-and-forget delivery (never blocks HTTP/jobs).
+- **Templates**: All appointment/payment emails live in `server/src/lib/emailTemplates.ts` (`appointmentBookedEmail`, `appointmentCancelledEmail`, `appointmentRescheduledEmail`, `appointmentRejectedEmail`, `doctorUnavailableEmail`, `appointmentAutoCancelledEmail`, `paymentReceiptEmail`, `refundCompletedEmail`, `appointmentReminderEmail`).
+- **Scheduler**: `server/src/jobs/scheduler.ts` runs `runStartupJobs()` before `app.listen()` (hold-expiry sweep), then `startScheduler()` sets intervals (reminders/auto-cancel/hold-expiry every 60s, slot generation every 5min). No Redis/queue.
+- **Jobs**: `sendAppointmentReminders()` dedupes by existing `APPOINTMENT_REMINDER` row and only emails `CONFIRMED` appointments with patient emails in `now + reminderLeadMinutes ± 2min`. `expireStaleHolds()` releases expired holds, decrements `heldCount` safely, best-effort voids tied `PENDING` payments. `runAutoCancel()` calls `autoCancelAfterSlotEnd()`. `runSlotGeneration()` calls `materializeSlots()`.
+
+```mermaid
+sequenceDiagram
+    participant S as Service (Booking/Payment/Refund)
+    participant DB as PostgreSQL
+    participant N as NotificationService
+    participant J as Jobs/Scheduler
+    participant M as Mailer
+
+    Note over S,DB: Queue in-transaction
+    S->>DB: State change (Appointment/Payment/Refund)
+    S->>N: queueNotification(tx, {type, recipient, appointmentId, slotId})
+    N->>DB: INSERT notifications (status=PENDING)
+    DB-->>S: Commit
+
+    Note over N,M: Dispatch post-commit (fire-and-forget)
+    S->>N: dispatchNotificationInBackground(id, content)
+    N->>N: setImmediate
+    N->>DB: SELECT notification (skip if SENT)
+    N->>M: mailer.send(to, subject, html, text)
+    alt success
+        N->>DB: UPDATE status=SENT, sentAt=now, error=null
+    else failure
+        N->>DB: UPDATE status=FAILED, error=truncated(2000)
+    end
+
+    Note over J: Scheduler
+    J->>J: server.ts → runStartupJobs() before app.listen() → expireStaleHolds()
+    J->>J: after listen() → startScheduler() (intervals)
+    J->>J: reminders: dedupe by APPOINTMENT_REMINDER row; window ±2min around T-lead
+```
+
 ## Checks
+
+Run both before every commit:
 
 Run both before every commit:
 
