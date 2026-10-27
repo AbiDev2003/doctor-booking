@@ -362,12 +362,15 @@ flowchart TD
   N --> R["runSlotGeneration() → materializeSlots()"]
   O --> B
 
-  classDef tx fill:#e3f2fd,stroke:#1565c0,stroke-width:1px
-  classDef post fill:#fff3e0,stroke:#ef6c00,stroke-width:1px
-  classDef job fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px
-  class B,C tx
-  class D,E,F,G,H,I post
-  class J,K,L,M,N,O,P,Q,R job
+    classDef hold fill:transparent,stroke:#2f9c3c,stroke-width:1px,color:#fff
+    classDef queue fill:transparent,stroke:#f5a623,stroke-width:1px,color:#fff
+    classDef pay fill:transparent,stroke:#8e24aa,stroke-width:1px,color:#fff
+    classDef book fill:transparent,stroke:#2563eb,stroke-width:1px,color:#fff
+    classDef resched fill:transparent,stroke:#7cb342,stroke-width:1px,color:#fff
+    classDef refund fill:transparent,stroke:#e53935,stroke-width:1px,color:#fff
+    classDef auto fill:transparent,stroke:#616161,stroke-width:1px,color:#fff
+    classDef late fill:transparent,stroke:#fbc02d,stroke-width:1px,color:#fff
+    class A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R book
 ```
 
 ### Detailed Code Flow
