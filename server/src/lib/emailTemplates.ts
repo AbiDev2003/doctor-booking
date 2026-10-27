@@ -468,3 +468,30 @@ export function refundCompletedEmail(input: AppointmentEmailInput): EmailContent
     text: text(input.fullName, ["Your refund has been processed.", "", ...details], brand),
   };
 }
+
+export function appointmentReminderEmail(input: AppointmentEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details: string[] = [];
+  if (input.doctorName) details.push(`Doctor: ${input.doctorName}`);
+  if (input.slotDate) details.push(`Date: ${input.slotDate}`);
+  if (input.startTime && input.endTime) details.push(`Time: ${input.startTime} - ${input.endTime}`);
+  else if (input.startTime) details.push(`Time: ${input.startTime}`);
+  details.push(`Appointment ID: ${input.appointmentId}`);
+  if (input.amountPaise !== undefined && input.amountPaise !== null) {
+    const amt = formatAmount(input.amountPaise);
+    if (amt) details.push(`Fee: ${amt}`);
+  }
+
+  return {
+    subject: `Appointment reminder - ${brand}`,
+    html: layout(
+      brand,
+      "Appointment reminder",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>Your appointment is coming up soon.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>`,
+      "Please arrive on time for your appointment.",
+    ),
+    text: text(input.fullName, ["Your appointment is coming up soon.", "", ...details], brand),
+  };
+}

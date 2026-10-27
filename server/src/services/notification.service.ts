@@ -120,13 +120,17 @@ export async function dispatchNotification(
   } catch (err) {
     logger.error({ err, notificationId }, "notification send failed");
 
-    await prisma.notification.update({
-      where: { id: notificationId },
-      data: {
-        status: $Enums.NotificationStatus.FAILED,
-        error: errorMessage(err),
-      },
-    });
+    try {
+      await prisma.notification.update({
+        where: { id: notificationId },
+        data: {
+          status: $Enums.NotificationStatus.FAILED,
+          error: errorMessage(err),
+        },
+      });
+    } catch (updateErr) {
+      logger.error({ err: updateErr, notificationId }, "failed to mark notification as failed");
+    }
   }
 }
 
