@@ -834,7 +834,20 @@ The correctness-critical phase. Slow down here.
   `sentAt`, provider error). A send must never block an HTTP request — fire from the
   service, not inline (§18).
 - `[S]` Wire the auth/account emails (verification, reset, invites, security notice).
+- `[S]` ADMIN-only `POST /api/v1/users/:id/revoke-sessions`: revoke every live
+  refresh token, audit it, and send the §18 security notice when at least one
+  session was actually revoked.
 - **DoD:** every auth email sends and is logged.
+
+#### Decisions locked for Day 27
+| # | Decision |
+|---|----------|
+| 1 | `POST /api/v1/users/:id/revoke-sessions` is ADMIN-only. It targets another account's sessions, so it lives under `/users` rather than the caller-scoped `/auth` surface. The body carries an optional reason; the route validates the uuid and reason before the service. |
+| 2 | Revocation is §6.3's single statement — set `revokedAt` on every live `RefreshToken` for the target — inside one transaction with the §20 audit row (`USER_SESSIONS_REVOKED`, `targetType: "user"`, before/after active-session count). It does not deactivate, change role, or alter any account status. |
+| 3 | The §18 `ACCOUNT_ALL_SESSIONS_REVOKED` notification is queued in the same transaction, only when at least one live token was revoked and the target still has an email. It is dispatched through the existing post-commit `setImmediate` seam. |
+| 4 | The operation is idempotent: a second call returns `revokedCount: 0`, writes its own audit row, and queues no second email. A missing target is `404 USER_NOT_FOUND`; a target with no live sessions is `200` with `revokedCount: 0`. |
+| 5 | Already-issued access tokens remain valid until their 15-minute TTL. The per-request guard re-checks account state (suspension/archive/deactivation), not a session epoch; adding immediate access-token invalidation would require the session table §42 defers. |
+| 6 | DoD extends `scripts/day27-dod.ts`: two live tokens are revoked, the audit actor/session-count snapshot is asserted, one notice reaches `SENT`, and a repeated call adds no second notice. |
 
 ### Day 28 — Appointment + payment emails
 - `[S]` Booking confirmation (fires at payment verification), cancelled, rescheduled,

@@ -92,6 +92,23 @@ const envSchema = z.object({
   CLINIC_OWNER_NAME: z.string().min(1, "required when CLINIC_OWNER_EMAIL is set — User.fullName is not null").optional(),
   SEED_PATIENT_PASSWORD: optionalSecret,
   RESEND_API_KEY: optionalSecret,
+  // §18's sender identity. EMAIL_FROM is an ADDRESS only; the display name is a
+  // separate value so putting "Name <addr>" in the wrong field is impossible.
+  // The default is Resend's sandbox sender, which can only deliver to the email
+  // on the Resend account until a domain is verified — enough for development
+  // and the Day 27 DoD, never enough for real patients.
+  EMAIL_FROM: z.preprocess(blankAsUndefined, z.email().default("onboarding@resend.dev")),
+  EMAIL_FROM_NAME: z.preprocess(
+    blankAsUndefined,
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .refine((name) => !/[<>\r\n]/.test(name), "must not contain angle brackets or line breaks")
+      .default("Doctor Booking"),
+  ),
+  EMAIL_REPLY_TO: z.preprocess(blankAsUndefined, z.email().optional()),
   RAZORPAY_KEY_ID: optionalSecret,
   RAZORPAY_KEY_SECRET: optionalSecret,
   // Day 24: the secret the Razorpay DASHBOARD is configured with for webhook
@@ -153,7 +170,17 @@ const envSchema = z.object({
       path: ["APP_TIMEZONE"],
       message: "is not a valid IANA time zone (e.g. Asia/Kolkata, America/New_York)",
     },
-  );
+  )
+  // §18: production has no console fallback. Booting without a key would accept
+  // every event, write a FAILED row per email and tell nobody — the clinic would
+  // believe patients were notified. Failing here makes the fix "set the key",
+  // not "discover it from the notification table". Development and test stay
+  // optional on purpose: the console transport and the DoD's FakeMailer are how
+  // the system is exercised without a secret.
+  .refine((env) => env.NODE_ENV !== "production" || env.RESEND_API_KEY !== undefined, {
+    path: ["RESEND_API_KEY"],
+    message: "required when NODE_ENV=production — there is no console email transport in production",
+  });
 
 const parsed = envSchema.safeParse(process.env);
 

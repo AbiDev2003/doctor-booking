@@ -24,6 +24,29 @@ const MS_PER_UNIT = {
 
 type DurationUnit = keyof typeof MS_PER_UNIT;
 
+const UNIT_LABELS: Record<DurationUnit, readonly [string, string]> = {
+  s: ["second", "seconds"],
+  m: ["minute", "minutes"],
+  h: ["hour", "hours"],
+  d: ["day", "days"],
+};
+
+/**
+ * Render an operator duration ("15m", "24h") for an email body.
+ *
+ * The config keeps durations in their compact form, but "expires in 15m" reads
+ * like a log line to a patient. Unknown shapes fall back to the raw value so a
+ * caller can never turn a valid email into a crash.
+ */
+export function durationLabel(value: string): string {
+  const match = /^(\d+)([smhd])$/.exec(value);
+  if (match === null) return value;
+
+  const amount = Number(match[1]);
+  const [one, many] = UNIT_LABELS[match[2] as DurationUnit];
+  return `${amount} ${amount === 1 ? one : many}`;
+}
+
 /**
  * Throws `AppError` on anything the pattern does not accept.
  *

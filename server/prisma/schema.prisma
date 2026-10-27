@@ -235,6 +235,7 @@ enum NotificationType {
   REFUND_REQUESTED
   REFUND_REJECTED
   // Reminders (§18)
+  APPOINTMENT_REMINDER
   REMINDER
 
   @@map("notification_type")

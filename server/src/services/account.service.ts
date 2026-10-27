@@ -13,6 +13,7 @@ import {
 } from "./rateLimit.service.js";
 import { writeAudit } from "./audit.service.js";
 import { revokeAllSessions } from "./auth.service.js";
+import { queueNotification } from "./notification.service.js";
 
 /**
  * plan.md §6.1 — patient identity management: email change (verified by a link
@@ -107,7 +108,12 @@ export interface ChangeEmailInput extends RequestMeta {
  * delete, and this change cannot activate itself — the link goes to the new
  * address and the old one keeps working until it is opened.
  */
-export async function changeEmail(input: ChangeEmailInput): Promise<{ rawToken: string }> {
+export interface ChangeEmailResult {
+  readonly rawToken: string;
+  readonly notificationId: string;
+}
+
+export async function changeEmail(input: ChangeEmailInput): Promise<ChangeEmailResult> {
   const email = input.email.trim().toLowerCase();
   const ipKey = input.ip ?? UNKNOWN_IP_KEY;
 
@@ -128,7 +134,7 @@ export async function changeEmail(input: ChangeEmailInput): Promise<{ rawToken: 
     succeeded: true,
   });
 
-  const rawToken = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const taken = await tx.user.findFirst({
       where: {
         id: { not: user.id },
@@ -181,10 +187,17 @@ export async function changeEmail(input: ChangeEmailInput): Promise<{ rawToken: 
       requestId: input.requestId ?? null,
     });
 
-    return issuedToken;
+    // The link goes to the NEW address — the old one is deliberately not told,
+    // because the change is not real until the new inbox proves it (§6.1).
+    const notification = await queueNotification(tx, {
+      type: $Enums.NotificationType.ACCOUNT_EMAIL_CHANGE_VERIFICATION,
+      recipient: email,
+    });
+
+    return { rawToken: issuedToken, notificationId: notification.id };
   });
 
-  return { rawToken };
+  return result;
 }
 
 /**
@@ -447,7 +460,15 @@ const ANONYMISED_NAME = "Deleted patient";
  * must not hold a connection open, and a wrong password should cost nothing
  * beyond the attempt log.
  */
-export async function deleteAccount(input: DeleteAccountInput): Promise<void> {
+export interface DeleteAccountResult {
+  /**
+   * Null only if the account had no email to snapshot. `recipient` is a string
+   * in the schema, so "nothing to send to" is represented by no row at all.
+   */
+  readonly notificationId: string | null;
+}
+
+export async function deleteAccount(input: DeleteAccountInput): Promise<DeleteAccountResult> {
   const ipKey = input.ip ?? UNKNOWN_IP_KEY;
 
   const user = await prisma.user.findUnique({
@@ -474,7 +495,7 @@ export async function deleteAccount(input: DeleteAccountInput): Promise<void> {
   const auditMeta = { ip: input.ip ?? null, requestId: input.requestId ?? null };
   const deletionReason = "Patient deleted their own account";
 
-  await prisma.$transaction(async (tx) => {
+  const notificationId = await prisma.$transaction(async (tx) => {
     /* (1) release live holds — §8.6: one per patient at most, by index. */
     const liveHolds = await tx.seatHold.findMany({
       where: { patientId: user.id, releasedAt: null },
@@ -633,5 +654,21 @@ export async function deleteAccount(input: DeleteAccountInput): Promise<void> {
       reason: deletionReason,
       ...auditMeta,
     });
+
+    // §18's deactivation confirmation. `piiBefore.email` is the snapshot taken
+    // before anonymisation — reading `user.email` here would be null, which is
+    // exactly why the row stores the address rather than a user foreign key.
+    if (piiBefore.email === null) {
+      return null;
+    }
+
+    const notification = await queueNotification(tx, {
+      type: $Enums.NotificationType.ACCOUNT_DEACTIVATED,
+      recipient: piiBefore.email,
+    });
+
+    return notification.id;
   });
+
+  return { notificationId };
 }

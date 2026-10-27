@@ -10,6 +10,7 @@ import {
 } from "../lib/refundPolicy.js";
 import { writeAudit } from "./audit.service.js";
 import { queueRefund } from "./refund.service.js";
+import { queueNotification } from "./notification.service.js";
 import type { AuditActor } from "./audit.service.js";
 import type { AppointmentDto } from "../schemas/appointments.js";
 import type { DbClient } from "../lib/prisma.js";
@@ -442,6 +443,25 @@ export async function convertPayment(input: ConvertPaymentInput): Promise<Appoin
         ip: input.ip ?? null,
         requestId: input.requestId ?? null,
       });
+
+      const patientEmail = await tx.user.findUnique({
+        where: { id: payment.patient_id },
+        select: { email: true },
+      });
+      if (patientEmail?.email != null) {
+        await queueNotification(tx, {
+          type: $Enums.NotificationType.APPOINTMENT_BOOKED,
+          recipient: patientEmail.email,
+          appointmentId: created.id,
+          slotId: slot.id,
+        });
+        await queueNotification(tx, {
+          type: $Enums.NotificationType.PAYMENT_SUCCESSFUL,
+          recipient: patientEmail.email,
+          appointmentId: created.id,
+          slotId: slot.id,
+        });
+      }
 
       return toDto(created);
     });

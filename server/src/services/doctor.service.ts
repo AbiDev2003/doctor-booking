@@ -11,6 +11,7 @@ import { maskContact } from "../lib/privacy.js";
 import { logger } from "../lib/logger.js";
 import { writeAudit } from "./audit.service.js";
 import { revokeAllSessions } from "./auth.service.js";
+import { queueNotification } from "./notification.service.js";
 import { materializeSlots } from "./slotGeneration.service.js";
 import {
   applyUnavailabilityCascade,
@@ -143,6 +144,7 @@ export interface InviteInput extends RequestMeta {
 export interface InviteResult {
   readonly userId: string;
   readonly rawToken: string;
+  readonly notificationId: string;
 }
 
 /**
@@ -216,7 +218,12 @@ export async function inviteDoctor(input: InviteInput): Promise<InviteResult> {
         requestId: input.requestId ?? null,
       });
 
-      return { userId: user.id, rawToken };
+      const notification = await queueNotification(tx, {
+        type: $Enums.NotificationType.ACCOUNT_INVITATION,
+        recipient: email,
+      });
+
+      return { userId: user.id, rawToken, notificationId: notification.id };
     });
   } catch (err) {
     // Two invites to one address racing past the pre-check: the unique index
@@ -281,7 +288,12 @@ export async function inviteStaff(input: InviteInput): Promise<InviteResult> {
         requestId: input.requestId ?? null,
       });
 
-      return { userId: user.id, rawToken };
+      const notification = await queueNotification(tx, {
+        type: $Enums.NotificationType.ACCOUNT_INVITATION,
+        recipient: email,
+      });
+
+      return { userId: user.id, rawToken, notificationId: notification.id };
     });
   } catch (err) {
     if (isUniqueConstraintViolation(err)) {

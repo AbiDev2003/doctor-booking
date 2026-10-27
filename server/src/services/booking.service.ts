@@ -13,6 +13,7 @@ import {
 } from "../lib/bookingGuard.js";
 import { getClinicSettings } from "./clinic.service.js";
 import { writeAudit } from "./audit.service.js";
+import { queueNotification } from "./notification.service.js";
 import type { AppointmentDto } from "../schemas/appointments.js";
 import type { ActorContext } from "./doctor.service.js";
 
@@ -238,6 +239,19 @@ export async function bookAppointment(input: BookAppointmentInput): Promise<Appo
         ip: input.ip ?? null,
         requestId: input.requestId ?? null,
       });
+
+      const patientEmail = await tx.user.findUnique({
+        where: { id: patientId },
+        select: { email: true, fullName: true },
+      });
+      if (patientEmail?.email != null) {
+        await queueNotification(tx, {
+          type: $Enums.NotificationType.APPOINTMENT_BOOKED,
+          recipient: patientEmail.email,
+          appointmentId: created.id,
+          slotId: slot.id,
+        });
+      }
 
       return {
         id: created.id,

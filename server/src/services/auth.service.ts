@@ -24,7 +24,8 @@ import {
   recordFailureQuietly,
   UNKNOWN_IP_KEY,
 } from "./rateLimit.service.js";
-import { writeAudit } from "./audit.service.js";
+import { writeAudit, type AuditActor } from "./audit.service.js";
+import { queueNotification } from "./notification.service.js";
 
 // `DbClient` — root or transaction client — is exported from lib/prisma.ts;
 // see the note there for why it moved out of this file on Day 11.
@@ -92,7 +93,13 @@ export async function createEmailVerificationToken(
   return { rawToken, tokenHash, expiresAt };
 }
 
-export async function registerPatient(input: RegisterPatientInput): Promise<{ userId: string; rawToken: string }> {
+export interface RegisterPatientResult {
+  readonly userId: string;
+  readonly rawToken: string;
+  readonly notificationId: string;
+}
+
+export async function registerPatient(input: RegisterPatientInput): Promise<RegisterPatientResult> {
   const email = input.email.toLowerCase().trim();
   const normalizedPhone = normalizePhoneToE164(input.phone, DEFAULT_COUNTRY_CALLING_CODE);
 
@@ -136,7 +143,12 @@ export async function registerPatient(input: RegisterPatientInput): Promise<{ us
 
     const token = await createEmailVerificationToken(tx, user.id, input.ip ?? null);
 
-    return { userId: user.id, rawToken: token.rawToken };
+    const notification = await queueNotification(tx, {
+      type: $Enums.NotificationType.ACCOUNT_EMAIL_VERIFICATION,
+      recipient: email,
+    });
+
+    return { userId: user.id, rawToken: token.rawToken, notificationId: notification.id };
   });
 
   return result;
@@ -397,6 +409,92 @@ export async function revokeAllSessions(client: DbClient, userId: string): Promi
   });
 }
 
+export interface RevokeUserSessionsInput {
+  readonly actor: AuditActor;
+  readonly userId: string;
+  readonly reason?: string | null | undefined;
+  readonly ip?: string | null | undefined;
+  readonly requestId?: string | null | undefined;
+}
+
+export interface RevokeUserSessionsResult {
+  readonly userId: string;
+  readonly fullName: string;
+  readonly revokedCount: number;
+  /** Present only when at least one live session existed and the address is usable. */
+  readonly notificationId: string | null;
+}
+
+/**
+ * §6.3/§18 — an ADMIN forces every live session for one account to end.
+ *
+ * This is deliberately NOT deactivation: the account keeps its role, can sign
+ * in again immediately, and nothing about its status changes. The action is
+ * the one-statement refresh-token revocation plus §20's audit row and the
+ * §18 security notice, all committed together.
+ *
+ * Two honest limits, both properties of the locked MVP session model:
+ *
+ * - Already-issued access tokens remain valid until their 15-minute TTL. The
+ *   per-request guard re-reads account STATE (suspension/archive/deactivation),
+ *   not an arbitrary session epoch, so this action cannot reach an access token
+ *   already in a client's memory. The plan accepts that cost; "revoke every
+ *   session" is defined as the refresh-token statement (§6.3).
+ * - There is no session listing, so "all" is the only available scope (§42).
+ *
+ * An idempotent second call is a successful no-op: it reports `revokedCount: 0`
+ * and queues no second notice. A notice is sent only when a live session was
+ * actually revoked, so the email never claims a sign-out that did not happen.
+ */
+export async function revokeUserSessions(
+  input: RevokeUserSessionsInput,
+): Promise<RevokeUserSessionsResult> {
+  const reason = input.reason?.trim() || null;
+
+  return prisma.$transaction(async (tx) => {
+    const target = await tx.user.findUnique({
+      where: { id: input.userId },
+      select: { id: true, email: true, fullName: true },
+    });
+
+    if (target === null) {
+      throw new AppError(404, "USER_NOT_FOUND", "User not found");
+    }
+
+    const revoked = await tx.refreshToken.updateMany({
+      where: { userId: target.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    const notification =
+      revoked.count > 0 && target.email !== null
+        ? await queueNotification(tx, {
+            type: $Enums.NotificationType.ACCOUNT_ALL_SESSIONS_REVOKED,
+            recipient: target.email,
+          })
+        : null;
+
+    await writeAudit(tx, {
+      action: "USER_SESSIONS_REVOKED",
+      targetType: "user",
+      targetId: target.id,
+      actor: input.actor,
+      before: { activeSessions: revoked.count },
+      after: { activeSessions: 0 },
+      reason,
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+
+    return {
+      userId: target.id,
+      fullName: target.fullName,
+      revokedCount: revoked.count,
+      notificationId: notification?.id ?? null,
+    };
+  });
+}
+
 /**
  * §5.1 staff offboarding, step 1: deactivation refuses login and revokes every
  * active session **in one transaction**.
@@ -485,7 +583,14 @@ export interface ForgotPasswordInput {
  */
 export type ForgotPasswordResult =
   | { readonly sent: false }
-  | { readonly sent: true; readonly userId: string; readonly rawToken: string; readonly method: ResetMethod };
+  | {
+      readonly sent: true;
+      readonly userId: string;
+      readonly rawToken: string;
+      readonly method: ResetMethod;
+      readonly notificationId: string;
+      readonly fullName: string;
+    };
 
 /** How many fresh OTP draws a collision regenerates before giving up. See issueResetToken. */
 const MAX_OTP_DRAW_ATTEMPTS = 5;
@@ -585,7 +690,9 @@ export async function forgotPassword(input: ForgotPasswordInput): Promise<Forgot
 
   const user = await prisma.user.findUnique({ where: { email } });
 
-  if (!user || user.isDeactivated) {
+  // A null email is the anonymised half of §6.1 deletion; the deactivated flag
+  // already catches it, but the sender needs a non-null recipient.
+  if (!user || user.isDeactivated || user.email === null) {
     return { sent: false };
   }
 
@@ -596,7 +703,19 @@ export async function forgotPassword(input: ForgotPasswordInput): Promise<Forgot
 
   const rawToken = await issueResetToken(prisma, user.id, input.method, input.ip ?? null);
 
-  return { sent: true, userId: user.id, rawToken, method: input.method };
+  const notification = await queueNotification(prisma, {
+    type: $Enums.NotificationType.ACCOUNT_PASSWORD_RESET_REQUESTED,
+    recipient: user.email,
+  });
+
+  return {
+    sent: true,
+    userId: user.id,
+    rawToken,
+    method: input.method,
+    notificationId: notification.id,
+    fullName: user.fullName,
+  };
 }
 
 export interface ResetPasswordInput {
@@ -626,7 +745,12 @@ export interface ResetPasswordInput {
  * owner claims bootstrap through this same flow rather than a temporary
  * password (plan.md:355).
  */
-export async function resetPassword(input: ResetPasswordInput): Promise<void> {
+export interface ResetPasswordResult {
+  readonly notificationId: string | null;
+  readonly fullName: string;
+}
+
+export async function resetPassword(input: ResetPasswordInput): Promise<ResetPasswordResult> {
   const submittedToken = input.token.trim();
   const tokenHash = hashToken(submittedToken);
   const ipKey = input.ip ?? UNKNOWN_IP_KEY;
@@ -682,7 +806,7 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
   const now = new Date();
   const method: ResetMethod = looksLikeOtp(submittedToken) ? "OTP" : "LINK";
 
-  await prisma.$transaction(async (tx) => {
+  const notificationId = await prisma.$transaction(async (tx) => {
     // The conditional claim IS the single-use lock, not the read above: two
     // racing submits both read `consumedAt = null`, and only one can flip it.
     // Same pattern as rotateRefreshToken's claimed update (Day 8).
@@ -731,7 +855,23 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
       ip: input.ip ?? null,
       requestId: input.requestId ?? null,
     });
+
+    // §18's "password reset completed" notice, queued in the same transaction
+    // as the reset so a successful reset cannot exist without its record. The
+    // email address is still on the row here; deletion is a different flow.
+    if (authToken.user.email === null) {
+      return null;
+    }
+
+    const notification = await queueNotification(tx, {
+      type: $Enums.NotificationType.ACCOUNT_PASSWORD_RESET_COMPLETED,
+      recipient: authToken.user.email,
+    });
+
+    return notification.id;
   });
+
+  return { notificationId, fullName: authToken.user.fullName };
 }
 
 /* ------------------------------------------------------------------ */
