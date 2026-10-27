@@ -1,19 +1,19 @@
-import { $Enums } from "../generated/prisma/client.js";
-import { prisma, isUniqueConstraintViolation } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { logger } from "../lib/logger.js";
-import { isBookable } from "../lib/doctorState.js";
-import { ACTIVE_BOOKING_STATUSES, assertNoDuplicateForSlot } from "../lib/bookingGuard.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { prisma, isUniqueConstraintViolation } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { logger } from "../../lib/logger.js";
+import { isBookable } from "../../lib/doctorState.js";
+import { ACTIVE_BOOKING_STATUSES, assertNoDuplicateForSlot } from "../../lib/bookingGuard.js";
 import {
   conversionFailureRefundKind,
   conversionFailureReleaseReason,
-} from "../lib/refundPolicy.js";
-import { writeAudit } from "./audit.service.js";
+} from "../../lib/refundPolicy.js";
+import { writeAudit } from "../audit.service.js";
 import { queueRefund } from "./refund.service.js";
-import { queueNotification } from "./notification.service.js";
-import type { AuditActor } from "./audit.service.js";
-import type { AppointmentDto } from "../schemas/appointments.js";
-import type { DbClient } from "../lib/prisma.js";
+import { queueNotification } from "../notifications/notification.service.js";
+import type { AuditActor } from "../audit.service.js";
+import type { AppointmentDto } from "../../schemas/appointments.js";
+import type { DbClient } from "../../lib/prisma.js";
 
 /**
  * plan.md §17 steps 3–5 / §8.6 — THE conversion, Day 24.

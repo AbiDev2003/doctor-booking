@@ -4,7 +4,7 @@ import { AppError } from "../lib/appError.js";
 import { localDateTimeToUtc, utcToLocalDateTime } from "../lib/time.js";
 import { assertValidDisruptionWindow } from "../lib/unavailability.js";
 import { getClinicSettings } from "./clinic.service.js";
-import { applyUnavailabilityCascade } from "./appointmentCascade.service.js";
+import { applyUnavailabilityCascade } from "./appointments/appointmentCascade.service.js";
 import { writeAudit } from "./audit.service.js";
 import { writeDoctorHistory } from "./doctor.service.js";
 import type { ActorContext } from "./doctor.service.js";

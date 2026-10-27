@@ -43,7 +43,7 @@ import { utcToLocalDateTime } from "../src/lib/time.js";
 import { AppError } from "../src/lib/appError.js";
 import { parseAuditCursor } from "../src/lib/auditCursor.js";
 import { listDoctorAvailability } from "../src/services/availability.service.js";
-import { bookAppointment } from "../src/services/booking.service.js";
+import { bookAppointment } from "../src/services/appointments/booking.service.js";
 import { listAuditEntries } from "../src/services/audit.service.js";
 import type { ActorContext } from "../src/services/doctor.service.js";
 

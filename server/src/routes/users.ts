@@ -7,8 +7,8 @@ import { requireAuth } from "../middleware/auth.js";
 import { requireRole } from "../middleware/rbac.js";
 import { getRequestId } from "../middleware/requestId.js";
 import { revokeUserSessionsSchema, userIdParamSchema } from "../schemas/users.js";
-import { revokeUserSessions } from "../services/auth.service.js";
-import { dispatchNotificationInBackground } from "../services/notification.service.js";
+import { revokeUserSessions } from "../services/auth/auth.service.js";
+import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
 import { allSessionsRevokedEmail } from "../lib/emailTemplates.js";
 
 /**

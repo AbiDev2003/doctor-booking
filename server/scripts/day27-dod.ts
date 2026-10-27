@@ -44,11 +44,11 @@ import {
   forgotPassword,
   resetPassword,
   revokeUserSessions,
-} from "../src/services/auth.service.js";
+} from "../src/services/auth/auth.service.js";
 import { changeEmail, deleteAccount } from "../src/services/account.service.js";
 import { inviteDoctor } from "../src/services/doctor.service.js";
 import type { ActorContext } from "../src/services/doctor.service.js";
-import { dispatchNotification, queueNotification } from "../src/services/notification.service.js";
+import { dispatchNotification, queueNotification } from "../src/services/notifications/notification.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

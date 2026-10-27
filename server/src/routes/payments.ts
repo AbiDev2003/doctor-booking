@@ -17,15 +17,15 @@ import {
   verifyPaymentSchema,
   voidOfflinePaymentSchema,
 } from "../schemas/payments.js";
-import { createPaymentOrder } from "../services/paymentOrder.service.js";
-import { convertPayment } from "../services/paymentConvert.service.js";
-import { collectOfflinePayment, voidOfflinePayment } from "../services/offlinePayment.service.js";
+import { createPaymentOrder } from "../services/payments/paymentOrder.service.js";
+import { convertPayment } from "../services/payments/paymentConvert.service.js";
+import { collectOfflinePayment, voidOfflinePayment } from "../services/payments/offlinePayment.service.js";
 import {
   completeDeskHandBack,
   kickRefundWorker,
   listPendingDeskHandBacks,
   retryFailedRefund,
-} from "../services/refund.service.js";
+} from "../services/payments/refund.service.js";
 import type { ActorContext } from "../services/doctor.service.js";
 
 /**

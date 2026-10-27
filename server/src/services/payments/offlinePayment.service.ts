@@ -1,13 +1,13 @@
-import { $Enums } from "../generated/prisma/client.js";
-import type { Prisma } from "../generated/prisma/client.js";
-import { prisma, type DbClient } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { resolveCollectedAmount } from "../lib/offlinePayment.js";
-import { writeAudit } from "./audit.service.js";
-import type { AuditActor } from "./audit.service.js";
-import { queueNotification } from "./notification.service.js";
-import type { OfflinePaymentDto } from "../schemas/payments.js";
-import type { ActorContext } from "./doctor.service.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { prisma } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { resolveCollectedAmount } from "../../lib/offlinePayment.js";
+import { writeAudit } from "../audit.service.js";
+import type { AuditActor } from "../audit.service.js";
+import { queueNotification } from "../notifications/notification.service.js";
+import type { OfflinePaymentDto } from "../../schemas/payments.js";
+import type { ActorContext } from "../doctor.service.js";
+import type { DbClient } from "../../lib/prisma.js";
 
 /**
  * plan.md §17 — pay-at-clinic money at the desk, Day 26.
@@ -73,9 +73,20 @@ const PAYMENT_SELECT = {
   paidAt: true,
   collectedById: true,
   collectedAt: true,
-} satisfies Prisma.PaymentSelect;
+};
 
-type LoadedPayment = Prisma.PaymentGetPayload<{ select: typeof PAYMENT_SELECT }>;
+type LoadedPayment = {
+  id: string;
+  appointmentId: string;
+  patientId: string;
+  amountPaise: number;
+  currency: string;
+  status: $Enums.PaymentStatus;
+  method: $Enums.PaymentMethod | null;
+  paidAt: Date | null;
+  collectedById: string | null;
+  collectedAt: Date | null;
+};
 
 function toDto(payment: LoadedPayment & { appointmentId: string }): OfflinePaymentDto {
   return {

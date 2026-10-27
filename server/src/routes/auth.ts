@@ -12,7 +12,7 @@ import {
   forgotPassword,
   resetPassword,
   claimAccount,
-} from "../services/auth.service.js";
+} from "../services/auth/auth.service.js";
 import {
   REFRESH_COOKIE_NAME,
   setRefreshCookie,
@@ -22,7 +22,7 @@ import { getClientIp } from "../lib/clientIp.js";
 import { requireAuth } from "../middleware/auth.js";
 import { authBurstGuard } from "../middleware/rateLimit.js";
 import { getRequestId } from "../middleware/requestId.js";
-import { dispatchNotificationInBackground } from "../services/notification.service.js";
+import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
 import { durationLabel } from "../lib/duration.js";
 import {
   emailVerificationEmail,

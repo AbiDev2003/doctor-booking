@@ -1,21 +1,21 @@
-import { $Enums } from "../generated/prisma/client.js";
-import { prisma, isUniqueConstraintViolation } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { utcToLocalDateTime } from "../lib/time.js";
-import { bookingHorizon } from "../lib/availability.js";
-import { isBookable } from "../lib/doctorState.js";
-import { deriveConsultationFee } from "../lib/fee.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { prisma, isUniqueConstraintViolation } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { utcToLocalDateTime } from "../../lib/time.js";
+import { bookingHorizon } from "../../lib/availability.js";
+import { isBookable } from "../../lib/doctorState.js";
+import { deriveConsultationFee } from "../../lib/fee.js";
 import {
   ACTIVE_BOOKING_STATUSES,
   assertNoDuplicateForSlot,
   assertPatientSeatCap,
   assertSlotBookableForBooking,
-} from "../lib/bookingGuard.js";
-import { getClinicSettings } from "./clinic.service.js";
-import { writeAudit } from "./audit.service.js";
-import { queueNotification } from "./notification.service.js";
-import type { AppointmentDto } from "../schemas/appointments.js";
-import type { ActorContext } from "./doctor.service.js";
+} from "../../lib/bookingGuard.js";
+import { getClinicSettings } from "../clinic.service.js";
+import { writeAudit } from "../audit.service.js";
+import { queueNotification } from "../notifications/notification.service.js";
+import type { AppointmentDto } from "../../schemas/appointments.js";
+import type { ActorContext } from "../doctor.service.js";
 
 /**
  * plan.md §15 / §8.1 / §13 — book a slot, Day 19 (pay-at-clinic path).

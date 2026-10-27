@@ -3,8 +3,8 @@ import { prisma } from "../lib/prisma.js";
 import { AppError } from "../lib/appError.js";
 import { logger } from "../lib/logger.js";
 import { getClinicSettings } from "../services/clinic.service.js";
-import { queueNotification } from "../services/notification.service.js";
-import { dispatchNotificationInBackground } from "../services/notification.service.js";
+import { queueNotification } from "../services/notifications/notification.service.js";
+import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
 import { appointmentReminderEmail } from "../lib/emailTemplates.js";
 import { utcToLocalDateTime } from "../lib/time.js";
 

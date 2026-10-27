@@ -10,13 +10,13 @@ import { clinicDayRange, utcToLocalDateTime } from "../lib/time.js";
 import { maskContact } from "../lib/privacy.js";
 import { logger } from "../lib/logger.js";
 import { writeAudit } from "./audit.service.js";
-import { revokeAllSessions } from "./auth.service.js";
-import { queueNotification } from "./notification.service.js";
+import { revokeAllSessions } from "./auth/auth.service.js";
+import { queueNotification } from "./notifications/notification.service.js";
 import { materializeSlots } from "./slotGeneration.service.js";
 import {
   applyUnavailabilityCascade,
   OPEN_ENDED_WINDOW_END,
-} from "./appointmentCascade.service.js";
+} from "./appointments/appointmentCascade.service.js";
 
 /**
  * plan.md §5, §5.1, §5.2 — the doctor lifecycle, Day 12.

@@ -1,8 +1,8 @@
-import { $Enums } from "../generated/prisma/client.js";
-import { prisma } from "../lib/prisma.js";
-import type { DbClient } from "../lib/prisma.js";
-import { isUniqueConstraintViolation } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { prisma } from "../../lib/prisma.js";
+import type { DbClient } from "../../lib/prisma.js";
+import { isUniqueConstraintViolation } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
 import {
   hashPassword,
   comparePassword,
@@ -12,10 +12,10 @@ import {
   getPasswordResetExpiry,
   generateOtp,
   hashToken,
-} from "../lib/auth.js";
-import { normalizePhoneToE164, DEFAULT_COUNTRY_CALLING_CODE } from "../lib/time.js";
-import { signAccessToken } from "../lib/jwt.js";
-import { REFRESH_TOKEN_EXPIRY_MS } from "../lib/cookies.js";
+} from "../../lib/auth.js";
+import { normalizePhoneToE164, DEFAULT_COUNTRY_CALLING_CODE } from "../../lib/time.js";
+import { signAccessToken } from "../../lib/jwt.js";
+import { REFRESH_TOKEN_EXPIRY_MS } from "../../lib/cookies.js";
 import {
   assertLoginAttemptAllowed,
   assertOtpSendAllowed,
@@ -23,9 +23,9 @@ import {
   recordAttempt,
   recordFailureQuietly,
   UNKNOWN_IP_KEY,
-} from "./rateLimit.service.js";
-import { writeAudit, type AuditActor } from "./audit.service.js";
-import { queueNotification } from "./notification.service.js";
+} from "../rateLimit.service.js";
+import { writeAudit, type AuditActor } from "../audit.service.js";
+import { queueNotification } from "../notifications/notification.service.js";
 
 // `DbClient` — root or transaction client — is exported from lib/prisma.ts;
 // see the note there for why it moved out of this file on Day 11.

@@ -1,12 +1,12 @@
-import { $Enums } from "../generated/prisma/client.js";
-import { prisma } from "../lib/prisma.js";
-import type { DbClient } from "../lib/prisma.js";
-import { selectOnlyConfirmed } from "../lib/unavailability.js";
-import { writeAudit } from "./audit.service.js";
-import { queueNotification } from "./notification.service.js";
-import { voidPendingPaymentForAppointment } from "./offlinePayment.service.js";
-import { queueRefundForAppointment } from "./refund.service.js";
-import type { ActorContext } from "./doctor.service.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { prisma } from "../../lib/prisma.js";
+import type { DbClient } from "../../lib/prisma.js";
+import { selectOnlyConfirmed } from "../../lib/unavailability.js";
+import { writeAudit } from "../audit.service.js";
+import { queueNotification } from "../notifications/notification.service.js";
+import { voidPendingPaymentForAppointment } from "../payments/offlinePayment.service.js";
+import { queueRefundForAppointment } from "../payments/refund.service.js";
+import type { ActorContext } from "../doctor.service.js";
 
 /**
  * plan.md §12 — the affected-appointment cascade, Day 18.

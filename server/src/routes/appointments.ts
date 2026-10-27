@@ -13,16 +13,16 @@ import {
   rejectAppointmentSchema,
   rescheduleAppointmentSchema,
 } from "../schemas/appointments.js";
-import { bookAppointment } from "../services/booking.service.js";
+import { bookAppointment } from "../services/appointments/booking.service.js";
 import {
   arriveAppointment,
   cancelAppointment,
   completeAppointment,
   markNoShow,
   rejectAppointment,
-} from "../services/appointmentTransition.service.js";
-import { rescheduleAppointment } from "../services/reschedule.service.js";
-import { kickRefundWorker } from "../services/refund.service.js";
+} from "../services/appointments/appointmentTransition.service.js";
+import { rescheduleAppointment } from "../services/appointments/reschedule.service.js";
+import { kickRefundWorker } from "../services/payments/refund.service.js";
 import type { ActorContext } from "../services/doctor.service.js";
 
 /**

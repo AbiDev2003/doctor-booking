@@ -2,7 +2,7 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { $Enums, PrismaClient } from "../src/generated/prisma/client.js";
 import { utcToLocalDateTime } from "../src/lib/time.js";
-import { bookAppointment } from "../src/services/booking.service.js";
+import { bookAppointment } from "../src/services/appointments/booking.service.js";
 import { getClinicSettings } from "../src/services/clinic.service.js";
 import { sendAppointmentReminders } from "../src/jobs/reminders.js";
 import type { ActorContext } from "../src/services/doctor.service.js";

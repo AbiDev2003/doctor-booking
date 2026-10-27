@@ -12,8 +12,8 @@ import {
   UNKNOWN_IP_KEY,
 } from "./rateLimit.service.js";
 import { writeAudit } from "./audit.service.js";
-import { revokeAllSessions } from "./auth.service.js";
-import { queueNotification } from "./notification.service.js";
+import { revokeAllSessions } from "./auth/auth.service.js";
+import { queueNotification } from "./notifications/notification.service.js";
 
 /**
  * plan.md §6.1 — patient identity management: email change (verified by a link

@@ -38,7 +38,7 @@ import type {
   PaymentGateway,
 } from "../src/lib/paymentGateway.js";
 import { getClinicSettings } from "../src/services/clinic.service.js";
-import { bookAppointment } from "../src/services/booking.service.js";
+import { bookAppointment } from "../src/services/appointments/booking.service.js";
 import { autoCancelAfterSlotEnd } from "../src/services/appointmentCascade.service.js";
 import { cancelAppointment } from "../src/services/appointmentTransition.service.js";
 import { collectOfflinePayment, voidOfflinePayment } from "../src/services/offlinePayment.service.js";

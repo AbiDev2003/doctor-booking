@@ -1,8 +1,8 @@
-import { $Enums } from "../generated/prisma/client.js";
-import type { Prisma } from "../generated/prisma/client.js";
-import { prisma, type DbClient } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { isClinicCaused } from "../lib/unavailability.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import type { Prisma } from "../../generated/prisma/client.js";
+import { prisma, type DbClient } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { isClinicCaused } from "../../lib/unavailability.js";
 import {
   assertArrivalAllowed,
   assertNoShowAllowed,
@@ -11,15 +11,15 @@ import {
   assertReasonPresent,
   assertTransition,
   historyEventFor,
-} from "../lib/transitionGuard.js";
-import { cancellationRefundKind } from "../lib/refundPolicy.js";
-import { getClinicSettings } from "./clinic.service.js";
-import { writeAudit } from "./audit.service.js";
-import { queueNotification } from "./notification.service.js";
-import { voidPendingPaymentForAppointment } from "./offlinePayment.service.js";
-import { queueRefundForAppointment } from "./refund.service.js";
-import type { AppointmentDto } from "../schemas/appointments.js";
-import type { ActorContext } from "./doctor.service.js";
+} from "../../lib/transitionGuard.js";
+import { cancellationRefundKind } from "../../lib/refundPolicy.js";
+import { getClinicSettings } from "../clinic.service.js";
+import { writeAudit } from "../audit.service.js";
+import { queueNotification } from "../notifications/notification.service.js";
+import { voidPendingPaymentForAppointment } from "../payments/offlinePayment.service.js";
+import { queueRefundForAppointment } from "../payments/refund.service.js";
+import type { AppointmentDto } from "../../schemas/appointments.js";
+import type { ActorContext } from "../doctor.service.js";
 
 /**
  * plan.md §13 / §13.1 — the appointment status-transition services, Day 21.

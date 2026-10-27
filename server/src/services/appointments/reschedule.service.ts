@@ -1,17 +1,17 @@
-import { $Enums } from "../generated/prisma/client.js";
-import type { Prisma } from "../generated/prisma/client.js";
-import { prisma, isUniqueConstraintViolation } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { utcToLocalDateTime } from "../lib/time.js";
-import { bookingHorizon } from "../lib/availability.js";
-import { isBookable } from "../lib/doctorState.js";
-import { isClinicCaused } from "../lib/unavailability.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import type { Prisma } from "../../generated/prisma/client.js";
+import { prisma, isUniqueConstraintViolation } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { utcToLocalDateTime } from "../../lib/time.js";
+import { bookingHorizon } from "../../lib/availability.js";
+import { isBookable } from "../../lib/doctorState.js";
+import { isClinicCaused } from "../../lib/unavailability.js";
 import {
   ACTIVE_BOOKING_STATUSES,
   assertNoDuplicateForSlot,
   assertSlotBookableForBooking,
-} from "../lib/bookingGuard.js";
-import { assertPatientCancelAllowed } from "../lib/transitionGuard.js";
+} from "../../lib/bookingGuard.js";
+import { assertPatientCancelAllowed } from "../../lib/transitionGuard.js";
 import {
   assertNotSameSlot,
   assertRescheduleActor,
@@ -20,14 +20,14 @@ import {
   assertRescheduleScope,
   assertReschedulableStatus,
   classifyRescheduleDelta,
-} from "../lib/rescheduleGuard.js";
-import { remainingRefundablePaise } from "../lib/refundPolicy.js";
-import { getClinicSettings } from "./clinic.service.js";
-import { writeAudit } from "./audit.service.js";
-import { queueNotification } from "./notification.service.js";
-import { queueRefundForAppointment } from "./refund.service.js";
-import type { AppointmentDto } from "../schemas/appointments.js";
-import type { ActorContext } from "./doctor.service.js";
+} from "../../lib/rescheduleGuard.js";
+import { remainingRefundablePaise } from "../../lib/refundPolicy.js";
+import { getClinicSettings } from "../clinic.service.js";
+import { writeAudit } from "../audit.service.js";
+import { queueNotification } from "../notifications/notification.service.js";
+import { queueRefundForAppointment } from "../payments/refund.service.js";
+import type { AppointmentDto } from "../../schemas/appointments.js";
+import type { ActorContext } from "../doctor.service.js";
 
 /**
  * plan.md §14 / §8.5 / §15 / §8.1 — appointment rescheduling, Day 22.

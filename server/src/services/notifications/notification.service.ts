@@ -1,7 +1,7 @@
-import { $Enums } from "../generated/prisma/client.js";
-import { getMailer, type EmailContent, type Mailer } from "../lib/mailer.js";
-import { logger } from "../lib/logger.js";
-import { prisma, type DbClient } from "../lib/prisma.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { getMailer, type EmailContent, type Mailer } from "../../lib/mailer.js";
+import { logger } from "../../lib/logger.js";
+import { prisma, type DbClient } from "../../lib/prisma.js";
 
 /**
  * plan.md §18 — the notification write seam (Day 18) and its sender (Day 27).

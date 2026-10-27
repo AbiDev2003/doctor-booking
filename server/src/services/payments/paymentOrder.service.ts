@@ -1,24 +1,24 @@
-import { $Enums } from "../generated/prisma/client.js";
-import { config } from "../config.js";
-import { prisma } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { logger } from "../lib/logger.js";
-import { isBookable } from "../lib/doctorState.js";
-import { deriveConsultationFee } from "../lib/fee.js";
-import { holdExpiresAt } from "../lib/slotGuard.js";
-import { bookingHorizon } from "../lib/availability.js";
-import { utcToLocalDateTime } from "../lib/time.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { config } from "../../config.js";
+import { prisma } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { logger } from "../../lib/logger.js";
+import { isBookable } from "../../lib/doctorState.js";
+import { deriveConsultationFee } from "../../lib/fee.js";
+import { holdExpiresAt } from "../../lib/slotGuard.js";
+import { bookingHorizon } from "../../lib/availability.js";
+import { utcToLocalDateTime } from "../../lib/time.js";
 import {
   ACTIVE_BOOKING_STATUSES,
   assertNoDuplicateForSlot,
   assertPatientSeatCap,
   assertSlotBookableForBooking,
-} from "../lib/bookingGuard.js";
-import { createRazorpayGateway, toGatewayOrderParams } from "../lib/paymentGateway.js";
-import { getClinicSettings } from "./clinic.service.js";
-import { writeAudit } from "./audit.service.js";
-import type { PaymentOrderDto } from "../schemas/payments.js";
-import type { ActorContext } from "./doctor.service.js";
+} from "../../lib/bookingGuard.js";
+import { createRazorpayGateway, toGatewayOrderParams } from "../../lib/paymentGateway.js";
+import { getClinicSettings } from "../clinic.service.js";
+import { writeAudit } from "../audit.service.js";
+import type { PaymentOrderDto } from "../../schemas/payments.js";
+import type { ActorContext } from "../doctor.service.js";
 
 /**
  * plan.md §17 / §8.6 — seat hold + Razorpay order, Day 24.

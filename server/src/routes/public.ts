@@ -5,7 +5,7 @@ import {
   getPublicDoctor,
   listPublicDoctors,
 } from "../services/public.service.js";
-import { listDoctorAvailability } from "../services/availability.service.js";
+import { listDoctorAvailability } from "../services/slots/availability.service.js";
 
 /**
  * plan.md §26 — the public website's API surface, Day 13.

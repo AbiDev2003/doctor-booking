@@ -31,7 +31,7 @@ import {
   unarchiveDoctor,
 } from "../services/doctor.service.js";
 import { getClinicSettings } from "../services/clinic.service.js";
-import { dispatchNotificationInBackground } from "../services/notification.service.js";
+import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
 import { durationLabel } from "../lib/duration.js";
 import { accountInvitationEmail } from "../lib/emailTemplates.js";
 import type { ActorContext } from "../services/doctor.service.js";

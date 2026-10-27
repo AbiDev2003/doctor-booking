@@ -1,14 +1,14 @@
-import { prisma } from "../lib/prisma.js";
-import { addCalendarDays, localDateTimeToUtc, utcToLocalDateTime } from "../lib/time.js";
+import { prisma } from "../../lib/prisma.js";
+import { addCalendarDays, localDateTimeToUtc, utcToLocalDateTime } from "../../lib/time.js";
 import {
   bookingHorizon,
   isSlotBookable,
   isWithinHorizon,
   remainingSeats,
-} from "../lib/availability.js";
-import type { BookabilityContext } from "../lib/availability.js";
-import { getClinicSettings } from "./clinic.service.js";
-import { assertBookableDoctor } from "./public.service.js";
+} from "../../lib/availability.js";
+import type { BookabilityContext } from "../../lib/availability.js";
+import { getClinicSettings } from "../clinic.service.js";
+import { assertBookableDoctor } from "../public.service.js";
 
 /**
  * plan.md §11 — the public read-only "bookable slots for doctor X on date D"

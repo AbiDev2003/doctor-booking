@@ -12,7 +12,7 @@ import { getRequestId } from "../middleware/requestId.js";
 import { verifyEmailSchema } from "../schemas/auth.js";
 import { changeEmailSchema, changePhoneSchema, deleteAccountSchema } from "../schemas/account.js";
 import { changeEmail, verifyEmailChange, changePhone, deleteAccount } from "../services/account.service.js";
-import { dispatchNotificationInBackground } from "../services/notification.service.js";
+import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
 import { durationLabel } from "../lib/duration.js";
 import { accountDeactivatedEmail, emailChangeVerificationEmail } from "../lib/emailTemplates.js";
 
