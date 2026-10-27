@@ -339,35 +339,85 @@ Code map: `paymentOrder.service.ts` (hold + order), `paymentConvert.service.ts`
 - **Scheduler**: `server/src/jobs/scheduler.ts` runs `runStartupJobs()` before `app.listen()` (hold-expiry sweep), then `startScheduler()` sets intervals (reminders/auto-cancel/hold-expiry every 60s, slot generation every 5min). No Redis/queue.
 - **Jobs**: `sendAppointmentReminders()` dedupes by existing `APPOINTMENT_REMINDER` row and only emails `CONFIRMED` appointments with patient emails in `now + reminderLeadMinutes ± 2min`. `expireStaleHolds()` releases expired holds, decrements `heldCount` safely, best-effort voids tied `PENDING` payments. `runAutoCancel()` calls `autoCancelAfterSlotEnd()`. `runSlotGeneration()` calls `materializeSlots()`.
 
+### Quick Overview
+
+```mermaid
+flowchart TD
+  A["Domain Events\n(Booking / Cancel / Reject / Convert / Refund)"] --> B["queueNotification(tx, ...)\nINSERT Notification(PENDING)"]
+  B --> C["DB Transaction Commit"]
+  C --> D["dispatchNotificationInBackground(id, content)\nsetImmediate → dispatchNotification(id, content)"]
+  D --> E{"Exists & status != SENT"}
+  E -- "No" --> F["Skip"]
+  E -- "Yes" --> G["Call Mailer"]
+  G -- "Success" --> H["status = SENT\nsentAt = now"]
+  G -- "Failure" --> I["status = FAILED\nerror = truncated(2000)"]
+
+  J["server.ts"] --> K["runStartupJobs() before app.listen()\n→ expireStaleHolds()"]
+  K --> L["app.listen()"]
+  L --> M["startScheduler() after listen()"]
+  M --> N["Intervals: 60s (reminders / auto-cancel / hold-expiry)\n5 min (slot generation)"]
+  N --> O["sendAppointmentReminders(now)\n(Dedupe by APPOINTMENT_REMINDER, T+lead ± 2m)"]
+  N --> P["runAutoCancel(now) → autoCancelAfterSlotEnd(now)"]
+  N --> Q["expireStaleHolds(now)"]
+  N --> R["runSlotGeneration() → materializeSlots()"]
+  O --> B
+
+  classDef tx fill:#e3f2fd,stroke:#1565c0,stroke-width:1px
+  classDef post fill:#fff3e0,stroke:#ef6c00,stroke-width:1px
+  classDef job fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px
+  class B,C tx
+  class D,E,F,G,H,I post
+  class J,K,L,M,N,O,P,Q,R job
+```
+
+### Detailed Code Flow
+
 ```mermaid
 sequenceDiagram
-    participant S as Service (Booking/Payment/Refund)
+    participant SVC as Domain Service
     participant DB as PostgreSQL
-    participant N as NotificationService
-    participant J as Jobs/Scheduler
+    participant NS as notification.service
+    participant BG as dispatchNotification (via setImmediate)
     participant M as Mailer
+    participant JOB as jobs/scheduler
 
-    Note over S,DB: Queue in-transaction
-    S->>DB: State change (Appointment/Payment/Refund)
-    S->>N: queueNotification(tx, {type, recipient, appointmentId, slotId})
-    N->>DB: INSERT notifications (status=PENDING)
-    DB-->>S: Commit
+    Note over SVC,DB: Queue inside transaction
+    SVC->>DB: State change
+    SVC->>NS: queueNotification(tx, {type, recipient, appointmentId, slotId})
+    NS->>DB: INSERT Notification(status=PENDING)
+    DB-->>SVC: COMMIT
 
-    Note over N,M: Dispatch post-commit (fire-and-forget)
-    S->>N: dispatchNotificationInBackground(id, content)
-    N->>N: setImmediate
-    N->>DB: SELECT notification (skip if SENT)
-    N->>M: mailer.send(to, subject, html, text)
-    alt success
-        N->>DB: UPDATE status=SENT, sentAt=now, error=null
-    else failure
-        N->>DB: UPDATE status=FAILED, error=truncated(2000)
+    Note over SVC,BG: Fire-and-forget dispatch
+    SVC-->>NS: dispatchNotificationInBackground(id, content)
+    NS->>BG: setImmediate -> dispatchNotification(id, content)
+    BG->>DB: SELECT Notification(id) { recipient, status }
+    alt status == SENT
+        BG-->>BG: return (no-op)
+    else status == PENDING or FAILED
+        BG->>M: send({to, subject, html, text})
+        alt success
+            BG->>DB: UPDATE status=SENT, sentAt=now, error=null
+        else error
+            BG->>DB: UPDATE status=FAILED, error=truncated(2000)
+        end
     end
 
-    Note over J: Scheduler
-    J->>J: server.ts → runStartupJobs() before app.listen() → expireStaleHolds()
-    J->>J: after listen() → startScheduler() (intervals)
-    J->>J: reminders: dedupe by APPOINTMENT_REMINDER row; window ±2min around T-lead
+    Note over JOB,DB: Jobs
+    JOB->>JOB: runStartupJobs() before app.listen() -> expireStaleHolds()
+    JOB->>JOB: startScheduler() after app.listen()
+    JOB->>NS: sendAppointmentReminders(now)
+    NS->>DB: Find CONFIRMED + patient.email not null + slot.startAt in [now+lead-2m, now+lead+2m]
+    loop per due appointment
+        NS->>DB: findFirst({appointmentId, type: APPOINTMENT_REMINDER})
+        alt exists
+            NS-->>NS: skip (dedupe)
+        else none
+            NS->>NS: queueNotification(prisma,...)
+            NS-->>BG: dispatchNotificationInBackground(...)
+        end
+    end
+    JOB->>JOB: runAutoCancel(now)/expireStaleHolds(now) every 60s
+    JOB->>JOB: runSlotGeneration() every 5min
 ```
 
 ## Checks
