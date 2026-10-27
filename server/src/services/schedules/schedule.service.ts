@@ -1,14 +1,14 @@
-import { $Enums } from "../generated/prisma/client.js";
-import type { Prisma } from "../generated/prisma/client.js";
-import { prisma, isUniqueConstraintViolation } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { windowsOverlap } from "../lib/slotPlan.js";
-import { writeAudit } from "./audit.service.js";
-import { materializeSlots } from "./slotGeneration.service.js";
-import type { MaterializeStats } from "./slotGeneration.service.js";
-import { logger } from "../lib/logger.js";
-import type { ActorContext, RequestMeta } from "./doctor.service.js";
-import type { ScheduleDto } from "../schemas/schedules.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import type { Prisma } from "../../generated/prisma/client.js";
+import { prisma, isUniqueConstraintViolation } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { windowsOverlap } from "../../lib/slotPlan.js";
+import { writeAudit } from "../audit.service.js";
+import { materializeSlots } from "../slots/slotGeneration.service.js";
+import type { MaterializeStats } from "../slots/slotGeneration.service.js";
+import { logger } from "../../lib/logger.js";
+import type { ActorContext, RequestMeta } from "../doctors/doctor.service.js";
+import type { ScheduleDto } from "../../schemas/schedules.js";
 
 /**
  * plan.md §11, §8.1, §8.3 — the weekly template CRUD, Day 15.

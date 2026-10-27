@@ -21,8 +21,8 @@ import {
   updateScheduleWindow,
   deleteScheduleWindow,
   materializeManually,
-} from "../services/schedule.service.js";
-import type { ActorContext } from "../services/doctor.service.js";
+} from "../services/schedules/schedule.service.js";
+import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
  * plan.md §11, §8.1 — the schedule template surface, Day 15.

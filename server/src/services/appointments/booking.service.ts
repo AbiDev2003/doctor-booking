@@ -15,7 +15,7 @@ import { getClinicSettings } from "../clinic.service.js";
 import { writeAudit } from "../audit.service.js";
 import { queueNotification } from "../notifications/notification.service.js";
 import type { AppointmentDto } from "../../schemas/appointments.js";
-import type { ActorContext } from "../doctor.service.js";
+import type { ActorContext } from "../doctors/doctor.service.js";
 
 /**
  * plan.md §15 / §8.1 / §13 — book a slot, Day 19 (pay-at-clinic path).

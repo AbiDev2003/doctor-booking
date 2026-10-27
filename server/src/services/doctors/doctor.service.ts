@@ -1,22 +1,22 @@
-import { $Enums } from "../generated/prisma/client.js";
-import type { Prisma } from "../generated/prisma/client.js";
-import { prisma, isUniqueConstraintViolation } from "../lib/prisma.js";
-import type { DbClient } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { generateToken, hashToken, getAccountClaimExpiry } from "../lib/auth.js";
-import { assertDoctorAction, isBookable } from "../lib/doctorState.js";
-import type { DoctorAction } from "../lib/doctorState.js";
-import { clinicDayRange, utcToLocalDateTime } from "../lib/time.js";
-import { maskContact } from "../lib/privacy.js";
-import { logger } from "../lib/logger.js";
-import { writeAudit } from "./audit.service.js";
-import { revokeAllSessions } from "./auth/auth.service.js";
-import { queueNotification } from "./notifications/notification.service.js";
-import { materializeSlots } from "./slotGeneration.service.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import type { Prisma } from "../../generated/prisma/client.js";
+import { prisma, isUniqueConstraintViolation } from "../../lib/prisma.js";
+import type { DbClient } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { generateToken, hashToken, getAccountClaimExpiry } from "../../lib/auth.js";
+import { assertDoctorAction, isBookable } from "../../lib/doctorState.js";
+import type { DoctorAction } from "../../lib/doctorState.js";
+import { clinicDayRange, utcToLocalDateTime } from "../../lib/time.js";
+import { maskContact } from "../../lib/privacy.js";
+import { logger } from "../../lib/logger.js";
+import { writeAudit } from "../audit.service.js";
+import { revokeAllSessions } from "../auth/auth.service.js";
+import { queueNotification } from "../notifications/notification.service.js";
+import { materializeSlots } from "../slots/slotGeneration.service.js";
 import {
   applyUnavailabilityCascade,
   OPEN_ENDED_WINDOW_END,
-} from "./appointments/appointmentCascade.service.js";
+} from "../appointments/appointmentCascade.service.js";
 
 /**
  * plan.md §5, §5.1, §5.2 — the doctor lifecycle, Day 12.

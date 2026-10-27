@@ -29,12 +29,12 @@ import {
   unsuspendDoctor,
   archiveDoctor,
   unarchiveDoctor,
-} from "../services/doctor.service.js";
+} from "../services/doctors/doctor.service.js";
 import { getClinicSettings } from "../services/clinic.service.js";
 import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
 import { durationLabel } from "../lib/duration.js";
 import { accountInvitationEmail } from "../lib/emailTemplates.js";
-import type { ActorContext } from "../services/doctor.service.js";
+import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
  * plan.md §5, §5.1, §5.2 — the doctor + staff management surface, Day 12.

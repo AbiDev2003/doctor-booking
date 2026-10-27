@@ -2,8 +2,8 @@ import { $Enums } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
 import { AppError } from "../lib/appError.js";
 import { writeAudit } from "./audit.service.js";
-import { materializeSlots } from "./slotGeneration.service.js";
-import type { ActorContext } from "./doctor.service.js";
+import { materializeSlots } from "./slots/slotGeneration.service.js";
+import type { ActorContext } from "./doctors/doctor.service.js";
 
 /**
  * plan.md §3.2 — the single Clinic config row, read through one helper, Day 15.

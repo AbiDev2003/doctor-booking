@@ -18,7 +18,7 @@ import { createRazorpayGateway, toGatewayOrderParams } from "../../lib/paymentGa
 import { getClinicSettings } from "../clinic.service.js";
 import { writeAudit } from "../audit.service.js";
 import type { PaymentOrderDto } from "../../schemas/payments.js";
-import type { ActorContext } from "../doctor.service.js";
+import type { ActorContext } from "../doctors/doctor.service.js";
 
 /**
  * plan.md §17 / §8.6 — seat hold + Razorpay order, Day 24.

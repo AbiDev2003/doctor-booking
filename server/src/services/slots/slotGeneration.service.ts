@@ -1,11 +1,11 @@
-import { $Enums } from "../generated/prisma/client.js";
-import { prisma } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { localDateTimeToUtc, utcToLocalDateTime } from "../lib/time.js";
-import { logger } from "../lib/logger.js";
-import { planSlotsForDoctor } from "../lib/slotPlan.js";
-import type { TemplateWindow } from "../lib/slotPlan.js";
-import { getClinicSettings } from "./clinic.service.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { prisma } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { localDateTimeToUtc, utcToLocalDateTime } from "../../lib/time.js";
+import { logger } from "../../lib/logger.js";
+import { planSlotsForDoctor } from "../../lib/slotPlan.js";
+import type { TemplateWindow } from "../../lib/slotPlan.js";
+import { getClinicSettings } from "../clinic.service.js";
 
 /**
  * plan.md §11, §10, §3.2 — materialising dated Slots from a weekly template,

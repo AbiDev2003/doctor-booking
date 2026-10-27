@@ -19,8 +19,8 @@ import {
   listSlots,
   setSlotDisabled,
   updateSlot,
-} from "../services/slot.service.js";
-import type { ActorContext } from "../services/doctor.service.js";
+} from "../services/slots/slot.service.js";
+import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
  * plan.md §8.4, §8.2 — the dated-Slot management surface, Day 16.

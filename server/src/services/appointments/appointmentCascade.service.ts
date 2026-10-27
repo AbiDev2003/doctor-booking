@@ -6,7 +6,7 @@ import { writeAudit } from "../audit.service.js";
 import { queueNotification } from "../notifications/notification.service.js";
 import { voidPendingPaymentForAppointment } from "../payments/offlinePayment.service.js";
 import { queueRefundForAppointment } from "../payments/refund.service.js";
-import type { ActorContext } from "../doctor.service.js";
+import type { ActorContext } from "../doctors/doctor.service.js";
 
 /**
  * plan.md §12 — the affected-appointment cascade, Day 18.

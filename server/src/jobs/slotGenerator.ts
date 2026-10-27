@@ -1,4 +1,4 @@
-import { materializeSlots } from "../services/slotGeneration.service.js";
+import { materializeSlots } from "../services/slots/slotGeneration.service.js";
 
 export async function runSlotGeneration() {
   return materializeSlots();

@@ -19,7 +19,7 @@ import { queueNotification } from "../notifications/notification.service.js";
 import { voidPendingPaymentForAppointment } from "../payments/offlinePayment.service.js";
 import { queueRefundForAppointment } from "../payments/refund.service.js";
 import type { AppointmentDto } from "../../schemas/appointments.js";
-import type { ActorContext } from "../doctor.service.js";
+import type { ActorContext } from "../doctors/doctor.service.js";
 
 /**
  * plan.md §13 / §13.1 — the appointment status-transition services, Day 21.

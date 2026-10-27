@@ -23,7 +23,7 @@ import {
 } from "../services/appointments/appointmentTransition.service.js";
 import { rescheduleAppointment } from "../services/appointments/reschedule.service.js";
 import { kickRefundWorker } from "../services/payments/refund.service.js";
-import type { ActorContext } from "../services/doctor.service.js";
+import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
  * plan.md §8.1 / §13 / §13.1 / §15 — the booking and status-transition surface

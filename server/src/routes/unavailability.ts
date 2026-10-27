@@ -17,8 +17,8 @@ import {
   createDoctorUnavailability,
   listDoctorUnavailabilities,
   removeDoctorUnavailability,
-} from "../services/unavailability.service.js";
-import type { ActorContext } from "../services/doctor.service.js";
+} from "../services/doctors/unavailability.service.js";
+import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
  * plan.md §12 — the DoctorUnavailability write surface, Day 18.

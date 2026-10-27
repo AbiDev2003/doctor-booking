@@ -27,7 +27,7 @@ import { writeAudit } from "../audit.service.js";
 import { queueNotification } from "../notifications/notification.service.js";
 import { queueRefundForAppointment } from "../payments/refund.service.js";
 import type { AppointmentDto } from "../../schemas/appointments.js";
-import type { ActorContext } from "../doctor.service.js";
+import type { ActorContext } from "../doctors/doctor.service.js";
 
 /**
  * plan.md §14 / §8.5 / §15 / §8.1 — appointment rescheduling, Day 22.

@@ -6,7 +6,7 @@ import { writeAudit } from "../audit.service.js";
 import type { AuditActor } from "../audit.service.js";
 import { queueNotification } from "../notifications/notification.service.js";
 import type { OfflinePaymentDto } from "../../schemas/payments.js";
-import type { ActorContext } from "../doctor.service.js";
+import type { ActorContext } from "../doctors/doctor.service.js";
 import type { DbClient } from "../../lib/prisma.js";
 
 /**

@@ -1,18 +1,18 @@
-import { $Enums } from "../generated/prisma/client.js";
-import type { Prisma } from "../generated/prisma/client.js";
-import { prisma, isUniqueConstraintViolation } from "../lib/prisma.js";
-import type { DbClient } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { localDateTimeToUtc, utcToLocalDateTime } from "../lib/time.js";
-import { windowsOverlap } from "../lib/slotPlan.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import type { Prisma } from "../../generated/prisma/client.js";
+import { prisma, isUniqueConstraintViolation } from "../../lib/prisma.js";
+import type { DbClient } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { localDateTimeToUtc, utcToLocalDateTime } from "../../lib/time.js";
+import { windowsOverlap } from "../../lib/slotPlan.js";
 import {
   assertCapacityNotBelowCounters,
   assertNoSeatOrLiveHold,
-} from "../lib/slotGuard.js";
-import { writeAudit } from "./audit.service.js";
-import { getClinicSettings } from "./clinic.service.js";
-import { writeDoctorHistory } from "./doctor.service.js";
-import type { SlotDto } from "../schemas/slots.js";
+} from "../../lib/slotGuard.js";
+import { writeAudit } from "../audit.service.js";
+import { getClinicSettings } from "../clinic.service.js";
+import { writeDoctorHistory } from "../doctors/doctor.service.js";
+import type { SlotDto } from "../../schemas/slots.js";
 
 /**
  * plan.md §8.4 — the dated-Slot write surface, Day 16. Mirrors

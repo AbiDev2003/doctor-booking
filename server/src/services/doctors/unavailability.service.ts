@@ -1,14 +1,14 @@
-import { $Enums } from "../generated/prisma/client.js";
-import { prisma } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
-import { localDateTimeToUtc, utcToLocalDateTime } from "../lib/time.js";
-import { assertValidDisruptionWindow } from "../lib/unavailability.js";
-import { getClinicSettings } from "./clinic.service.js";
-import { applyUnavailabilityCascade } from "./appointments/appointmentCascade.service.js";
-import { writeAudit } from "./audit.service.js";
+import { $Enums } from "../../generated/prisma/client.js";
+import { prisma } from "../../lib/prisma.js";
+import { AppError } from "../../lib/appError.js";
+import { localDateTimeToUtc, utcToLocalDateTime } from "../../lib/time.js";
+import { assertValidDisruptionWindow } from "../../lib/unavailability.js";
+import { getClinicSettings } from "../clinic.service.js";
+import { applyUnavailabilityCascade } from "../appointments/appointmentCascade.service.js";
+import { writeAudit } from "../audit.service.js";
 import { writeDoctorHistory } from "./doctor.service.js";
 import type { ActorContext } from "./doctor.service.js";
-import type { DoctorUnavailabilityDto } from "../schemas/unavailability.js";
+import type { DoctorUnavailabilityDto } from "../../schemas/unavailability.js";
 
 /**
  * plan.md §12 — the DoctorUnavailability write surface, Day 18.

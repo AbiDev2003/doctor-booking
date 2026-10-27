@@ -8,7 +8,7 @@ import { requireRole } from "../middleware/rbac.js";
 import { getRequestId } from "../middleware/requestId.js";
 import { clinicSettingsPatchSchema } from "../schemas/clinics.js";
 import { getClinicSettings, updateClinicSettings } from "../services/clinic.service.js";
-import type { ActorContext } from "../services/doctor.service.js";
+import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
  * plan.md §3.2 — the clinic settings surface, Day 16 (decision 9).

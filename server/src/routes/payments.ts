@@ -26,7 +26,7 @@ import {
   listPendingDeskHandBacks,
   retryFailedRefund,
 } from "../services/payments/refund.service.js";
-import type { ActorContext } from "../services/doctor.service.js";
+import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
  * plan.md §17 — the online-payment surface (Day 23 order, Day 24 verify).

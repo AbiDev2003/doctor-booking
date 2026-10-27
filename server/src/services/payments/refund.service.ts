@@ -13,7 +13,7 @@ import { writeAudit } from "../audit.service.js";
 import type { AuditActor } from "../audit.service.js";
 import { queueNotification } from "../notifications/notification.service.js";
 import type { DeskHandBackDto } from "../../schemas/payments.js";
-import type { ActorContext } from "../doctor.service.js";
+import type { ActorContext } from "../doctors/doctor.service.js";
 
 export interface QueueRefundInput {
   readonly paymentId: string;
