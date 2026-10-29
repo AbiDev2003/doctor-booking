@@ -34,14 +34,15 @@ export default function Login() {
     setFieldErrors({});
 
     try {
-      await apiLogin(values);
+      const session = await apiLogin(values);
       // Refresh the session query BEFORE navigating so the destination's
       // useSession sees the new sign-in rather than a cached "signed out".
       await queryClient.invalidateQueries({ queryKey: ["me"] });
       // Honour a returnTo from a booking redirect, but only a relative path —
       // an absolute or protocol-relative URL would be an open redirect.
       const returnTo = searchParams.get("returnTo");
-      const target = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/profile";
+      const fallback = session.role === "PATIENT" ? "/patient" : "/profile";
+      const target = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : fallback;
       navigate(target);
     } catch (err) {
       if (err instanceof ApiError) {

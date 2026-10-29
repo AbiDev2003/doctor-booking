@@ -16,6 +16,11 @@ import Overview from "./pages/doctor/Overview.tsx";
 import Queue from "./pages/doctor/Queue.tsx";
 import ProfileForm from "./pages/doctor/ProfileForm.tsx";
 import Schedule from "./pages/doctor/Schedule.tsx";
+import PatientLayout from "./layouts/PatientLayout.tsx";
+import PatientOverview from "./pages/patient/Overview.tsx";
+import Appointments from "./pages/patient/Appointments.tsx";
+import Reschedule from "./pages/patient/Reschedule.tsx";
+import Payments from "./pages/patient/Payments.tsx";
 
 /**
  * Day 13/14 routing. The root path now earns the public storefront (the
@@ -40,6 +45,14 @@ export default function App() {
         <Route path="queue" element={<Queue />} />
         <Route path="profile" element={<ProfileForm />} />
         <Route path="schedule" element={<Schedule />} />
+      </Route>
+
+      {/* §27 patient dashboard (Day 30). */}
+      <Route path="/patient" element={<PatientLayout />}>
+        <Route index element={<PatientOverview />} />
+        <Route path="appointments" element={<Appointments />} />
+        <Route path="appointments/:id/reschedule" element={<Reschedule />} />
+        <Route path="payments" element={<Payments />} />
       </Route>
 
       {/* Auth + account flows (Days 7–12), standalone. */}

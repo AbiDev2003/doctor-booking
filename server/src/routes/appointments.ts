@@ -10,10 +10,16 @@ import {
   appointmentIdParamSchema,
   cancelAppointmentSchema,
   createBookingSchema,
+  listAppointmentsQuerySchema,
   rejectAppointmentSchema,
   rescheduleAppointmentSchema,
 } from "../schemas/appointments.js";
 import { bookAppointment } from "../services/appointments/booking.service.js";
+import {
+  getPatientAppointment,
+  listPatientAppointments,
+  previewCancellation,
+} from "../services/appointments/patientAppointments.service.js";
 import {
   arriveAppointment,
   cancelAppointment,
@@ -83,6 +89,46 @@ function actorOf(req: Request): ActorContext {
 function requestMeta(req: Request, res: Response): { ip: string | null; requestId: string } {
   return { ip: getClientIp(req), requestId: getRequestId(res) };
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 30 — the patient dashboard's read surface                       */
+/* ------------------------------------------------------------------ */
+
+/** GET / — the signed-in patient's own appointments (`?scope=upcoming|past|all`). */
+appointmentsRouter.get("/", patientOnly, async (req, res, next) => {
+  try {
+    const { scope } = listAppointmentsQuerySchema.parse(req.query);
+    const result = await listPatientAppointments({ patientId: authenticatedUser(req).id, scope });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /:id — one of the patient's own appointments (deep link on the dashboard). */
+appointmentsRouter.get("/:id", patientOnly, async (req, res, next) => {
+  try {
+    const { id } = appointmentIdParamSchema.parse(req.params);
+    const appointment = await getPatientAppointment({ appointmentId: id, patientId: authenticatedUser(req).id });
+    res.json({ appointment });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /:id/refund-preview — the cancel dialog's server-side answer (§17).
+ * Writes nothing; the cancel route remains the only mutation.
+ */
+appointmentsRouter.get("/:id/refund-preview", patientOnly, async (req, res, next) => {
+  try {
+    const { id } = appointmentIdParamSchema.parse(req.params);
+    const preview = await previewCancellation({ appointmentId: id, patientId: authenticatedUser(req).id });
+    res.json({ preview });
+  } catch (err) {
+    next(err);
+  }
+});
 
 appointmentsRouter.post("/", patientOnly, async (req, res, next) => {
   try {

@@ -560,3 +560,98 @@ export interface PaymentVerifyPayload {
 export function apiVerifyPayment(payload: PaymentVerifyPayload): Promise<{ message: string; appointment: Appointment }> {
   return request("/payments/verify", { method: "POST", body: JSON.stringify(payload) });
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 30 — patient dashboard reads + actions (§27)                    */
+/* ------------------------------------------------------------------ */
+
+/** The patient's appointment plus the server-decided action flags (server twin). */
+export interface PatientAppointment extends Appointment {
+  slotStartsAt: string;
+  slotEndsAt: string;
+  clinicCaused: boolean;
+  canCancel: boolean;
+  canReschedule: boolean;
+  cancelBlockedReason: string | null;
+}
+
+export type AppointmentScope = "upcoming" | "past" | "all";
+
+export function apiMyAppointments(
+  scope: AppointmentScope = "all",
+  signal?: AbortSignal,
+): Promise<{ appointments: PatientAppointment[] }> {
+  return request(`/appointments?scope=${encodeURIComponent(scope)}`, { signal });
+}
+
+export function apiMyAppointment(id: string, signal?: AbortSignal): Promise<{ appointment: PatientAppointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}`, { signal });
+}
+
+export interface CancellationPreview {
+  appointmentId: string;
+  canCancel: boolean;
+  cancelBlockedReason: string | null;
+  clinicCaused: boolean;
+  slotStartsAt: string;
+  cutoffAt: string | null;
+  payment: {
+    id: string;
+    amountPaise: number;
+    status: "PENDING" | "PAID" | "FAILED" | "VOIDED";
+    method: "CASH" | "CARD" | "UPI" | null;
+  } | null;
+  refundAmountPaise: number;
+  refundSettlement: "automatic" | "desk" | "none";
+}
+
+/** What cancelling would do (§17); writes nothing. */
+export function apiCancellationPreview(id: string, signal?: AbortSignal): Promise<{ preview: CancellationPreview }> {
+  return request(`/appointments/${encodeURIComponent(id)}/refund-preview`, { signal });
+}
+
+/** Cancels the patient's own booking; the server re-checks the cutoff and refunds (§8.5/§17). */
+export function apiCancelAppointment(id: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({}) });
+}
+
+/** Moves the same booking to a new slot of the SAME doctor (§14). */
+export function apiRescheduleAppointment(
+  id: string,
+  slotId: string,
+): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/reschedule`, {
+    method: "POST",
+    body: JSON.stringify({ slotId }),
+  });
+}
+
+export interface PatientRefund {
+  id: string;
+  kind: string;
+  amountPaise: number;
+  status: "PENDING" | "SUCCESS" | "FAILED";
+  method: "CASH" | "CARD" | "UPI" | null;
+  reason: string;
+  createdAt: string;
+}
+
+export interface PatientPayment {
+  id: string;
+  appointmentId: string | null;
+  amountPaise: number;
+  currency: string;
+  status: "PENDING" | "PAID" | "FAILED" | "VOIDED";
+  method: "CASH" | "CARD" | "UPI" | null;
+  paidAt: string | null;
+  createdAt: string;
+  doctorName: string | null;
+  slotDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  refunds: PatientRefund[];
+}
+
+export function apiMyPayments(signal?: AbortSignal): Promise<{ payments: PatientPayment[] }> {
+  return request("/payments/mine", { signal });
+}

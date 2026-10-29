@@ -141,27 +141,37 @@ export function assertNoShowAllowed(slotEndAt: Date, now: Date): void {
  * cancelled until the slot starts. Clinic staff are not bound by the cutoff and
  * never call this.
  */
+export function patientCancelBlockReason(
+  slotStartAt: Date,
+  now: Date,
+  cancelCutoffMinutes: number,
+  clinicCaused: boolean,
+): string | null {
+  if (now.getTime() >= slotStartAt.getTime()) {
+    return "This appointment can no longer be cancelled — its slot has already started.";
+  }
+
+  if (clinicCaused) {
+    return null;
+  }
+
+  const cutoffAt = slotStartAt.getTime() - cancelCutoffMinutes * 60_000;
+  if (now.getTime() >= cutoffAt) {
+    return `This appointment can no longer be cancelled — the cancellation cutoff is ${cancelCutoffMinutes} minutes before the slot starts.`;
+  }
+
+  return null;
+}
+
 export function assertPatientCancelAllowed(
   slotStartAt: Date,
   now: Date,
   cancelCutoffMinutes: number,
   clinicCaused: boolean,
 ): void {
-  if (now.getTime() >= slotStartAt.getTime()) {
-    throw new AppError(409, "CUTOFF_REACHED", "This appointment can no longer be cancelled — its slot has already started.");
-  }
-
-  if (clinicCaused) {
-    return;
-  }
-
-  const cutoffAt = slotStartAt.getTime() - cancelCutoffMinutes * 60_000;
-  if (now.getTime() >= cutoffAt) {
-    throw new AppError(
-      409,
-      "CUTOFF_REACHED",
-      `This appointment can no longer be cancelled — the cancellation cutoff is ${cancelCutoffMinutes} minutes before the slot starts.`,
-    );
+  const blockReason = patientCancelBlockReason(slotStartAt, now, cancelCutoffMinutes, clinicCaused);
+  if (blockReason !== null) {
+    throw new AppError(409, "CUTOFF_REACHED", blockReason);
   }
 }
 

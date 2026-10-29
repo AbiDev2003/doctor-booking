@@ -17,12 +17,13 @@ const ROLE_HOMES: Record<SessionUser["role"], string> = {
   ADMIN: "/doctor",
   STAFF: "/doctor",
   DOCTOR: "/doctor",
-  PATIENT: "/profile",
+  PATIENT: "/patient",
 };
 
 function AccountLink({ user }: { user: SessionUser | null }) {
   if (!user) return <Link to="/login">Sign in</Link>;
-  return <Link to={ROLE_HOMES[user.role]}>{user.role.toLowerCase() === "doctor" ? "My dashboard" : "My account"}</Link>;
+  const label = user.role === "PATIENT" || user.role === "DOCTOR" ? "My dashboard" : "My account";
+  return <Link to={ROLE_HOMES[user.role]}>{label}</Link>;
 }
 
 export default function PublicLayout() {
