@@ -14,7 +14,10 @@ import {
   rejectAppointmentSchema,
   rescheduleAppointmentSchema,
 } from "../schemas/appointments.js";
+import { createDeskBookingSchema, deskQueueQuerySchema } from "../schemas/staff.js";
 import { bookAppointment } from "../services/appointments/booking.service.js";
+import { bookAtDesk } from "../services/staff/deskBooking.service.js";
+import { listDeskQueue } from "../services/staff/staffDesk.service.js";
 import {
   getPatientAppointment,
   listPatientAppointments,
@@ -100,6 +103,47 @@ appointmentsRouter.get("/", patientOnly, async (req, res, next) => {
     const { scope } = listAppointmentsQuerySchema.parse(req.query);
     const result = await listPatientAppointments({ patientId: authenticatedUser(req).id, scope });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Day 32 — the front desk's read + walk-in surface                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * GET /desk — the whole clinic day: every doctor's slots and their queues,
+ * with the server-computed action flags. Registered before `/:id` so the
+ * literal path is never parsed as an appointment id.
+ */
+appointmentsRouter.get("/desk", staffOnly, async (req, res, next) => {
+  try {
+    const { date } = deskQueueQuerySchema.parse(req.query);
+    res.json({ queue: await listDeskQueue(date) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /desk — create-or-find the patient by phone, then book the slot. The
+ * body carries the slot and the identity; fee, doctor, capacity and status are
+ * all derived inside the transaction (§16/§29).
+ */
+appointmentsRouter.post("/desk", staffOnly, async (req, res, next) => {
+  try {
+    const parsed = createDeskBookingSchema.parse(req.body);
+    const result = await bookAtDesk({
+      actor: actorOf(req),
+      slotId: parsed.slotId,
+      patient: parsed.patient,
+      ...requestMeta(req, res),
+    });
+    res.status(201).json({
+      message: result.createdPatient ? "Walk-in patient created and booked." : "Walk-in booking created.",
+      ...result,
+    });
   } catch (err) {
     next(err);
   }

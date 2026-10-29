@@ -21,6 +21,12 @@ import PatientOverview from "./pages/patient/Overview.tsx";
 import Appointments from "./pages/patient/Appointments.tsx";
 import Reschedule from "./pages/patient/Reschedule.tsx";
 import Payments from "./pages/patient/Payments.tsx";
+import StaffLayout from "./layouts/StaffLayout.tsx";
+import StaffToday from "./pages/staff/Today.tsx";
+import StaffAppointments from "./pages/staff/Appointments.tsx";
+import StaffPatients from "./pages/staff/Patients.tsx";
+import StaffPayments from "./pages/staff/Payments.tsx";
+import StaffSchedule from "./pages/staff/Schedule.tsx";
 
 /**
  * Day 13/14 routing. The root path now earns the public storefront (the
@@ -53,6 +59,15 @@ export default function App() {
         <Route path="appointments" element={<Appointments />} />
         <Route path="appointments/:id/reschedule" element={<Reschedule />} />
         <Route path="payments" element={<Payments />} />
+      </Route>
+
+      {/* §16/§29 staff front desk (Day 32). */}
+      <Route path="/staff" element={<StaffLayout />}>
+        <Route index element={<StaffToday />} />
+        <Route path="appointments" element={<StaffAppointments />} />
+        <Route path="patients" element={<StaffPatients />} />
+        <Route path="payments" element={<StaffPayments />} />
+        <Route path="schedule" element={<StaffSchedule />} />
       </Route>
 
       {/* Auth + account flows (Days 7–12), standalone. */}

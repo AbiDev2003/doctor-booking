@@ -41,7 +41,12 @@ export default function Login() {
       // Honour a returnTo from a booking redirect, but only a relative path —
       // an absolute or protocol-relative URL would be an open redirect.
       const returnTo = searchParams.get("returnTo");
-      const fallback = session.role === "PATIENT" ? "/patient" : "/profile";
+      const fallback =
+        session.role === "PATIENT"
+          ? "/patient"
+          : session.role === "DOCTOR"
+            ? "/doctor"
+            : "/staff";
       const target = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : fallback;
       navigate(target);
     } catch (err) {

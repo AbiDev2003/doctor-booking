@@ -611,18 +611,25 @@ export function apiCancellationPreview(id: string, signal?: AbortSignal): Promis
 }
 
 /** Cancels the patient's own booking; the server re-checks the cutoff and refunds (§8.5/§17). */
-export function apiCancelAppointment(id: string): Promise<{ message: string; appointment: Appointment }> {
-  return request(`/appointments/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({}) });
+export function apiCancelAppointment(
+  id: string,
+  reason?: string,
+): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+    body: JSON.stringify(reason !== undefined && reason !== "" ? { reason } : {}),
+  });
 }
 
 /** Moves the same booking to a new slot of the SAME doctor (§14). */
 export function apiRescheduleAppointment(
   id: string,
   slotId: string,
+  reason?: string,
 ): Promise<{ message: string; appointment: Appointment }> {
   return request(`/appointments/${encodeURIComponent(id)}/reschedule`, {
     method: "POST",
-    body: JSON.stringify({ slotId }),
+    body: JSON.stringify({ slotId, ...(reason !== undefined && reason !== "" && { reason }) }),
   });
 }
 
@@ -776,4 +783,276 @@ export function apiRemoveUnavailability(id: string, reason: string): Promise<{ m
     method: "DELETE",
     body: JSON.stringify({ reason }),
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Day 32 — staff dashboard: desk, walk-ins, history, money (§16/§29)  */
+/* ------------------------------------------------------------------ */
+
+/** The identity the desk types at the counter (server DTO twin). */
+export interface DeskPatient {
+  id: string;
+  fullName: string;
+  phone: string;
+  email: string | null;
+  isProvisional: boolean;
+}
+
+export interface DeskPaymentSummary {
+  status: "PENDING" | "PAID" | "NONE";
+  outstandingPaise: number;
+  paidPaise: number;
+  method: "CASH" | "CARD" | "UPI" | null;
+}
+
+/** The server's answer to "which attendance verbs are open right now". */
+export interface DeskAppointmentActions {
+  canArrive: boolean;
+  canComplete: boolean;
+  canNoShow: boolean;
+  canReject: boolean;
+  canCancel: boolean;
+  canReschedule: boolean;
+  arriveBlockedReason: string | null;
+  completeBlockedReason: string | null;
+  noShowBlockedReason: string | null;
+  cancelBlockedReason: string | null;
+  rescheduleBlockedReason: string | null;
+}
+
+export interface DeskAppointment extends Appointment, DeskAppointmentActions {
+  patient: DeskPatient;
+  /** UTC instants, so the client can reason about "now" without the wall clock. */
+  slotStartsAt: string;
+  slotEndsAt: string;
+  payment: DeskPaymentSummary;
+}
+
+export interface DeskSlotQueue {
+  slotId: string;
+  doctorId: string;
+  doctorName: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  startAt: string;
+  endAt: string;
+  maxPatients: number;
+  bookedCount: number;
+  heldCount: number;
+  isDisabled: boolean;
+  appointments: DeskAppointment[];
+}
+
+export interface DeskQueue {
+  date: string;
+  slots: DeskSlotQueue[];
+}
+
+/** GET /appointments/desk — the whole clinic day, every doctor. */
+export function apiDeskQueue(date?: string, signal?: AbortSignal): Promise<{ queue: DeskQueue }> {
+  const query = date === undefined ? "" : `?date=${encodeURIComponent(date)}`;
+  return request(`/appointments/desk${query}`, { signal });
+}
+
+export interface CreateDeskBookingInput {
+  slotId: string;
+  patient: {
+    fullName: string;
+    phone: string;
+    email?: string;
+  };
+}
+
+export interface DeskBookingResult {
+  message: string;
+  appointment: Appointment;
+  patient: DeskPatient;
+  createdPatient: boolean;
+}
+
+/** POST /appointments/desk — create-or-find the patient, then claim a seat. */
+export function apiCreateDeskBooking(input: CreateDeskBookingInput): Promise<DeskBookingResult> {
+  return request("/appointments/desk", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface PatientSummary extends DeskPatient {
+  isDeactivated: boolean;
+  createdAt: string;
+}
+
+export interface VisitHistory {
+  found: boolean;
+  patient: PatientSummary | null;
+  returning: boolean;
+  completedCount: number;
+  noShowCount: number;
+  upcomingCount: number;
+  /** Clinic-local `YYYY-MM-DD` of the most recent COMPLETED visit. */
+  lastVisitDate: string | null;
+  doctorsSeen: string[];
+  upcomingAppointments: DeskAppointment[];
+}
+
+/** GET /patients/visit-history — §16's returning-patient lookup. */
+export function apiVisitHistory(phone: string, signal?: AbortSignal): Promise<{ history: VisitHistory }> {
+  return request(`/patients/visit-history?phone=${encodeURIComponent(phone)}`, { signal });
+}
+
+export function apiArriveAppointment(id: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/arrive`, { method: "POST" });
+}
+
+export function apiCompleteAppointment(id: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/complete`, { method: "POST" });
+}
+
+export function apiMarkNoShow(id: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/no-show`, { method: "POST" });
+}
+
+export function apiRejectAppointment(id: string, reason: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export interface OfflinePayment {
+  paymentId: string;
+  appointmentId: string;
+  patientId: string;
+  amountPaise: number;
+  currency: string;
+  status: "PENDING" | "PAID" | "FAILED" | "VOIDED";
+  method: "CASH" | "CARD" | "UPI" | null;
+  paidAt: string | null;
+  collectedById: string | null;
+  collectedAt: string | null;
+}
+
+export function apiCollectOfflinePayment(input: {
+  appointmentId: string;
+  method: "CASH" | "CARD" | "UPI";
+  amountPaise?: number;
+}): Promise<{ message: string; payment: OfflinePayment }> {
+  return request("/payments/offline/collect", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function apiVoidOfflinePayment(input: {
+  appointmentId: string;
+  reason: string;
+}): Promise<{ message: string; payment: OfflinePayment }> {
+  return request("/payments/offline/void", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface DeskHandBack {
+  refundId: string;
+  paymentId: string;
+  appointmentId: string | null;
+  patientId: string;
+  patientName: string;
+  amountPaise: number;
+  kind: "RESCHEDULE_DELTA" | "CANCELLATION" | "CLINIC_CAUSED" | "EXPIRED_HOLD" | "CONVERSION_FAILED" | "DESK_HAND_BACK";
+  reason: string;
+  createdAt: string;
+}
+
+export function apiDeskHandBacks(signal?: AbortSignal): Promise<{ handBacks: DeskHandBack[] }> {
+  return request("/payments/refunds/desk-hand-backs", { signal });
+}
+
+export function apiCompleteHandBack(
+  refundId: string,
+  method: "CASH" | "UPI",
+): Promise<{ message: string; refund: unknown }> {
+  return request(`/payments/refunds/${encodeURIComponent(refundId)}/hand-back`, {
+    method: "POST",
+    body: JSON.stringify({ method }),
+  });
+}
+
+/** The staff roster read; the same DTO the doctor's own profile endpoint uses. */
+export function apiStaffDoctors(signal?: AbortSignal): Promise<{ doctors: DoctorDetail[] }> {
+  return request("/doctors", { signal });
+}
+
+export interface Slot {
+  id: string;
+  doctorId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+  bookedCount: number;
+  heldCount: number;
+  isDisabled: boolean;
+  disabledReason: string | null;
+  startAt: string;
+  endAt: string;
+}
+
+export function apiSlots(
+  doctorId: string,
+  slotDate?: string,
+  signal?: AbortSignal,
+): Promise<{ slots: Slot[] }> {
+  const date = slotDate === undefined ? "" : `&slotDate=${encodeURIComponent(slotDate)}`;
+  return request(`/slots?doctorId=${encodeURIComponent(doctorId)}${date}`, { signal });
+}
+
+export interface CreateSlotInput {
+  doctorId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+  reason?: string;
+}
+
+export function apiCreateSlot(input: CreateSlotInput): Promise<{ message: string; slot: Slot }> {
+  return request("/slots", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface UpdateSlotInput {
+  maxPatients?: number;
+  slotDate?: string;
+  startTime?: string;
+  endTime?: string;
+  reason: string;
+}
+
+export function apiUpdateSlot(id: string, input: UpdateSlotInput): Promise<{ message: string; slot: Slot }> {
+  return request(`/slots/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function apiSetSlotDisabled(
+  id: string,
+  enabled: boolean,
+  reason: string,
+): Promise<{ message: string; slot: Slot }> {
+  return request(`/slots/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export interface CreateUnavailabilityResult {
+  message: string;
+  unavailability: DoctorUnavailability;
+  affectedCount: number;
+}
+
+/** The staff-side alias of the doctor's own unavailability list (same route). */
+export function apiDoctorUnavailabilities(
+  doctorId: string,
+  signal?: AbortSignal,
+): Promise<{ unavailabilities: DoctorUnavailability[] }> {
+  return apiMyUnavailabilities(doctorId, signal);
+}
+
+export function apiCreateDoctorUnavailability(
+  input: CreateUnavailabilityInput,
+): Promise<CreateUnavailabilityResult> {
+  return apiCreateUnavailability(input);
 }

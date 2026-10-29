@@ -14,15 +14,15 @@ import { useSession } from "../hooks/useSession";
  * guard on load, so a stale token or an unusual role resolves server-side.
  */
 const ROLE_HOMES: Record<SessionUser["role"], string> = {
-  ADMIN: "/doctor",
-  STAFF: "/doctor",
+  ADMIN: "/staff",
+  STAFF: "/staff",
   DOCTOR: "/doctor",
   PATIENT: "/patient",
 };
 
 function AccountLink({ user }: { user: SessionUser | null }) {
   if (!user) return <Link to="/login">Sign in</Link>;
-  const label = user.role === "PATIENT" || user.role === "DOCTOR" ? "My dashboard" : "My account";
+  const label = user.role === "PATIENT" || user.role === "DOCTOR" ? "My dashboard" : "Front desk";
   return <Link to={ROLE_HOMES[user.role]}>{label}</Link>;
 }
 
