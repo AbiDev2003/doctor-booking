@@ -655,3 +655,125 @@ export interface PatientPayment {
 export function apiMyPayments(signal?: AbortSignal): Promise<{ payments: PatientPayment[] }> {
   return request("/payments/mine", { signal });
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 31 — doctor dashboard: schedule + availability (§28, §11, §12)  */
+/* ------------------------------------------------------------------ */
+
+export type Weekday = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
+
+/** What a template edit's horizon top-up did (server twin: `slotGeneration.service.ts`). */
+export interface MaterializeStats {
+  doctors: number;
+  created: number;
+  skippedExistingDates: number;
+  rejectedWindows: number;
+}
+
+/** One recurring weekly window (server DTO twin: `schemas/schedules.ts`). */
+export interface ScheduleWindow {
+  id: string;
+  doctorId: string;
+  weekday: Weekday;
+  /** Clinic-local `HH:MM`. */
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+}
+
+export function apiMySchedules(
+  doctorId: string,
+  signal?: AbortSignal,
+): Promise<{ schedules: ScheduleWindow[] }> {
+  return request(`/schedules?doctorId=${encodeURIComponent(doctorId)}`, { signal });
+}
+
+export interface CreateScheduleWindowInput {
+  doctorId: string;
+  weekday: Weekday;
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+  /** Optional on create only (§20). */
+  reason?: string;
+}
+
+export interface ScheduleMutationResult {
+  message: string;
+  schedule: ScheduleWindow;
+  materialized: MaterializeStats | null;
+}
+
+export function apiCreateScheduleWindow(input: CreateScheduleWindowInput): Promise<ScheduleMutationResult> {
+  return request("/schedules", { method: "POST", body: JSON.stringify(input) });
+}
+
+/** A DOCTOR may move weekday/times but never `maxPatients` (server 403, §8.3). */
+export interface UpdateScheduleWindowInput {
+  weekday?: Weekday;
+  startTime?: string;
+  endTime?: string;
+  /** Mandatory on every edit (§20). */
+  reason: string;
+}
+
+export function apiUpdateScheduleWindow(
+  id: string,
+  patch: UpdateScheduleWindowInput,
+): Promise<ScheduleMutationResult> {
+  return request(`/schedules/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function apiDeleteScheduleWindow(id: string, reason: string): Promise<ScheduleMutationResult> {
+  return request(`/schedules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/** One disruption window (server DTO twin: `schemas/unavailability.ts`). */
+export interface DoctorUnavailability {
+  id: string;
+  doctorId: string;
+  createdById: string;
+  /** Clinic-local `YYYY-MM-DD` of the window's start. */
+  date: string;
+  startTime: string;
+  endTime: string;
+  startAt: string;
+  endAt: string;
+  reason: string;
+  createdAt: string;
+}
+
+export function apiMyUnavailabilities(
+  doctorId: string,
+  signal?: AbortSignal,
+): Promise<{ unavailabilities: DoctorUnavailability[] }> {
+  return request(`/unavailabilities?doctorId=${encodeURIComponent(doctorId)}`, { signal });
+}
+
+export interface CreateUnavailabilityInput {
+  doctorId: string;
+  /** Clinic-local `YYYY-MM-DD`. */
+  date: string;
+  startTime: string;
+  endTime: string;
+  reason: string;
+}
+
+export function apiCreateUnavailability(input: CreateUnavailabilityInput): Promise<{
+  message: string;
+  unavailability: DoctorUnavailability;
+  /** CONFIRMED bookings the §12 cascade flagged. */
+  affectedCount: number;
+}> {
+  return request("/unavailabilities", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function apiRemoveUnavailability(id: string, reason: string): Promise<{ message: string }> {
+  return request(`/unavailabilities/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ reason }),
+  });
+}
