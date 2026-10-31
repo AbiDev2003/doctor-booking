@@ -20,6 +20,7 @@ import {
 import { createPaymentOrder } from "../services/payments/paymentOrder.service.js";
 import { convertPayment } from "../services/payments/paymentConvert.service.js";
 import { collectOfflinePayment, voidOfflinePayment } from "../services/payments/offlinePayment.service.js";
+import { listPatientPayments } from "../services/payments/patientPayments.service.js";
 import {
   completeDeskHandBack,
   kickRefundWorker,
@@ -85,6 +86,16 @@ function actorOf(req: Request): ActorContext {
 function requestMeta(req: Request, res: Response): { ip: string | null; requestId: string } {
   return { ip: getClientIp(req), requestId: getRequestId(res) };
 }
+
+/** GET /mine — the signed-in patient's own payments and refunds (Day 30, §27). */
+paymentsRouter.get("/mine", patientOnly, async (req, res, next) => {
+  try {
+    const result = await listPatientPayments({ patientId: authenticatedUser(req).id });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
 
 /** POST /offline/collect — record money taken at the desk for an existing booking. */
 paymentsRouter.post("/offline/collect", staffOnly, async (req, res, next) => {

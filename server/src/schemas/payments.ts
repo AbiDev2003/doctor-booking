@@ -116,3 +116,37 @@ export interface DeskHandBackDto {
   readonly reason: string;
   readonly createdAt: string;
 }
+
+/**
+ * Day 30 — the patient's own payment history (§27 "payment information").
+ * Payments are scoped by the patient id from `req.user`; a hold order that never
+ * produced an appointment is deliberately absent (it is not a booking and has no
+ * slot to show), leaving receivables, online payments and their refunds.
+ */
+export interface PatientRefundDto {
+  readonly id: string;
+  readonly kind: $Enums.RefundKind;
+  readonly amountPaise: number;
+  readonly status: $Enums.RefundStatus;
+  readonly method: $Enums.PaymentMethod | null;
+  readonly reason: string;
+  readonly createdAt: string;
+}
+
+export interface PatientPaymentDto {
+  readonly id: string;
+  readonly appointmentId: string | null;
+  readonly amountPaise: number;
+  readonly currency: string;
+  readonly status: $Enums.PaymentStatus;
+  readonly method: $Enums.PaymentMethod | null;
+  readonly paidAt: string | null;
+  readonly createdAt: string;
+  readonly doctorName: string | null;
+  /** Clinic-local `YYYY-MM-DD`. */
+  readonly slotDate: string | null;
+  /** Clinic-local `HH:MM`. */
+  readonly startTime: string | null;
+  readonly endTime: string | null;
+  readonly refunds: readonly PatientRefundDto[];
+}

@@ -14,15 +14,16 @@ import { useSession } from "../hooks/useSession";
  * guard on load, so a stale token or an unusual role resolves server-side.
  */
 const ROLE_HOMES: Record<SessionUser["role"], string> = {
-  ADMIN: "/doctor",
-  STAFF: "/doctor",
+  ADMIN: "/staff",
+  STAFF: "/staff",
   DOCTOR: "/doctor",
-  PATIENT: "/profile",
+  PATIENT: "/patient",
 };
 
 function AccountLink({ user }: { user: SessionUser | null }) {
   if (!user) return <Link to="/login">Sign in</Link>;
-  return <Link to={ROLE_HOMES[user.role]}>{user.role.toLowerCase() === "doctor" ? "My dashboard" : "My account"}</Link>;
+  const label = user.role === "PATIENT" || user.role === "DOCTOR" ? "My dashboard" : "Front desk";
+  return <Link to={ROLE_HOMES[user.role]}>{label}</Link>;
 }
 
 export default function PublicLayout() {
@@ -30,6 +31,12 @@ export default function PublicLayout() {
 
   return (
     <>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow"
+      >
+        Skip to content
+      </a>
       <header className="site-nav">
         <Link to="/" className="site-nav__brand">
           Clinic
@@ -44,7 +51,7 @@ export default function PublicLayout() {
         </nav>
       </header>
 
-      <main className="page">
+      <main id="main-content" className="page">
         <Outlet />
       </main>
 

@@ -79,3 +79,64 @@ export interface AppointmentDto {
   readonly bookingTime: string;
   readonly createdAt: string;
 }
+
+/**
+ * Day 30 — the patient dashboard's read surface. A patient sees only their own
+ * rows; `scope` is a presentation filter over the same query (the server still
+ * sorts and decides what "upcoming" means against the slot's UTC instant, not
+ * the browser's clock).
+ */
+export const listAppointmentsQuerySchema = z.object({
+  scope: z.enum(["upcoming", "past", "all"]).default("all"),
+});
+
+export type ListAppointmentsScope = z.infer<typeof listAppointmentsQuerySchema>["scope"];
+
+/**
+ * The appointment a patient dashboard renders. It extends the booking DTO with
+ * the slot's absolute instants (so the client can sort across timezones) and the
+ * two eligibility flags the actions depend on — computed server-side because
+ * only the server knows the clinic's cutoff, the appointment status and whether
+ * the slot was clinic-caused.
+ */
+export interface PatientAppointmentDto extends AppointmentDto {
+  /** UTC instant of the slot's start. */
+  readonly slotStartsAt: string;
+  /** UTC instant of the slot's end. */
+  readonly slotEndsAt: string;
+  /** True when the §12 disruption marker is set (waives the cutoff, §8.5). */
+  readonly clinicCaused: boolean;
+  /** CONFIRMED + before the §8.5 cutoff (+ clinic-caused waiver). */
+  readonly canCancel: boolean;
+  /** CONFIRMED + the same cutoff window (a patient may only move to the same doctor, §14). */
+  readonly canReschedule: boolean;
+  /** Human reason when `canCancel` is false, null otherwise. */
+  readonly cancelBlockedReason: string | null;
+}
+
+/**
+ * The cancellation confirmation's server-side answer: whether the action is
+ * allowed now and exactly what money follows. The client must not re-derive
+ * this from status + dates (§33/§17), or a copy drift could promise a refund the
+ * server will not make.
+ */
+export interface CancellationPreviewDto {
+  readonly appointmentId: string;
+  readonly canCancel: boolean;
+  readonly cancelBlockedReason: string | null;
+  readonly clinicCaused: boolean;
+  readonly slotStartsAt: string;
+  /** `slotStartsAt − cancelCutoffMinutes`; the clinic-caused waiver still starts at the slot. */
+  readonly cutoffAt: string | null;
+  /** The latest PAID payment, or a PENDING pay-at-clinic receivable. */
+  readonly payment: {
+    readonly id: string;
+    readonly amountPaise: number;
+    readonly status: $Enums.PaymentStatus;
+    readonly method: $Enums.PaymentMethod | null;
+  } | null;
+  /** Money the patient gets back; 0 for a free, unpaid or settled-by-void booking. */
+  readonly refundAmountPaise: number;
+  /** `automatic` = gateway/worker settles; `desk` = a human returns cash/UPI; `none` = nothing to return. */
+  readonly refundSettlement: "automatic" | "desk" | "none";
+}

@@ -10,10 +10,19 @@ import {
   appointmentIdParamSchema,
   cancelAppointmentSchema,
   createBookingSchema,
+  listAppointmentsQuerySchema,
   rejectAppointmentSchema,
   rescheduleAppointmentSchema,
 } from "../schemas/appointments.js";
+import { createDeskBookingSchema, deskQueueQuerySchema } from "../schemas/staff.js";
 import { bookAppointment } from "../services/appointments/booking.service.js";
+import { bookAtDesk } from "../services/staff/deskBooking.service.js";
+import { listDeskQueue } from "../services/staff/staffDesk.service.js";
+import {
+  getPatientAppointment,
+  listPatientAppointments,
+  previewCancellation,
+} from "../services/appointments/patientAppointments.service.js";
 import {
   arriveAppointment,
   cancelAppointment,
@@ -83,6 +92,87 @@ function actorOf(req: Request): ActorContext {
 function requestMeta(req: Request, res: Response): { ip: string | null; requestId: string } {
   return { ip: getClientIp(req), requestId: getRequestId(res) };
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 30 — the patient dashboard's read surface                       */
+/* ------------------------------------------------------------------ */
+
+/** GET / — the signed-in patient's own appointments (`?scope=upcoming|past|all`). */
+appointmentsRouter.get("/", patientOnly, async (req, res, next) => {
+  try {
+    const { scope } = listAppointmentsQuerySchema.parse(req.query);
+    const result = await listPatientAppointments({ patientId: authenticatedUser(req).id, scope });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Day 32 — the front desk's read + walk-in surface                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * GET /desk — the whole clinic day: every doctor's slots and their queues,
+ * with the server-computed action flags. Registered before `/:id` so the
+ * literal path is never parsed as an appointment id.
+ */
+appointmentsRouter.get("/desk", staffOnly, async (req, res, next) => {
+  try {
+    const { date } = deskQueueQuerySchema.parse(req.query);
+    res.json({ queue: await listDeskQueue(date) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /desk — create-or-find the patient by phone, then book the slot. The
+ * body carries the slot and the identity; fee, doctor, capacity and status are
+ * all derived inside the transaction (§16/§29).
+ */
+appointmentsRouter.post("/desk", staffOnly, async (req, res, next) => {
+  try {
+    const parsed = createDeskBookingSchema.parse(req.body);
+    const result = await bookAtDesk({
+      actor: actorOf(req),
+      slotId: parsed.slotId,
+      patient: parsed.patient,
+      ...requestMeta(req, res),
+    });
+    res.status(201).json({
+      message: result.createdPatient ? "Walk-in patient created and booked." : "Walk-in booking created.",
+      ...result,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /:id — one of the patient's own appointments (deep link on the dashboard). */
+appointmentsRouter.get("/:id", patientOnly, async (req, res, next) => {
+  try {
+    const { id } = appointmentIdParamSchema.parse(req.params);
+    const appointment = await getPatientAppointment({ appointmentId: id, patientId: authenticatedUser(req).id });
+    res.json({ appointment });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /:id/refund-preview — the cancel dialog's server-side answer (§17).
+ * Writes nothing; the cancel route remains the only mutation.
+ */
+appointmentsRouter.get("/:id/refund-preview", patientOnly, async (req, res, next) => {
+  try {
+    const { id } = appointmentIdParamSchema.parse(req.params);
+    const preview = await previewCancellation({ appointmentId: id, patientId: authenticatedUser(req).id });
+    res.json({ preview });
+  } catch (err) {
+    next(err);
+  }
+});
 
 appointmentsRouter.post("/", patientOnly, async (req, res, next) => {
   try {

@@ -1,13 +1,21 @@
-import { useState } from "react";
-import type { FormEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSession } from "../../hooks/useSession";
-import { apiGetDoctor, apiUpdateDoctor, ApiError } from "../../lib/api";
-
-type FieldErrors = Record<string, string>;
+import { useEffect, useState } from "react"
+import type { UseFormRegisterReturn } from "react-hook-form"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { CheckCircle2 } from "lucide-react"
+import { doctorProfileSchema, type DoctorProfileInputShape } from "@shared/doctors"
+import { useSession } from "../../hooks/useSession"
+import { apiGetDoctor, apiUpdateDoctor, ApiError } from "../../lib/api"
+import { applyApiErrors } from "../../lib/formErrors"
+import { PageError, PageLoading } from "@/components/async-state"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 /**
- * §5.2's self-edit (Day 14): the descriptive fields plus the credentials the
+ * §5.2's self-edit (Day 31): the descriptive fields plus the credentials the
  * clinic verifies. The server owns the rules — a credential edit forces
  * PENDING_VERIFICATION (hidden from the public list until re-verified), a
  * descriptive-only edit changes nothing, and the fee is absent here because a
@@ -15,160 +23,192 @@ type FieldErrors = Record<string, string>;
  * offers the field). Everything the page shows about status comes from the
  * UPDATE response, never from local imagination.
  */
-const INITIAL = {
+const INITIAL: DoctorProfileInputShape = {
   fullName: "",
   qualification: "",
   licenseNumber: "",
   experience: "",
   clinicAssociation: "",
   specialization: "",
-};
-
-const FIELD_LABELS: Record<"credential" | "descriptive", string> = {
-  credential: "Credentials — verified on the public listing",
-  descriptive: "Descriptive details",
-};
+}
 
 export default function ProfileForm() {
-  const { user } = useSession();
-  const queryClient = useQueryClient();
-  const { data: doctor } = useQuery({
+  const { user } = useSession()
+  const queryClient = useQueryClient()
+  const doctor = useQuery({
     queryKey: ["doctor", user?.id],
     queryFn: () => apiGetDoctor(user!.id).then((r) => r.doctor),
     enabled: user !== null,
-  });
+  })
 
-  const [values, setValues] = useState(INITIAL);
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
-  const [formError, setFormError] = useState<string | null>(null);
-  const [banner, setBanner] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null)
+  const [banner, setBanner] = useState<string | null>(null)
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<DoctorProfileInputShape>({
+    resolver: zodResolver(doctorProfileSchema),
+    defaultValues: INITIAL,
+  })
 
-  // Seed the form once the row arrives, and only into an untouched form.
-  if (doctor && loadedFor !== doctor.id) {
-    setLoadedFor(doctor.id);
-    setValues({
-      fullName: doctor.fullName,
-      qualification: doctor.qualification ?? "",
-      licenseNumber: doctor.licenseNumber ?? "",
-      experience: doctor.experience ?? "",
-      clinicAssociation: doctor.clinicAssociation ?? "",
-      specialization: doctor.specialization ?? "",
-    });
-  }
+  useEffect(() => {
+    if (doctor.data === undefined) return
+    reset({
+      fullName: doctor.data.fullName,
+      qualification: doctor.data.qualification ?? "",
+      licenseNumber: doctor.data.licenseNumber ?? "",
+      experience: doctor.data.experience ?? "",
+      clinicAssociation: doctor.data.clinicAssociation ?? "",
+      specialization: doctor.data.specialization ?? "",
+    })
+  }, [doctor.data, reset])
 
   const mutation = useMutation({
-    mutationFn: () => apiUpdateDoctor(user!.id, values),
+    mutationFn: (values: DoctorProfileInputShape) => apiUpdateDoctor(user!.id, values),
     onSuccess: (result) => {
       setBanner(
         result.verificationStatus === "PENDING_VERIFICATION"
           ? "A credential changed. Your listing is hidden from the public site until the clinic re-verifies you (§5.2)."
           : "Profile updated.",
-      );
-      setFormError(null);
-      setFieldErrors({});
+      )
+      setFormError(null)
       // The public directory (and the Overview tab) reads this same row; a
       // changed credential can silently unmount a doctor from §26.
-      void queryClient.invalidateQueries({ queryKey: ["public", "doctor"] });
-      void queryClient.invalidateQueries({ queryKey: ["public", "doctors"] });
-      void queryClient.invalidateQueries({ queryKey: ["doctor", user!.id] });
+      void queryClient.invalidateQueries({ queryKey: ["public", "doctor"] })
+      void queryClient.invalidateQueries({ queryKey: ["public", "doctors"] })
+      void queryClient.invalidateQueries({ queryKey: ["doctor", user!.id] })
+      void queryClient.invalidateQueries({ queryKey: ["admin"] })
     },
-  });
+  })
 
-  function update(name: keyof typeof INITIAL, value: string) {
-    setValues((prev) => ({ ...prev, [name]: value }));
-    setFieldErrors((prev) => {
-      if (!(name in prev)) return prev;
-      const next = { ...prev };
-      delete next[name];
-      return next;
-    });
+  if (doctor.isPending || !user) return <PageLoading label="Loading your profile…" />
+
+  if (doctor.isError || doctor.data === undefined) {
+    return (
+      <PageError
+        title="Your profile could not be loaded"
+        message={doctor.error instanceof ApiError ? doctor.error.message : undefined}
+        onRetry={() => void doctor.refetch()}
+      />
+    )
   }
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    setFormError(null);
-    setBanner(null);
-    setFieldErrors({});
+  const onSubmit = handleSubmit(async (values) => {
+    setFormError(null)
+    setBanner(null)
     try {
-      await mutation.mutateAsync();
+      await mutation.mutateAsync(values)
     } catch (err) {
-      if (err instanceof ApiError) {
-        setFieldErrors(err.byField());
-        if (err.fields.length === 0) setFormError(err.message);
-      } else {
-        setFormError("Something went wrong. Please try again.");
-      }
+      setFormError(applyApiErrors(err, setError) ?? null)
     }
-  }
+  })
 
   return (
-    <div>
-      <h1>Your profile</h1>
-      <p className="hint">
-        {doctor ? `Verified as a doctor at this clinic.` : "Loading…"}
-      </p>
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Your profile</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Verified as a doctor at this clinic.</p>
+      </div>
 
-      {banner && (
-        <p className="banner banner-success" role="status">
-          {banner}
-        </p>
+      {banner !== null && (
+        <Alert>
+          <CheckCircle2 />
+          <AlertTitle>Saved</AlertTitle>
+          <AlertDescription>{banner}</AlertDescription>
+        </Alert>
       )}
 
-      <form onSubmit={onSubmit} noValidate>
-        <fieldset className="radio-row">
-          <legend>{FIELD_LABELS.descriptive}</legend>
-          <TextInput label="Full name" name="fullName" value={values.fullName} error={fieldErrors.fullName} onChange={update} />
-          <TextInput label="Specialization" name="specialization" value={values.specialization} error={fieldErrors.specialization} onChange={update} />
-          <TextInput label="Experience" name="experience" value={values.experience} error={fieldErrors.experience} onChange={update} />
-          <TextInput label="Practice / clinic association" name="clinicAssociation" value={values.clinicAssociation} error={fieldErrors.clinicAssociation} onChange={update} />
+      <form onSubmit={onSubmit} noValidate className="space-y-6">
+        <fieldset className="space-y-4 rounded-xl border bg-card p-6">
+          <legend className="px-1 text-sm font-semibold">Descriptive details</legend>
+          <TextInput
+            label="Full name"
+            name="fullName"
+            error={errors.fullName?.message}
+            registration={register("fullName")}
+          />
+          <TextInput
+            label="Specialization"
+            name="specialization"
+            error={errors.specialization?.message}
+            registration={register("specialization")}
+          />
+          <TextInput
+            label="Experience"
+            name="experience"
+            error={errors.experience?.message}
+            registration={register("experience")}
+          />
+          <TextInput
+            label="Practice / clinic association"
+            name="clinicAssociation"
+            error={errors.clinicAssociation?.message}
+            registration={register("clinicAssociation")}
+          />
         </fieldset>
 
-        <fieldset className="radio-row">
-          <legend>{FIELD_LABELS.credential}</legend>
-          <p className="hint">Editing a credential puts your listing back into re-verification.</p>
-          <TextInput label="Qualification" name="qualification" value={values.qualification} error={fieldErrors.qualification} onChange={update} />
-          <TextInput label="License number" name="licenseNumber" value={values.licenseNumber} error={fieldErrors.licenseNumber} onChange={update} />
+        <fieldset className="space-y-4 rounded-xl border bg-card p-6">
+          <legend className="px-1 text-sm font-semibold">Credentials — verified on the public listing</legend>
+          <p className="text-sm text-muted-foreground">Editing a credential puts your listing back into re-verification.</p>
+          <TextInput
+            label="Qualification"
+            name="qualification"
+            error={errors.qualification?.message}
+            registration={register("qualification")}
+          />
+          <TextInput
+            label="License number"
+            name="licenseNumber"
+            error={errors.licenseNumber?.message}
+            registration={register("licenseNumber")}
+          />
         </fieldset>
 
-        {formError && (
-          <p className="form-error" role="alert">
-            {formError}
-          </p>
+        {formError !== null && (
+          <Alert variant="destructive">
+            <AlertTitle>Could not save</AlertTitle>
+            <AlertDescription>{formError}</AlertDescription>
+          </Alert>
         )}
 
-        <button type="submit" disabled={mutation.isPending}>
+        <Button type="submit" disabled={isSubmitting || mutation.isPending}>
           {mutation.isPending ? "Saving…" : "Save changes"}
-        </button>
+        </Button>
       </form>
     </div>
-  );
+  )
 }
 
 function TextInput({
   label,
   name,
-  value,
   error,
-  onChange,
+  registration,
 }: {
-  label: string;
-  name: string;
-  value: string;
-  error?: string;
-  onChange: (name: keyof typeof INITIAL, value: string) => void;
+  label: string
+  name: keyof DoctorProfileInputShape
+  error: string | undefined
+  registration: UseFormRegisterReturn
 }) {
+  const errorId = `${name}-error`
   return (
-    <>
-      <label htmlFor={name}>{label}</label>
-      <input
+    <div className="space-y-1">
+      <Label htmlFor={name}>{label}</Label>
+      <Input
         id={name}
-        name={name}
         type="text"
-        value={value}
-        onChange={(e) => onChange(name as keyof typeof INITIAL, e.target.value)}
+        aria-invalid={error !== undefined}
+        aria-describedby={error !== undefined ? errorId : undefined}
+        {...registration}
       />
-      {error && <span className="field-error">{error}</span>}
-    </>
-  );
+      {error !== undefined && (
+        <p id={errorId} className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  )
 }

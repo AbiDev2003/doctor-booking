@@ -560,3 +560,829 @@ export interface PaymentVerifyPayload {
 export function apiVerifyPayment(payload: PaymentVerifyPayload): Promise<{ message: string; appointment: Appointment }> {
   return request("/payments/verify", { method: "POST", body: JSON.stringify(payload) });
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 30 — patient dashboard reads + actions (§27)                    */
+/* ------------------------------------------------------------------ */
+
+/** The patient's appointment plus the server-decided action flags (server twin). */
+export interface PatientAppointment extends Appointment {
+  slotStartsAt: string;
+  slotEndsAt: string;
+  clinicCaused: boolean;
+  canCancel: boolean;
+  canReschedule: boolean;
+  cancelBlockedReason: string | null;
+}
+
+export type AppointmentScope = "upcoming" | "past" | "all";
+
+export function apiMyAppointments(
+  scope: AppointmentScope = "all",
+  signal?: AbortSignal,
+): Promise<{ appointments: PatientAppointment[] }> {
+  return request(`/appointments?scope=${encodeURIComponent(scope)}`, { signal });
+}
+
+export function apiMyAppointment(id: string, signal?: AbortSignal): Promise<{ appointment: PatientAppointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}`, { signal });
+}
+
+export interface CancellationPreview {
+  appointmentId: string;
+  canCancel: boolean;
+  cancelBlockedReason: string | null;
+  clinicCaused: boolean;
+  slotStartsAt: string;
+  cutoffAt: string | null;
+  payment: {
+    id: string;
+    amountPaise: number;
+    status: "PENDING" | "PAID" | "FAILED" | "VOIDED";
+    method: "CASH" | "CARD" | "UPI" | null;
+  } | null;
+  refundAmountPaise: number;
+  refundSettlement: "automatic" | "desk" | "none";
+}
+
+/** What cancelling would do (§17); writes nothing. */
+export function apiCancellationPreview(id: string, signal?: AbortSignal): Promise<{ preview: CancellationPreview }> {
+  return request(`/appointments/${encodeURIComponent(id)}/refund-preview`, { signal });
+}
+
+/** Cancels the patient's own booking; the server re-checks the cutoff and refunds (§8.5/§17). */
+export function apiCancelAppointment(
+  id: string,
+  reason?: string,
+): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+    body: JSON.stringify(reason !== undefined && reason !== "" ? { reason } : {}),
+  });
+}
+
+/** Moves the same booking to a new slot of the SAME doctor (§14). */
+export function apiRescheduleAppointment(
+  id: string,
+  slotId: string,
+  reason?: string,
+): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/reschedule`, {
+    method: "POST",
+    body: JSON.stringify({ slotId, ...(reason !== undefined && reason !== "" && { reason }) }),
+  });
+}
+
+export interface PatientRefund {
+  id: string;
+  kind: string;
+  amountPaise: number;
+  status: "PENDING" | "SUCCESS" | "FAILED";
+  method: "CASH" | "CARD" | "UPI" | null;
+  reason: string;
+  createdAt: string;
+}
+
+export interface PatientPayment {
+  id: string;
+  appointmentId: string | null;
+  amountPaise: number;
+  currency: string;
+  status: "PENDING" | "PAID" | "FAILED" | "VOIDED";
+  method: "CASH" | "CARD" | "UPI" | null;
+  paidAt: string | null;
+  createdAt: string;
+  doctorName: string | null;
+  slotDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  refunds: PatientRefund[];
+}
+
+export function apiMyPayments(signal?: AbortSignal): Promise<{ payments: PatientPayment[] }> {
+  return request("/payments/mine", { signal });
+}
+
+/* ------------------------------------------------------------------ */
+/* Day 31 — doctor dashboard: schedule + availability (§28, §11, §12)  */
+/* ------------------------------------------------------------------ */
+
+export type Weekday = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
+
+/** What a template edit's horizon top-up did (server twin: `slotGeneration.service.ts`). */
+export interface MaterializeStats {
+  doctors: number;
+  created: number;
+  skippedExistingDates: number;
+  rejectedWindows: number;
+}
+
+/** One recurring weekly window (server DTO twin: `schemas/schedules.ts`). */
+export interface ScheduleWindow {
+  id: string;
+  doctorId: string;
+  weekday: Weekday;
+  /** Clinic-local `HH:MM`. */
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+}
+
+export function apiMySchedules(
+  doctorId: string,
+  signal?: AbortSignal,
+): Promise<{ schedules: ScheduleWindow[] }> {
+  return request(`/schedules?doctorId=${encodeURIComponent(doctorId)}`, { signal });
+}
+
+export interface CreateScheduleWindowInput {
+  doctorId: string;
+  weekday: Weekday;
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+  /** Optional on create only (§20). */
+  reason?: string;
+}
+
+export interface ScheduleMutationResult {
+  message: string;
+  schedule: ScheduleWindow;
+  materialized: MaterializeStats | null;
+}
+
+export function apiCreateScheduleWindow(input: CreateScheduleWindowInput): Promise<ScheduleMutationResult> {
+  return request("/schedules", { method: "POST", body: JSON.stringify(input) });
+}
+
+/** A DOCTOR may move weekday/times but never `maxPatients` (server 403, §8.3). */
+export interface UpdateScheduleWindowInput {
+  weekday?: Weekday;
+  startTime?: string;
+  endTime?: string;
+  /** Mandatory on every edit (§20). */
+  reason: string;
+}
+
+export function apiUpdateScheduleWindow(
+  id: string,
+  patch: UpdateScheduleWindowInput,
+): Promise<ScheduleMutationResult> {
+  return request(`/schedules/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function apiDeleteScheduleWindow(id: string, reason: string): Promise<ScheduleMutationResult> {
+  return request(`/schedules/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/** One disruption window (server DTO twin: `schemas/unavailability.ts`). */
+export interface DoctorUnavailability {
+  id: string;
+  doctorId: string;
+  createdById: string;
+  /** Clinic-local `YYYY-MM-DD` of the window's start. */
+  date: string;
+  startTime: string;
+  endTime: string;
+  startAt: string;
+  endAt: string;
+  reason: string;
+  createdAt: string;
+}
+
+export function apiMyUnavailabilities(
+  doctorId: string,
+  signal?: AbortSignal,
+): Promise<{ unavailabilities: DoctorUnavailability[] }> {
+  return request(`/unavailabilities?doctorId=${encodeURIComponent(doctorId)}`, { signal });
+}
+
+export interface CreateUnavailabilityInput {
+  doctorId: string;
+  /** Clinic-local `YYYY-MM-DD`. */
+  date: string;
+  startTime: string;
+  endTime: string;
+  reason: string;
+}
+
+export function apiCreateUnavailability(input: CreateUnavailabilityInput): Promise<{
+  message: string;
+  unavailability: DoctorUnavailability;
+  /** CONFIRMED bookings the §12 cascade flagged. */
+  affectedCount: number;
+}> {
+  return request("/unavailabilities", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function apiRemoveUnavailability(id: string, reason: string): Promise<{ message: string }> {
+  return request(`/unavailabilities/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Day 32 — staff dashboard: desk, walk-ins, history, money (§16/§29)  */
+/* ------------------------------------------------------------------ */
+
+/** The identity the desk types at the counter (server DTO twin). */
+export interface DeskPatient {
+  id: string;
+  fullName: string;
+  phone: string;
+  email: string | null;
+  isProvisional: boolean;
+}
+
+export interface DeskPaymentSummary {
+  status: "PENDING" | "PAID" | "NONE";
+  outstandingPaise: number;
+  paidPaise: number;
+  method: "CASH" | "CARD" | "UPI" | null;
+}
+
+/** The server's answer to "which attendance verbs are open right now". */
+export interface DeskAppointmentActions {
+  canArrive: boolean;
+  canComplete: boolean;
+  canNoShow: boolean;
+  canReject: boolean;
+  canCancel: boolean;
+  canReschedule: boolean;
+  arriveBlockedReason: string | null;
+  completeBlockedReason: string | null;
+  noShowBlockedReason: string | null;
+  cancelBlockedReason: string | null;
+  rescheduleBlockedReason: string | null;
+}
+
+export interface DeskAppointment extends Appointment, DeskAppointmentActions {
+  patient: DeskPatient;
+  /** UTC instants, so the client can reason about "now" without the wall clock. */
+  slotStartsAt: string;
+  slotEndsAt: string;
+  payment: DeskPaymentSummary;
+}
+
+export interface DeskSlotQueue {
+  slotId: string;
+  doctorId: string;
+  doctorName: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  startAt: string;
+  endAt: string;
+  maxPatients: number;
+  bookedCount: number;
+  heldCount: number;
+  isDisabled: boolean;
+  appointments: DeskAppointment[];
+}
+
+export interface DeskQueue {
+  date: string;
+  slots: DeskSlotQueue[];
+}
+
+/** GET /appointments/desk — the whole clinic day, every doctor. */
+export function apiDeskQueue(date?: string, signal?: AbortSignal): Promise<{ queue: DeskQueue }> {
+  const query = date === undefined ? "" : `?date=${encodeURIComponent(date)}`;
+  return request(`/appointments/desk${query}`, { signal });
+}
+
+export interface CreateDeskBookingInput {
+  slotId: string;
+  patient: {
+    fullName: string;
+    phone: string;
+    email?: string;
+  };
+}
+
+export interface DeskBookingResult {
+  message: string;
+  appointment: Appointment;
+  patient: DeskPatient;
+  createdPatient: boolean;
+}
+
+/** POST /appointments/desk — create-or-find the patient, then claim a seat. */
+export function apiCreateDeskBooking(input: CreateDeskBookingInput): Promise<DeskBookingResult> {
+  return request("/appointments/desk", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface PatientSummary extends DeskPatient {
+  isDeactivated: boolean;
+  createdAt: string;
+}
+
+export interface VisitHistory {
+  found: boolean;
+  patient: PatientSummary | null;
+  returning: boolean;
+  completedCount: number;
+  noShowCount: number;
+  upcomingCount: number;
+  /** Clinic-local `YYYY-MM-DD` of the most recent COMPLETED visit. */
+  lastVisitDate: string | null;
+  doctorsSeen: string[];
+  upcomingAppointments: DeskAppointment[];
+}
+
+/** GET /patients/visit-history — §16's returning-patient lookup. */
+export function apiVisitHistory(phone: string, signal?: AbortSignal): Promise<{ history: VisitHistory }> {
+  return request(`/patients/visit-history?phone=${encodeURIComponent(phone)}`, { signal });
+}
+
+/** POST /patients/:id/email — attach or correct a provisional walk-in's email. */
+export function apiAttachPatientEmail(
+  patientId: string,
+  email: string,
+): Promise<{ message: string; patient: DeskPatient }> {
+  return request(`/patients/${encodeURIComponent(patientId)}/email`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
+export function apiArriveAppointment(id: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/arrive`, { method: "POST" });
+}
+
+export function apiCompleteAppointment(id: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/complete`, { method: "POST" });
+}
+
+export function apiMarkNoShow(id: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/no-show`, { method: "POST" });
+}
+
+export function apiRejectAppointment(id: string, reason: string): Promise<{ message: string; appointment: Appointment }> {
+  return request(`/appointments/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export interface OfflinePayment {
+  paymentId: string;
+  appointmentId: string;
+  patientId: string;
+  amountPaise: number;
+  currency: string;
+  status: "PENDING" | "PAID" | "FAILED" | "VOIDED";
+  method: "CASH" | "CARD" | "UPI" | null;
+  paidAt: string | null;
+  collectedById: string | null;
+  collectedAt: string | null;
+}
+
+export function apiCollectOfflinePayment(input: {
+  appointmentId: string;
+  method: "CASH" | "CARD" | "UPI";
+  amountPaise?: number;
+}): Promise<{ message: string; payment: OfflinePayment }> {
+  return request("/payments/offline/collect", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function apiVoidOfflinePayment(input: {
+  appointmentId: string;
+  reason: string;
+}): Promise<{ message: string; payment: OfflinePayment }> {
+  return request("/payments/offline/void", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface DeskHandBack {
+  refundId: string;
+  paymentId: string;
+  appointmentId: string | null;
+  patientId: string;
+  patientName: string;
+  amountPaise: number;
+  kind: "RESCHEDULE_DELTA" | "CANCELLATION" | "CLINIC_CAUSED" | "EXPIRED_HOLD" | "CONVERSION_FAILED" | "DESK_HAND_BACK";
+  reason: string;
+  createdAt: string;
+}
+
+export function apiDeskHandBacks(signal?: AbortSignal): Promise<{ handBacks: DeskHandBack[] }> {
+  return request("/payments/refunds/desk-hand-backs", { signal });
+}
+
+export function apiCompleteHandBack(
+  refundId: string,
+  method: "CASH" | "UPI",
+): Promise<{ message: string; refund: unknown }> {
+  return request(`/payments/refunds/${encodeURIComponent(refundId)}/hand-back`, {
+    method: "POST",
+    body: JSON.stringify({ method }),
+  });
+}
+
+/** The staff roster read; the same DTO the doctor's own profile endpoint uses. */
+export function apiStaffDoctors(signal?: AbortSignal): Promise<{ doctors: DoctorDetail[] }> {
+  return request("/doctors", { signal });
+}
+
+export interface Slot {
+  id: string;
+  doctorId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+  bookedCount: number;
+  heldCount: number;
+  isDisabled: boolean;
+  disabledReason: string | null;
+  startAt: string;
+  endAt: string;
+}
+
+export function apiSlots(
+  doctorId: string,
+  slotDate?: string,
+  signal?: AbortSignal,
+): Promise<{ slots: Slot[] }> {
+  const date = slotDate === undefined ? "" : `&slotDate=${encodeURIComponent(slotDate)}`;
+  return request(`/slots?doctorId=${encodeURIComponent(doctorId)}${date}`, { signal });
+}
+
+export interface CreateSlotInput {
+  doctorId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  maxPatients: number;
+  reason?: string;
+}
+
+export function apiCreateSlot(input: CreateSlotInput): Promise<{ message: string; slot: Slot }> {
+  return request("/slots", { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface UpdateSlotInput {
+  maxPatients?: number;
+  slotDate?: string;
+  startTime?: string;
+  endTime?: string;
+  reason: string;
+}
+
+export function apiUpdateSlot(id: string, input: UpdateSlotInput): Promise<{ message: string; slot: Slot }> {
+  return request(`/slots/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function apiSetSlotDisabled(
+  id: string,
+  enabled: boolean,
+  reason: string,
+): Promise<{ message: string; slot: Slot }> {
+  return request(`/slots/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export interface CreateUnavailabilityResult {
+  message: string;
+  unavailability: DoctorUnavailability;
+  affectedCount: number;
+}
+
+/** The staff-side alias of the doctor's own unavailability list (same route). */
+export function apiDoctorUnavailabilities(
+  doctorId: string,
+  signal?: AbortSignal,
+): Promise<{ unavailabilities: DoctorUnavailability[] }> {
+  return apiMyUnavailabilities(doctorId, signal);
+}
+
+export function apiCreateDoctorUnavailability(
+  input: CreateUnavailabilityInput,
+): Promise<CreateUnavailabilityResult> {
+  return apiCreateUnavailability(input);
+}
+
+/* ------------------------------------------------------------------ */
+/* Day 33 — admin dashboard: roster, money, audit, settings            */
+/* ------------------------------------------------------------------ */
+
+export interface ClinicSettings {
+  id: string
+  name: string
+  timezone: string
+  currency: string
+  defaultConsultationFee: number
+  bookingHorizonDays: number
+  cancelCutoffMinutes: number
+  holdDurationMinutes: number
+  minLeadMinutes: number
+  reminderLeadMinutes: number
+  maxActiveBookingsPerPatient: number
+}
+
+export function apiClinicSettings(signal?: AbortSignal): Promise<{ settings: ClinicSettings }> {
+  return request("/clinics/settings", { signal })
+}
+
+export type ClinicSettingsPatch = Partial<
+  Pick<
+    ClinicSettings,
+    | "bookingHorizonDays"
+    | "cancelCutoffMinutes"
+    | "holdDurationMinutes"
+    | "minLeadMinutes"
+    | "reminderLeadMinutes"
+    | "maxActiveBookingsPerPatient"
+  >
+>
+
+export function apiUpdateClinicSettings(
+  patch: ClinicSettingsPatch & { reason?: string },
+): Promise<{ message: string; settings: ClinicSettings }> {
+  return request("/clinics/settings", { method: "PATCH", body: JSON.stringify(patch) })
+}
+
+/* ------------------------------------------------------------------ */
+/* Doctor / staff lifecycle actions                                    */
+/* ------------------------------------------------------------------ */
+
+export function apiInviteDoctor(input: {
+  email: string
+  fullName: string
+}): Promise<{ message: string; userId: string }> {
+  return request("/doctors", { method: "POST", body: JSON.stringify(input) })
+}
+
+export function apiInviteStaff(input: {
+  email: string
+  fullName: string
+}): Promise<{ message: string; userId: string }> {
+  return request("/staff", { method: "POST", body: JSON.stringify(input) })
+}
+
+export function apiVerifyDoctor(id: string): Promise<{ message: string; verificationStatus: DoctorVerificationStatus }> {
+  return request(`/doctors/${encodeURIComponent(id)}/verify`, { method: "POST" })
+}
+
+export function apiRejectDoctor(
+  id: string,
+  reason: string,
+): Promise<{ message: string; verificationStatus: DoctorVerificationStatus }> {
+  return request(`/doctors/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function apiUnsuspendDoctor(id: string, reason?: string): Promise<{ message: string }> {
+  return request(`/doctors/${encodeURIComponent(id)}/unsuspend`, {
+    method: "POST",
+    body: JSON.stringify(reason !== undefined && reason !== "" ? { reason } : {}),
+  })
+}
+
+export function apiUnarchiveDoctor(
+  id: string,
+  reason: string,
+): Promise<{ message: string; verificationStatus: DoctorVerificationStatus }> {
+  return request(`/doctors/${encodeURIComponent(id)}/unarchive`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function apiSuspendDoctor(id: string, reason: string): Promise<{ message: string }> {
+  return request(`/doctors/${encodeURIComponent(id)}/suspend`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function apiArchiveDoctor(id: string, reason: string): Promise<{ message: string }> {
+  return request(`/doctors/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+/* ------------------------------------------------------------------ */
+/* §20 audit read                                                      */
+/* ------------------------------------------------------------------ */
+
+export interface AuditEntry {
+  id: string
+  action: string
+  targetType: string
+  targetId: string
+  before: unknown
+  after: unknown
+  actorId: string | null
+  actorRole: SessionUser["role"] | null
+  actorName: string
+  reason: string | null
+  ip: string | null
+  requestId: string | null
+  createdAt: string
+}
+
+export interface AuditPage {
+  entries: AuditEntry[]
+  nextCursor: string | null
+}
+
+export function apiAudit(
+  input: {
+    targetType?: string
+    targetId?: string
+    action?: string
+    limit?: number
+    cursor?: string
+  } = {},
+  signal?: AbortSignal,
+): Promise<AuditPage> {
+  const params = new URLSearchParams()
+  if (input.targetType !== undefined && input.targetType !== "") params.set("targetType", input.targetType)
+  if (input.targetId !== undefined && input.targetId !== "") params.set("targetId", input.targetId)
+  if (input.action !== undefined && input.action !== "") params.set("action", input.action)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  if (input.cursor !== undefined && input.cursor !== "") params.set("cursor", input.cursor)
+  const query = params.toString()
+  return request(`/audit${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin dashboard read models                                         */
+/* ------------------------------------------------------------------ */
+
+export interface AdminOverview {
+  date: string
+  currency: string
+  appointments: {
+    total: number
+    confirmed: number
+    arrived: number
+    completed: number
+    cancelled: number
+    rejected: number
+    noShow: number
+  }
+  money: { collectedPaise: number; outstandingPaise: number }
+  doctors: { verified: number; pendingVerification: number; suspended: number; archived: number }
+  patients: { total: number; provisional: number }
+  refunds: { failed: number; pending: number }
+  notifications: { failed: number; pending: number }
+}
+
+export function apiAdminOverview(signal?: AbortSignal): Promise<{ overview: AdminOverview }> {
+  return request("/admin/overview", { signal })
+}
+
+export interface AdminPatient {
+  id: string
+  fullName: string
+  phone: string
+  email: string | null
+  isProvisional: boolean
+  isDeactivated: boolean
+  createdAt: string
+  completedCount: number
+  noShowCount: number
+  upcomingCount: number
+  lastVisitDate: string | null
+  returning: boolean
+}
+
+export function apiAdminPatients(
+  input: { search?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ patients: AdminPatient[] }> {
+  const params = new URLSearchParams()
+  if (input.search !== undefined && input.search !== "") params.set("search", input.search)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/patients${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+export interface AdminAppointment extends Appointment {
+  patientName: string
+  patientPhone: string
+  patientEmail: string | null
+  isProvisional: boolean
+  payment: DeskPaymentSummary
+}
+
+export function apiAdminAppointments(
+  input: { date?: string; status?: AppointmentStatus; doctorId?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ appointments: AdminAppointment[] }> {
+  const params = new URLSearchParams()
+  if (input.date !== undefined && input.date !== "") params.set("date", input.date)
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.doctorId !== undefined && input.doctorId !== "") params.set("doctorId", input.doctorId)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/appointments${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+export interface AdminPaymentRefund {
+  id: string
+  kind: DeskHandBack["kind"]
+  amountPaise: number
+  status: "PENDING" | "SUCCESS" | "FAILED"
+  method: "CASH" | "CARD" | "UPI" | null
+  reason: string
+  createdAt: string
+}
+
+export interface AdminPayment {
+  id: string
+  appointmentId: string | null
+  patientId: string
+  patientName: string
+  patientPhone: string
+  doctorName: string | null
+  slotDate: string | null
+  startTime: string | null
+  endTime: string | null
+  amountPaise: number
+  currency: string
+  status: "PENDING" | "PAID" | "FAILED" | "VOIDED"
+  method: "CASH" | "CARD" | "UPI" | null
+  paidAt: string | null
+  createdAt: string
+  collectedByName: string | null
+  refunds: AdminPaymentRefund[]
+}
+
+export function apiAdminPayments(
+  input: { status?: AdminPayment["status"]; method?: "CASH" | "CARD" | "UPI"; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ payments: AdminPayment[] }> {
+  const params = new URLSearchParams()
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.method !== undefined) params.set("method", input.method)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/payments${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+export interface AdminRefund {
+  id: string
+  paymentId: string
+  appointmentId: string | null
+  patientId: string
+  patientName: string
+  amountPaise: number
+  currency: string
+  kind: DeskHandBack["kind"]
+  status: "PENDING" | "SUCCESS" | "FAILED"
+  method: "CASH" | "CARD" | "UPI" | null
+  reason: string
+  gatewayRefundId: string | null
+  actorName: string
+  createdAt: string
+}
+
+export function apiAdminRefunds(
+  input: { status?: AdminRefund["status"]; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ refunds: AdminRefund[] }> {
+  const params = new URLSearchParams()
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/refunds${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+export function apiRetryRefund(id: string): Promise<{ message: string; refund: unknown }> {
+  return request(`/payments/refunds/${encodeURIComponent(id)}/retry`, { method: "POST" })
+}
+
+export interface AdminNotification {
+  id: string
+  type: string
+  status: "PENDING" | "SENT" | "FAILED"
+  recipient: string
+  appointmentId: string | null
+  error: string | null
+  sentAt: string | null
+  createdAt: string
+}
+
+export function apiAdminNotifications(
+  input: { status?: AdminNotification["status"]; type?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ notifications: AdminNotification[] }> {
+  const params = new URLSearchParams()
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.type !== undefined && input.type !== "") params.set("type", input.type)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/notifications${query === "" ? "" : `?${query}`}`, { signal })
+}

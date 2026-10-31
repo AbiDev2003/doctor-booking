@@ -18,8 +18,10 @@ import { slotsRouter } from "./routes/slots.js";
 import { clinicsRouter } from "./routes/clinics.js";
 import { unavailabilitiesRouter } from "./routes/unavailability.js";
 import { appointmentsRouter } from "./routes/appointments.js";
+import { patientsRouter } from "./routes/patients.js";
 import { paymentsRouter } from "./routes/payments.js";
 import { auditRouter } from "./routes/audit.js";
+import { adminRouter } from "./routes/admin.js";
 
 export function createApp() {
   const app = express();
@@ -87,15 +89,22 @@ export function createApp() {
   // §12 unavailability (Day 18). DOCTOR/ADMIN/STAFF; a doctor manages only
   // their own disruptions, staff/admin manage any.
   app.use("/api/v1/unavailabilities", unavailabilitiesRouter);
-  // §15 booking (Day 19). PATIENT self-booking; the last-seat guard, per-patient
-  // cap and same-slot rule all live inside the booking transaction.
+  // §15 booking (Day 19) + §16/§29 desk booking (Day 32). The patient surface is
+  // self-booking; `/appointments/desk` is the staff-only walk-in path. The
+  // last-seat guard, per-patient cap and same-slot rule live inside both
+  // transactions.
   app.use("/api/v1/appointments", appointmentsRouter);
+  // §16 returning-patient lookup (Day 32). ADMIN/STAFF-only, phone-keyed.
+  app.use("/api/v1/patients", patientsRouter);
   // §17 online payments (Days 23–24): PATIENT order creation (hold-first) and
   // verify, plus the signature-authenticated webhook mounted above raw-body-first.
   app.use("/api/v1/payments", paymentsRouter);
   // §20 audit read surface (Day 20). ADMIN-only, read-only: the write side has
   // existed since Day 11, and this is the "reads/exports" half Day 11 deferred.
   app.use("/api/v1/audit", auditRouter);
+  // §29/§31 admin dashboard reads (Day 33). ADMIN-only and read-only; the
+  // mutations the dashboard drives stay on their own resource routers.
+  app.use("/api/v1/admin", adminRouter);
   // §26 public storefront (Day 13). Mounted after the authenticated routers on
   // purpose: it is the one surface with no auth middleware, and listing it
   // here makes that absence a visible exception rather than an accident.

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import {
+  changeEmailSchema,
+  changePhoneSchema,
+  deleteAccountSchema,
+  type ChangeEmailInputShape,
+  type ChangePhoneInputShape,
+  type DeleteAccountInputShape,
+} from "@shared/account";
 import {
   apiMe,
   apiLogout,
@@ -10,10 +19,7 @@ import {
   ApiError,
   type SessionUser,
 } from "../lib/api";
-
-type FieldErrors = Record<string, string>;
-
-const EMPTY_PHONE = { phone: "", password: "" };
+import { applyApiErrors } from "../lib/formErrors";
 
 /**
  * §6.1 account surface: identity + sign out for everyone, the three mutating
@@ -106,40 +112,37 @@ export default function Profile() {
 /* ------------------------------------------------------------------ */
 
 function ChangeEmail({ currentEmail }: { currentEmail: string }) {
-  const [email, setEmail] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<ChangeEmailInputShape>({
+    resolver: zodResolver(changeEmailSchema),
+    defaultValues: { email: "" },
+  });
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
+  const onSubmit = handleSubmit(async (values) => {
     setFormError(null);
     setBanner(null);
-    setFieldErrors({});
 
     try {
-      const result = await apiChangeEmail({ email });
+      const result = await apiChangeEmail(values);
       setBanner(result.message);
       // The address itself does NOT change until the new one is verified, so
       // the identity block keeps showing the old address on purpose —
       // verification lands on /verify-email-change and reloads the session
       // from there.
     } catch (err) {
-      if (err instanceof ApiError) {
-        setFieldErrors(err.byField());
-        if (err.code === "EMAIL_ALREADY_EXISTS") {
-          setFieldErrors({ email: err.message });
-        } else if (err.fields.length === 0) {
-          setFormError(err.message);
-        }
-      } else {
-        setFormError("Something went wrong. Please try again.");
+      if (err instanceof ApiError && err.code === "EMAIL_ALREADY_EXISTS") {
+        setError("email", { type: "server", message: err.message });
+        return;
       }
-    } finally {
-      setSubmitting(false);
+      setFormError(applyApiErrors(err, setError) ?? null);
     }
-  }
+  });
 
   return (
     <section className="section">
@@ -153,35 +156,31 @@ function ChangeEmail({ currentEmail }: { currentEmail: string }) {
         <label htmlFor="newEmail">New email</label>
         <input
           id="newEmail"
-          name="newEmail"
           type="email"
-          value={email}
-          onChange={(e) => {
-            setEmail(e.target.value);
-            setFieldErrors((prev) => {
-              if (!("email" in prev)) return prev;
-              const next = { ...prev };
-              delete next.email;
-              return next;
-            });
-          }}
           autoComplete="email"
+          aria-invalid={errors.email !== undefined}
+          aria-describedby={errors.email !== undefined ? "newEmail-error" : undefined}
+          {...register("email")}
         />
-        {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
+        {errors.email?.message !== undefined && (
+          <span id="newEmail-error" className="field-error" role="alert">
+            {errors.email.message}
+          </span>
+        )}
 
-        {banner && (
+        {banner !== null && (
           <p className="banner banner-success" role="status">
             {banner}
           </p>
         )}
-        {formError && (
+        {formError !== null && (
           <p className="form-error" role="alert">
             {formError}
           </p>
         )}
 
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Sending…" : "Send confirmation link"}
+        <button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Sending…" : "Send confirmation link"}
         </button>
       </form>
     </section>
@@ -193,27 +192,22 @@ function ChangeEmail({ currentEmail }: { currentEmail: string }) {
 /* ------------------------------------------------------------------ */
 
 function ChangePhone({ onPhoneChanged }: { onPhoneChanged: (phone: string) => void }) {
-  const [values, setValues] = useState(EMPTY_PHONE);
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<ChangePhoneInputShape>({
+    resolver: zodResolver(changePhoneSchema),
+    defaultValues: { phone: "", password: "" },
+  });
 
-  function update(name: keyof typeof EMPTY_PHONE, value: string) {
-    setValues((prev) => ({ ...prev, [name]: value }));
-    setFieldErrors((prev) => {
-      if (!(name in prev)) return prev;
-      const next = { ...prev };
-      delete next[name];
-      return next;
-    });
-  }
-
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
+  const onSubmit = handleSubmit(async (values) => {
     setFormError(null);
     setBanner(null);
-    setFieldErrors({});
 
     try {
       const result = await apiChangePhone(values);
@@ -221,24 +215,18 @@ function ChangePhone({ onPhoneChanged }: { onPhoneChanged: (phone: string) => vo
       onPhoneChanged(values.phone);
       // Password is consumed by the request, not the form's state of mind —
       // clearing it keeps it out of the DOM between uses.
-      setValues((prev) => ({ ...prev, password: "" }));
+      reset({ phone: values.phone, password: "" });
     } catch (err) {
-      if (err instanceof ApiError) {
-        setFieldErrors(err.byField());
-        if (err.code === "PHONE_ALREADY_EXISTS") {
-          setFieldErrors({ phone: err.message });
-        } else if (err.code === "PASSWORD_INCORRECT") {
-          setFieldErrors({ password: err.message });
-        } else if (err.fields.length === 0) {
-          setFormError(err.message);
-        }
-      } else {
-        setFormError("Something went wrong. Please try again.");
+      if (err instanceof ApiError && (err.code === "PHONE_ALREADY_EXISTS" || err.code === "PASSWORD_INCORRECT")) {
+        setError(err.code === "PHONE_ALREADY_EXISTS" ? "phone" : "password", {
+          type: "server",
+          message: err.message,
+        });
+        return;
       }
-    } finally {
-      setSubmitting(false);
+      setFormError(applyApiErrors(err, setError) ?? null);
     }
-  }
+  });
 
   return (
     <section className="section">
@@ -252,39 +240,47 @@ function ChangePhone({ onPhoneChanged }: { onPhoneChanged: (phone: string) => vo
         <label htmlFor="phone">New phone</label>
         <input
           id="phone"
-          name="phone"
           type="tel"
-          value={values.phone}
-          onChange={(e) => update("phone", e.target.value)}
           autoComplete="tel"
           placeholder="9876543210"
+          aria-invalid={errors.phone !== undefined}
+          aria-describedby={errors.phone !== undefined ? "phone-error" : undefined}
+          {...register("phone")}
         />
-        {fieldErrors.phone && <span className="field-error">{fieldErrors.phone}</span>}
+        {errors.phone?.message !== undefined && (
+          <span id="phone-error" className="field-error" role="alert">
+            {errors.phone.message}
+          </span>
+        )}
 
         <label htmlFor="currentPassword">Current password</label>
         <input
           id="currentPassword"
-          name="currentPassword"
           type="password"
-          value={values.password}
-          onChange={(e) => update("password", e.target.value)}
           autoComplete="current-password"
+          aria-invalid={errors.password !== undefined}
+          aria-describedby={errors.password !== undefined ? "currentPassword-error" : undefined}
+          {...register("password")}
         />
-        {fieldErrors.password && <span className="field-error">{fieldErrors.password}</span>}
+        {errors.password?.message !== undefined && (
+          <span id="currentPassword-error" className="field-error" role="alert">
+            {errors.password.message}
+          </span>
+        )}
 
-        {banner && (
+        {banner !== null && (
           <p className="banner banner-success" role="status">
             {banner}
           </p>
         )}
-        {formError && (
+        {formError !== null && (
           <p className="form-error" role="alert">
             {formError}
           </p>
         )}
 
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Updating…" : "Update phone number"}
+        <button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Updating…" : "Update phone number"}
         </button>
       </form>
     </section>
@@ -296,50 +292,40 @@ function ChangePhone({ onPhoneChanged }: { onPhoneChanged: (phone: string) => vo
 /* ------------------------------------------------------------------ */
 
 function DeleteAccount({ onDeleted }: { onDeleted: () => void }) {
-  const [password, setPassword] = useState("");
   const [acknowledged, setAcknowledged] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<DeleteAccountInputShape>({
+    resolver: zodResolver(deleteAccountSchema),
+    defaultValues: { password: "" },
+  });
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
+  const onSubmit = handleSubmit(async (values) => {
     setFormError(null);
-    setFieldErrors({});
 
     if (!acknowledged) {
       setFormError("Confirm that you understand this cannot be undone.");
       return;
     }
 
-    setSubmitting(true);
     try {
-      await apiDeleteAccount({ password });
+      await apiDeleteAccount(values);
       onDeleted();
     } catch (err) {
-      if (err instanceof ApiError) {
-        setFieldErrors(err.byField());
-        if (err.code === "PASSWORD_INCORRECT") {
-          setFieldErrors({ password: err.message });
-        } else if (
-          err.code === "UPCOMING_APPOINTMENTS" ||
-          err.code === "PENDING_PAYMENT" ||
-          err.code === "PENDING_REFUND"
-        ) {
-          // §6.1 guards are things the USER has to resolve, so the server's
-          // explanation is the banner — not a field-level complaint about the
-          // password they typed correctly.
-          setFormError(err.message);
-        } else if (err.fields.length === 0) {
-          setFormError(err.message);
-        }
-      } else {
-        setFormError("Something went wrong. Please try again.");
+      if (err instanceof ApiError && err.code === "PASSWORD_INCORRECT") {
+        setError("password", { type: "server", message: err.message });
+        return;
       }
-    } finally {
-      setSubmitting(false);
+      // §6.1 guards are things the USER has to resolve, so the server's
+      // explanation is the banner — not a field-level complaint about the
+      // password they typed correctly.
+      setFormError(applyApiErrors(err, setError) ?? null);
     }
-  }
+  });
 
   return (
     <section className="section">
@@ -352,21 +338,17 @@ function DeleteAccount({ onDeleted }: { onDeleted: () => void }) {
         <label htmlFor="deletePassword">Current password</label>
         <input
           id="deletePassword"
-          name="deletePassword"
           type="password"
-          value={password}
-          onChange={(e) => {
-            setPassword(e.target.value);
-            setFieldErrors((prev) => {
-              if (!("password" in prev)) return prev;
-              const next = { ...prev };
-              delete next.password;
-              return next;
-            });
-          }}
           autoComplete="current-password"
+          aria-invalid={errors.password !== undefined}
+          aria-describedby={errors.password !== undefined ? "deletePassword-error" : undefined}
+          {...register("password")}
         />
-        {fieldErrors.password && <span className="field-error">{fieldErrors.password}</span>}
+        {errors.password?.message !== undefined && (
+          <span id="deletePassword-error" className="field-error" role="alert">
+            {errors.password.message}
+          </span>
+        )}
 
         <label className="checkbox-row">
           <input
@@ -380,14 +362,14 @@ function DeleteAccount({ onDeleted }: { onDeleted: () => void }) {
           I understand this permanently deletes my account and cannot be undone.
         </label>
 
-        {formError && (
+        {formError !== null && (
           <p className="form-error" role="alert">
             {formError}
           </p>
         )}
 
-        <button type="submit" className="button-danger" disabled={submitting}>
-          {submitting ? "Deleting…" : "Delete my account"}
+        <button type="submit" className="button-danger" disabled={isSubmitting}>
+          {isSubmitting ? "Deleting…" : "Delete my account"}
         </button>
       </form>
     </section>
