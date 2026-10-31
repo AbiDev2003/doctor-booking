@@ -50,8 +50,12 @@ type ReasonTarget =
  * the staff roster is read-only here until Day 33.
  */
 export default function Schedule() {
+  return <SchedulePanel />
+}
+
+export function SchedulePanel({ initialDoctorId = "" }: { initialDoctorId?: string }) {
   const queryClient = useQueryClient()
-  const [doctorId, setDoctorId] = useState("")
+  const [doctorId, setDoctorId] = useState(initialDoctorId)
   const [date, setDate] = useState("")
   const [reasonTarget, setReasonTarget] = useState<ReasonTarget | null>(null)
   const [editSlot, setEditSlot] = useState<Slot | null>(null)
@@ -96,6 +100,7 @@ export default function Schedule() {
       setCreateReason("")
       void queryClient.invalidateQueries({ queryKey: ["staff", "slots"] })
       void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
+      void queryClient.invalidateQueries({ queryKey: ["admin"] })
     },
   })
 
@@ -110,6 +115,7 @@ export default function Schedule() {
       setReasonTarget(null)
       void queryClient.invalidateQueries({ queryKey: ["staff"] })
       void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
+      void queryClient.invalidateQueries({ queryKey: ["admin"] })
     },
   })
 
@@ -338,6 +344,7 @@ export default function Schedule() {
             setEditSlot(null)
             void queryClient.invalidateQueries({ queryKey: ["staff", "slots"] })
             void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
+            void queryClient.invalidateQueries({ queryKey: ["admin"] })
           }}
         />
       )}
@@ -489,6 +496,7 @@ function UnavailabilityCard({
       setReason("")
       void queryClient.invalidateQueries({ queryKey: ["staff"] })
       void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
+      void queryClient.invalidateQueries({ queryKey: ["admin"] })
     },
   })
 

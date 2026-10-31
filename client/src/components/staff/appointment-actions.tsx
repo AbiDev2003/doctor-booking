@@ -64,6 +64,7 @@ export function AppointmentActions({
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["staff"] })
     void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
+    void queryClient.invalidateQueries({ queryKey: ["admin"] })
     onChanged?.()
   }
 

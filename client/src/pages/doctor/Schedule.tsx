@@ -78,7 +78,18 @@ function materializedNote(stats: MaterializeStats | null): string {
 
 export default function Schedule() {
   const { user } = useSession()
-  const doctorId = user?.id ?? ""
+  return <ScheduleEditor doctorId={user?.id ?? ""} />
+}
+
+export function ScheduleEditor({
+  doctorId,
+  title = "Schedule",
+  description = "Your recurring windows generate slots. Time off hides and flags affected bookings.",
+}: {
+  doctorId: string
+  title?: string
+  description?: string
+}) {
   const queryClient = useQueryClient()
 
   const [notice, setNotice] = useState<string | null>(null)
@@ -126,12 +137,14 @@ export default function Schedule() {
     void queryClient.invalidateQueries({ queryKey: ["doctor", "schedule", doctorId] })
     void queryClient.invalidateQueries({ queryKey: ["doctor", "today"] })
     void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
+    void queryClient.invalidateQueries({ queryKey: ["admin"] })
   }
 
   function invalidateTimeOff() {
     void queryClient.invalidateQueries({ queryKey: ["doctor", "unavailabilities", doctorId] })
     void queryClient.invalidateQueries({ queryKey: ["doctor", "today"] })
     void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
+    void queryClient.invalidateQueries({ queryKey: ["admin"] })
   }
 
   const windows = [...schedules.data].sort(
@@ -148,10 +161,8 @@ export default function Schedule() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Schedule</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Your recurring windows generate slots. Time off hides and flags affected bookings.
-        </p>
+        <h1 className="text-2xl font-semibold">{title}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
 
       {notice !== null && (

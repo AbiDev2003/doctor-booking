@@ -21,6 +21,7 @@ import { appointmentsRouter } from "./routes/appointments.js";
 import { patientsRouter } from "./routes/patients.js";
 import { paymentsRouter } from "./routes/payments.js";
 import { auditRouter } from "./routes/audit.js";
+import { adminRouter } from "./routes/admin.js";
 
 export function createApp() {
   const app = express();
@@ -101,6 +102,9 @@ export function createApp() {
   // §20 audit read surface (Day 20). ADMIN-only, read-only: the write side has
   // existed since Day 11, and this is the "reads/exports" half Day 11 deferred.
   app.use("/api/v1/audit", auditRouter);
+  // §29/§31 admin dashboard reads (Day 33). ADMIN-only and read-only; the
+  // mutations the dashboard drives stay on their own resource routers.
+  app.use("/api/v1/admin", adminRouter);
   // §26 public storefront (Day 13). Mounted after the authenticated routers on
   // purpose: it is the one surface with no auth middleware, and listing it
   // here makes that absence a visible exception rather than an accident.

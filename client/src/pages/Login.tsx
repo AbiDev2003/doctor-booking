@@ -46,7 +46,9 @@ export default function Login() {
           ? "/patient"
           : session.role === "DOCTOR"
             ? "/doctor"
-            : "/staff";
+            : session.role === "ADMIN"
+              ? "/admin"
+              : "/staff";
       const target = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : fallback;
       navigate(target);
     } catch (err) {

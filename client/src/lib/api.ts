@@ -1056,3 +1056,322 @@ export function apiCreateDoctorUnavailability(
 ): Promise<CreateUnavailabilityResult> {
   return apiCreateUnavailability(input);
 }
+
+/* ------------------------------------------------------------------ */
+/* Day 33 — admin dashboard: roster, money, audit, settings            */
+/* ------------------------------------------------------------------ */
+
+export interface ClinicSettings {
+  id: string
+  name: string
+  timezone: string
+  currency: string
+  defaultConsultationFee: number
+  bookingHorizonDays: number
+  cancelCutoffMinutes: number
+  holdDurationMinutes: number
+  minLeadMinutes: number
+  reminderLeadMinutes: number
+  maxActiveBookingsPerPatient: number
+}
+
+export function apiClinicSettings(signal?: AbortSignal): Promise<{ settings: ClinicSettings }> {
+  return request("/clinics/settings", { signal })
+}
+
+export type ClinicSettingsPatch = Partial<
+  Pick<
+    ClinicSettings,
+    | "bookingHorizonDays"
+    | "cancelCutoffMinutes"
+    | "holdDurationMinutes"
+    | "minLeadMinutes"
+    | "reminderLeadMinutes"
+    | "maxActiveBookingsPerPatient"
+  >
+>
+
+export function apiUpdateClinicSettings(
+  patch: ClinicSettingsPatch & { reason?: string },
+): Promise<{ message: string; settings: ClinicSettings }> {
+  return request("/clinics/settings", { method: "PATCH", body: JSON.stringify(patch) })
+}
+
+/* ------------------------------------------------------------------ */
+/* Doctor / staff lifecycle actions                                    */
+/* ------------------------------------------------------------------ */
+
+export function apiInviteDoctor(input: {
+  email: string
+  fullName: string
+}): Promise<{ message: string; userId: string }> {
+  return request("/doctors", { method: "POST", body: JSON.stringify(input) })
+}
+
+export function apiInviteStaff(input: {
+  email: string
+  fullName: string
+}): Promise<{ message: string; userId: string }> {
+  return request("/staff", { method: "POST", body: JSON.stringify(input) })
+}
+
+export function apiVerifyDoctor(id: string): Promise<{ message: string; verificationStatus: DoctorVerificationStatus }> {
+  return request(`/doctors/${encodeURIComponent(id)}/verify`, { method: "POST" })
+}
+
+export function apiRejectDoctor(
+  id: string,
+  reason: string,
+): Promise<{ message: string; verificationStatus: DoctorVerificationStatus }> {
+  return request(`/doctors/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function apiUnsuspendDoctor(id: string, reason?: string): Promise<{ message: string }> {
+  return request(`/doctors/${encodeURIComponent(id)}/unsuspend`, {
+    method: "POST",
+    body: JSON.stringify(reason !== undefined && reason !== "" ? { reason } : {}),
+  })
+}
+
+export function apiUnarchiveDoctor(
+  id: string,
+  reason: string,
+): Promise<{ message: string; verificationStatus: DoctorVerificationStatus }> {
+  return request(`/doctors/${encodeURIComponent(id)}/unarchive`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function apiSuspendDoctor(id: string, reason: string): Promise<{ message: string }> {
+  return request(`/doctors/${encodeURIComponent(id)}/suspend`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function apiArchiveDoctor(id: string, reason: string): Promise<{ message: string }> {
+  return request(`/doctors/${encodeURIComponent(id)}/archive`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+/* ------------------------------------------------------------------ */
+/* §20 audit read                                                      */
+/* ------------------------------------------------------------------ */
+
+export interface AuditEntry {
+  id: string
+  action: string
+  targetType: string
+  targetId: string
+  before: unknown
+  after: unknown
+  actorId: string | null
+  actorRole: SessionUser["role"] | null
+  actorName: string
+  reason: string | null
+  ip: string | null
+  requestId: string | null
+  createdAt: string
+}
+
+export interface AuditPage {
+  entries: AuditEntry[]
+  nextCursor: string | null
+}
+
+export function apiAudit(
+  input: {
+    targetType?: string
+    targetId?: string
+    action?: string
+    limit?: number
+    cursor?: string
+  } = {},
+  signal?: AbortSignal,
+): Promise<AuditPage> {
+  const params = new URLSearchParams()
+  if (input.targetType !== undefined && input.targetType !== "") params.set("targetType", input.targetType)
+  if (input.targetId !== undefined && input.targetId !== "") params.set("targetId", input.targetId)
+  if (input.action !== undefined && input.action !== "") params.set("action", input.action)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  if (input.cursor !== undefined && input.cursor !== "") params.set("cursor", input.cursor)
+  const query = params.toString()
+  return request(`/audit${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+/* ------------------------------------------------------------------ */
+/* Admin dashboard read models                                         */
+/* ------------------------------------------------------------------ */
+
+export interface AdminOverview {
+  date: string
+  currency: string
+  appointments: {
+    total: number
+    confirmed: number
+    arrived: number
+    completed: number
+    cancelled: number
+    rejected: number
+    noShow: number
+  }
+  money: { collectedPaise: number; outstandingPaise: number }
+  doctors: { verified: number; pendingVerification: number; suspended: number; archived: number }
+  patients: { total: number; provisional: number }
+  refunds: { failed: number; pending: number }
+  notifications: { failed: number; pending: number }
+}
+
+export function apiAdminOverview(signal?: AbortSignal): Promise<{ overview: AdminOverview }> {
+  return request("/admin/overview", { signal })
+}
+
+export interface AdminPatient {
+  id: string
+  fullName: string
+  phone: string
+  email: string | null
+  isProvisional: boolean
+  isDeactivated: boolean
+  createdAt: string
+  completedCount: number
+  noShowCount: number
+  upcomingCount: number
+  lastVisitDate: string | null
+  returning: boolean
+}
+
+export function apiAdminPatients(
+  input: { search?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ patients: AdminPatient[] }> {
+  const params = new URLSearchParams()
+  if (input.search !== undefined && input.search !== "") params.set("search", input.search)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/patients${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+export interface AdminAppointment extends Appointment {
+  patientName: string
+  patientPhone: string
+  patientEmail: string | null
+  isProvisional: boolean
+  payment: DeskPaymentSummary
+}
+
+export function apiAdminAppointments(
+  input: { date?: string; status?: AppointmentStatus; doctorId?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ appointments: AdminAppointment[] }> {
+  const params = new URLSearchParams()
+  if (input.date !== undefined && input.date !== "") params.set("date", input.date)
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.doctorId !== undefined && input.doctorId !== "") params.set("doctorId", input.doctorId)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/appointments${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+export interface AdminPaymentRefund {
+  id: string
+  kind: DeskHandBack["kind"]
+  amountPaise: number
+  status: "PENDING" | "SUCCESS" | "FAILED"
+  method: "CASH" | "CARD" | "UPI" | null
+  reason: string
+  createdAt: string
+}
+
+export interface AdminPayment {
+  id: string
+  appointmentId: string | null
+  patientId: string
+  patientName: string
+  patientPhone: string
+  doctorName: string | null
+  slotDate: string | null
+  startTime: string | null
+  endTime: string | null
+  amountPaise: number
+  currency: string
+  status: "PENDING" | "PAID" | "FAILED" | "VOIDED"
+  method: "CASH" | "CARD" | "UPI" | null
+  paidAt: string | null
+  createdAt: string
+  collectedByName: string | null
+  refunds: AdminPaymentRefund[]
+}
+
+export function apiAdminPayments(
+  input: { status?: AdminPayment["status"]; method?: "CASH" | "CARD" | "UPI"; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ payments: AdminPayment[] }> {
+  const params = new URLSearchParams()
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.method !== undefined) params.set("method", input.method)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/payments${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+export interface AdminRefund {
+  id: string
+  paymentId: string
+  appointmentId: string | null
+  patientId: string
+  patientName: string
+  amountPaise: number
+  currency: string
+  kind: DeskHandBack["kind"]
+  status: "PENDING" | "SUCCESS" | "FAILED"
+  method: "CASH" | "CARD" | "UPI" | null
+  reason: string
+  gatewayRefundId: string | null
+  actorName: string
+  createdAt: string
+}
+
+export function apiAdminRefunds(
+  input: { status?: AdminRefund["status"]; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ refunds: AdminRefund[] }> {
+  const params = new URLSearchParams()
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/refunds${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+export function apiRetryRefund(id: string): Promise<{ message: string; refund: unknown }> {
+  return request(`/payments/refunds/${encodeURIComponent(id)}/retry`, { method: "POST" })
+}
+
+export interface AdminNotification {
+  id: string
+  type: string
+  status: "PENDING" | "SENT" | "FAILED"
+  recipient: string
+  appointmentId: string | null
+  error: string | null
+  sentAt: string | null
+  createdAt: string
+}
+
+export function apiAdminNotifications(
+  input: { status?: AdminNotification["status"]; type?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<{ notifications: AdminNotification[] }> {
+  const params = new URLSearchParams()
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.type !== undefined && input.type !== "") params.set("type", input.type)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/admin/notifications${query === "" ? "" : `?${query}`}`, { signal })
+}
