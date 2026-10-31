@@ -1,5 +1,6 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { FormEvent } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Banknote, HandCoins, Search } from "lucide-react"
 import { apiCompleteHandBack, apiDeskHandBacks, apiVisitHistory, ApiError } from "@/lib/api"
@@ -199,13 +200,22 @@ function HandBackDialog({
 }
 
 function OutstandingLookup() {
-  const [phone, setPhone] = useState("")
+  const [params] = useSearchParams()
+  const initialPhone = params.get("phone") ?? ""
+  const [phone, setPhone] = useState(initialPhone)
   const [lookedUpPhone, setLookedUpPhone] = useState<string | null>(null)
+  const autoSearched = useRef(false)
 
   const search = useMutation({
     mutationFn: (value: string) => apiVisitHistory(value).then((result) => result.history),
     onSuccess: (history) => setLookedUpPhone(history.patient?.phone ?? phone.trim()),
   })
+
+  useEffect(() => {
+    if (autoSearched.current || initialPhone.trim() === "") return
+    autoSearched.current = true
+    search.mutate(initialPhone.trim())
+  }, [initialPhone, search])
 
   function submit(event: FormEvent) {
     event.preventDefault()

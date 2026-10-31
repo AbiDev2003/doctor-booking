@@ -81,11 +81,11 @@ export default function Payments() {
                 <table className="w-full text-sm">
                   <thead className="border-b text-left text-muted-foreground">
                     <tr>
-                      <th className="py-2 pr-3 font-medium">Patient</th>
-                      <th className="py-2 pr-3 font-medium">Booking</th>
-                      <th className="py-2 pr-3 font-medium">Amount</th>
-                      <th className="py-2 pr-3 font-medium">Status</th>
-                      <th className="py-2 font-medium">Refunds</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Patient</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Booking</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Amount</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Status</th>
+                      <th scope="col" className="py-2 font-medium">Refunds</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">

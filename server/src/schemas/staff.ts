@@ -2,6 +2,9 @@ import { z } from "zod";
 import type { $Enums } from "../generated/prisma/client.js";
 import type { AppointmentDto } from "./appointments.js";
 
+/** Day 34: desk input schemas are shared with the browser. */
+export * from "../shared/validation/staff.js";
+
 /**
  * plan.md §16/§29 — the front desk's request and response shapes (Day 32).
  *
@@ -26,53 +29,6 @@ export const deskQueueQuerySchema = z.object({
 });
 
 export type DeskQueueQueryShape = z.infer<typeof deskQueueQuerySchema>;
-
-/**
- * The identity the desk types at the counter. `phone` is the search key
- * (§16: normalized, unique) and the only field used to decide "new or
- * returning"; `fullName` is captured on a first visit and never overwrites an
- * existing patient's name. `email` is optional — a provisional patient may have
- * no address at all, which is why `User.email` is nullable.
- */
-export const deskPatientSchema = z.object({
-  fullName: z
-    .string()
-    .trim()
-    .min(1, "Full name is required")
-    .max(200, "Full name must not exceed 200 characters"),
-  phone: z
-    .string()
-    .trim()
-    .min(1, "Phone number is required")
-    .max(32, "Phone number must not exceed 32 characters"),
-  email: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .email("Invalid email address")
-    .optional(),
-});
-
-export type DeskPatientInputShape = z.infer<typeof deskPatientSchema>;
-
-/** POST /appointments/desk — create-or-find the patient, then claim a seat. */
-export const createDeskBookingSchema = z.object({
-  slotId: z.uuid("Invalid slot id"),
-  patient: deskPatientSchema,
-});
-
-export type CreateDeskBookingShape = z.infer<typeof createDeskBookingSchema>;
-
-/** GET /patients/visit-history?phone=… — the §16 returning-patient lookup. */
-export const visitHistoryQuerySchema = z.object({
-  phone: z
-    .string()
-    .trim()
-    .min(1, "Phone number is required")
-    .max(32, "Phone number must not exceed 32 characters"),
-});
-
-export type VisitHistoryQueryShape = z.infer<typeof visitHistoryQuerySchema>;
 
 /** The patient as the desk sees them. */
 export interface DeskPatientDto {

@@ -1,10 +1,15 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { FormEvent } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useMutation } from "@tanstack/react-query"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { Search, UserRound } from "lucide-react"
-import { apiVisitHistory, ApiError } from "@/lib/api"
-import type { VisitHistory } from "@/lib/api"
+import { attachPatientEmailSchema } from "@shared/staff"
+import { apiAttachPatientEmail, apiVisitHistory, ApiError } from "@/lib/api"
+import type { DeskPatient, VisitHistory } from "@/lib/api"
 import { formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
+import { applyApiErrors } from "@/lib/formErrors"
 import { formatPaise } from "@/lib/money"
 import { AppointmentActions } from "@/components/staff/appointment-actions"
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge"
@@ -26,8 +31,11 @@ import { Separator } from "@/components/ui/separator"
  * normalization. An unknown number is a truthful "not found", not an error.
  */
 export default function Patients() {
-  const [phone, setPhone] = useState("")
+  const [params] = useSearchParams()
+  const initialPhone = params.get("phone") ?? ""
+  const [phone, setPhone] = useState(initialPhone)
   const [lookedUpPhone, setLookedUpPhone] = useState<string | null>(null)
+  const autoSearched = useRef(false)
 
   const search = useMutation({
     mutationFn: (value: string) => apiVisitHistory(value).then((result) => result.history),
@@ -35,6 +43,12 @@ export default function Patients() {
       setLookedUpPhone(history.patient?.phone ?? phone.trim())
     },
   })
+
+  useEffect(() => {
+    if (autoSearched.current || initialPhone.trim() === "") return
+    autoSearched.current = true
+    search.mutate(initialPhone.trim())
+  }, [initialPhone, search])
 
   function submit(event: FormEvent) {
     event.preventDefault()
@@ -130,6 +144,14 @@ export default function Patients() {
             </CardContent>
           </Card>
 
+          {history.patient.isProvisional && (
+            <AttachEmailCard
+              key={history.patient.id}
+              patient={history.patient}
+              onAttached={() => search.mutate(history.patient?.phone ?? lookedUpPhone ?? "")}
+            />
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Upcoming bookings</CardTitle>
@@ -174,6 +196,82 @@ export default function Patients() {
         </div>
       )}
     </div>
+  )
+}
+
+function AttachEmailCard({ patient, onAttached }: { patient: DeskPatient; onAttached: () => void }) {
+  const [notice, setNotice] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<{ email: string }>({
+    resolver: zodResolver(attachPatientEmailSchema),
+    defaultValues: { email: patient.email ?? "" },
+  })
+
+  const attach = useMutation({
+    mutationFn: (email: string) => apiAttachPatientEmail(patient.id, email),
+    onSuccess: (result) => {
+      setNotice(result.message)
+      setFormError(null)
+      onAttached()
+    },
+    onError: (error) => {
+      setNotice(null)
+      setFormError(applyApiErrors(error, setError) ?? null)
+    },
+  })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Email on the walk-in record</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Attaching an address does not create a login. It gives the patient a contact on file and a future claim path.
+        </p>
+        <form
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
+          onSubmit={handleSubmit((values) => {
+            setNotice(null)
+            setFormError(null)
+            attach.mutate(values.email)
+          })}
+          noValidate
+        >
+          <div className="w-full max-w-sm space-y-2">
+            <Label htmlFor="attach-email">Email</Label>
+            <Input
+              id="attach-email"
+              type="email"
+              autoComplete="off"
+              aria-invalid={errors.email !== undefined}
+              aria-describedby={errors.email !== undefined ? "attach-email-error" : undefined}
+              {...register("email")}
+            />
+            {errors.email?.message !== undefined && (
+              <p id="attach-email-error" className="text-xs text-destructive" role="alert">
+                {errors.email.message}
+              </p>
+            )}
+          </div>
+          <Button type="submit" disabled={isSubmitting || attach.isPending}>
+            {attach.isPending ? "Attaching…" : patient.email === null ? "Attach email" : "Update email"}
+          </Button>
+        </form>
+        {notice !== null && <p className="text-sm text-muted-foreground">{notice}</p>}
+        {formError !== null && (
+          <Alert variant="destructive">
+            <AlertTitle>Could not attach the email</AlertTitle>
+            <AlertDescription>{formError}</AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

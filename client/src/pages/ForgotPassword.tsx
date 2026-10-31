@@ -1,9 +1,11 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { apiForgotPassword, ApiError } from "../lib/api";
-
-type FieldErrors = Record<string, string>;
+import { useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import type { z } from "zod";
+import { forgotPasswordSchema } from "@shared/auth";
+import { apiForgotPassword } from "../lib/api";
+import { applyApiErrors } from "../lib/formErrors";
 
 /**
  * §6.2 recovery: the response is deliberately identical for known and unknown
@@ -17,35 +19,36 @@ type FieldErrors = Record<string, string>;
  */
 export default function ForgotPassword() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
-  const [method, setMethod] = useState<"link" | "otp">("link");
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
   const [otp, setOtp] = useState("");
   const [otpError, setOtpError] = useState<string | null>(null);
+  const {
+    register,
+    handleSubmit,
+    control,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<
+    z.input<typeof forgotPasswordSchema>,
+    unknown,
+    z.output<typeof forgotPasswordSchema>
+  >({
+    resolver: zodResolver(forgotPasswordSchema),
+    defaultValues: { email: "", method: "link" },
+  });
+  const method = useWatch({ control, name: "method" });
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    setSubmitting(true);
+  const onSubmit = handleSubmit(async (values) => {
     setFormError(null);
-    setFieldErrors({});
 
     try {
-      const result = await apiForgotPassword({ email, method });
+      const result = await apiForgotPassword(values);
       setSent(result.message);
     } catch (err) {
-      if (err instanceof ApiError) {
-        setFieldErrors(err.byField());
-        if (err.fields.length === 0) setFormError(err.message);
-      } else {
-        setFormError("Something went wrong. Please try again.");
-      }
-    } finally {
-      setSubmitting(false);
+      setFormError(applyApiErrors(err, setError) ?? null);
     }
-  }
+  });
 
   function onOtpContinue() {
     // Client-side shape check only (the server re-validates everything) — it
@@ -69,17 +72,22 @@ export default function ForgotPassword() {
             <label htmlFor="otp">Enter your code</label>
             <input
               id="otp"
-              name="otp"
               inputMode="numeric"
               autoComplete="one-time-code"
               maxLength={6}
               value={otp}
+              aria-invalid={otpError !== null}
+              aria-describedby={otpError !== null ? "otp-error" : undefined}
               onChange={(e) => {
                 setOtp(e.target.value);
                 setOtpError(null);
               }}
             />
-            {otpError && <span className="field-error">{otpError}</span>}
+            {otpError !== null && (
+              <span id="otp-error" className="field-error" role="alert">
+                {otpError}
+              </span>
+            )}
             <button type="button" onClick={onOtpContinue}>
               Continue
             </button>
@@ -102,46 +110,36 @@ export default function ForgotPassword() {
         <label htmlFor="email">Email</label>
         <input
           id="email"
-          name="email"
           type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
           autoComplete="email"
+          aria-invalid={errors.email !== undefined}
+          aria-describedby={errors.email !== undefined ? "email-error" : undefined}
+          {...register("email")}
         />
-        {fieldErrors.email && <span className="field-error">{fieldErrors.email}</span>}
+        {errors.email?.message !== undefined && (
+          <span id="email-error" className="field-error" role="alert">
+            {errors.email.message}
+          </span>
+        )}
 
         <fieldset className="radio-row">
           <legend>How should we reach you?</legend>
           <label>
-            <input
-              type="radio"
-              name="method"
-              value="link"
-              checked={method === "link"}
-              onChange={() => setMethod("link")}
-            />{" "}
-            Send a reset link
+            <input type="radio" value="link" {...register("method")} /> Send a reset link
           </label>
           <label>
-            <input
-              type="radio"
-              name="method"
-              value="otp"
-              checked={method === "otp"}
-              onChange={() => setMethod("otp")}
-            />{" "}
-            Send a 6-digit code
+            <input type="radio" value="otp" {...register("method")} /> Send a 6-digit code
           </label>
         </fieldset>
 
-        {formError && (
+        {formError !== null && (
           <p className="form-error" role="alert">
             {formError}
           </p>
         )}
 
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Sending…" : "Send recovery message"}
+        <button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Sending…" : "Send recovery message"}
         </button>
       </form>
 

@@ -51,8 +51,14 @@ export default function DoctorLayout() {
 
   return (
     <div className="min-h-screen bg-background">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow"
+      >
+        Skip to content
+      </a>
       <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-6 py-3">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link to="/doctor" className="font-bold text-foreground">
             Clinic
           </Link>
@@ -82,7 +88,7 @@ export default function DoctorLayout() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-8">
+      <main id="main-content" className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
         <Outlet />
       </main>
     </div>

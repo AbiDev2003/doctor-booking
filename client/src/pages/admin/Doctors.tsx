@@ -1,6 +1,8 @@
 import { useState } from "react"
-import type { FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { inviteDoctorSchema, type InviteDoctorInputShape } from "@shared/doctors"
 import {
   apiArchiveDoctor,
   apiInviteDoctor,
@@ -13,6 +15,7 @@ import {
   ApiError,
 } from "@/lib/api"
 import type { DoctorDetail } from "@/lib/api"
+import { applyApiErrors } from "@/lib/formErrors"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { ReasonDialog } from "@/components/staff/reason-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -165,10 +168,10 @@ export default function Doctors() {
               <table className="w-full text-sm">
                 <thead className="border-b text-left text-muted-foreground">
                   <tr>
-                    <th className="py-2 pr-3 font-medium">Doctor</th>
-                    <th className="py-2 pr-3 font-medium">Status</th>
-                    <th className="py-2 pr-3 font-medium">Bookable</th>
-                    <th className="py-2 font-medium">Actions</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Doctor</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Status</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Bookable</th>
+                    <th scope="col" className="py-2 font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">
@@ -297,26 +300,37 @@ function InviteDoctorDialog({
   onOpenChange: (open: boolean) => void
   onInvited: (message: string) => void
 }) {
-  const [email, setEmail] = useState("")
-  const [fullName, setFullName] = useState("")
+  const [formError, setFormError] = useState<string | null>(null)
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<InviteDoctorInputShape>({
+    resolver: zodResolver(inviteDoctorSchema),
+    defaultValues: { fullName: "", email: "" },
+  })
   const invite = useMutation({
-    mutationFn: () => apiInviteDoctor({ email: email.trim(), fullName: fullName.trim() }),
+    mutationFn: (values: InviteDoctorInputShape) => apiInviteDoctor(values),
     onSuccess: (result) => {
       onInvited(result.message)
-      setEmail("")
-      setFullName("")
+      reset()
+    },
+    onError: (error) => {
+      setFormError(applyApiErrors(error, setError) ?? null)
     },
   })
 
-  function submit(event: FormEvent) {
-    event.preventDefault()
-    invite.mutate()
-  }
+  const submit = handleSubmit((values) => {
+    setFormError(null)
+    invite.mutate(values)
+  })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <form onSubmit={submit} className="space-y-4">
+        <form onSubmit={submit} className="space-y-4" noValidate>
           <DialogHeader>
             <DialogTitle>Invite a doctor</DialogTitle>
             <DialogDescription>
@@ -328,26 +342,36 @@ function InviteDoctorDialog({
             <Label htmlFor="doctor-full-name">Full name</Label>
             <Input
               id="doctor-full-name"
-              value={fullName}
-              onChange={(event) => setFullName(event.target.value)}
-              required
+              aria-invalid={errors.fullName !== undefined}
+              aria-describedby={errors.fullName !== undefined ? "doctor-full-name-error" : undefined}
+              {...register("fullName")}
             />
+            {errors.fullName?.message !== undefined && (
+              <p id="doctor-full-name-error" className="text-xs text-destructive" role="alert">
+                {errors.fullName.message}
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="doctor-email">Email</Label>
             <Input
               id="doctor-email"
               type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
+              aria-invalid={errors.email !== undefined}
+              aria-describedby={errors.email !== undefined ? "doctor-email-error" : undefined}
+              {...register("email")}
             />
+            {errors.email?.message !== undefined && (
+              <p id="doctor-email-error" className="text-xs text-destructive" role="alert">
+                {errors.email.message}
+              </p>
+            )}
           </div>
 
-          {invite.error instanceof ApiError && (
+          {formError !== null && (
             <Alert variant="destructive">
               <AlertTitle>Invite failed</AlertTitle>
-              <AlertDescription>{invite.error.message}</AlertDescription>
+              <AlertDescription>{formError}</AlertDescription>
             </Alert>
           )}
 
@@ -355,7 +379,7 @@ function InviteDoctorDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={invite.isPending || email.trim() === "" || fullName.trim() === ""}>
+            <Button type="submit" disabled={isSubmitting || invite.isPending}>
               {invite.isPending ? "Inviting…" : "Send invite"}
             </Button>
           </DialogFooter>

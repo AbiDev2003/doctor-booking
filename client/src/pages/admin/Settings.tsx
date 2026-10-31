@@ -1,8 +1,12 @@
 import { useState } from "react"
-import type { FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { clinicSettingsPatchSchema } from "@shared/clinics"
+import { inviteStaffSchema, type InviteStaffInputShape } from "@shared/doctors"
 import { apiClinicSettings, apiInviteStaff, apiUpdateClinicSettings, ApiError } from "@/lib/api"
 import type { ClinicSettingsPatch } from "@/lib/api"
+import { applyApiErrors } from "@/lib/formErrors"
 import { PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -30,9 +34,19 @@ const FIELDS = [
 /** §29's settings tab (Day 33): the six scheduling tunables and staff invites. */
 export default function Settings() {
   const queryClient = useQueryClient()
-  const [draft, setDraft] = useState<Record<string, string>>({})
   const [notice, setNotice] = useState<string | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<ClinicSettingsPatch>({
+    resolver: zodResolver(clinicSettingsPatchSchema),
+    defaultValues: {},
+  })
 
   const settings = useQuery({ queryKey: ["admin", "clinic-settings"], queryFn: ({ signal }) => apiClinicSettings(signal) })
 
@@ -40,10 +54,14 @@ export default function Settings() {
     mutationFn: (patch: ClinicSettingsPatch) => apiUpdateClinicSettings(patch),
     onSuccess: (result) => {
       setNotice(result.message)
-      setDraft({})
+      setFormError(null)
+      reset({})
       void queryClient.invalidateQueries({ queryKey: ["admin", "clinic-settings"] })
       void queryClient.invalidateQueries({ queryKey: ["public", "clinic"] })
       void queryClient.invalidateQueries({ queryKey: ["admin", "overview"] })
+    },
+    onError: (error) => {
+      setFormError(applyApiErrors(error, setError) ?? null)
     },
   })
 
@@ -59,22 +77,21 @@ export default function Settings() {
   }
 
   const current = settings.data.settings
-  const patch: ClinicSettingsPatch = {}
-  for (const field of FIELDS) {
-    const raw = draft[field.key]
-    if (raw === undefined || raw.trim() === "") continue
-    const value = Number(raw)
-    if (Number.isInteger(value) && value !== current[field.key]) patch[field.key] = value
-  }
 
-  function submit(event: FormEvent) {
-    event.preventDefault()
+  const submit = handleSubmit((values) => {
+    setNotice(null)
+    setFormError(null)
+    const patch: ClinicSettingsPatch = {}
+    for (const field of FIELDS) {
+      const value = values[field.key]
+      if (value !== undefined && value !== current[field.key]) patch[field.key] = value
+    }
     if (Object.keys(patch).length === 0) {
       setNotice("No changes to save.")
       return
     }
     save.mutate(patch)
-  }
+  })
 
   return (
     <div className="space-y-6">
@@ -96,10 +113,10 @@ export default function Settings() {
           <AlertDescription>{notice}</AlertDescription>
         </Alert>
       )}
-      {save.error instanceof ApiError && (
+      {formError !== null && (
         <Alert variant="destructive">
           <AlertTitle>Could not save settings</AlertTitle>
-          <AlertDescription>{save.error.message}</AlertDescription>
+          <AlertDescription>{formError}</AlertDescription>
         </Alert>
       )}
 
@@ -144,17 +161,30 @@ export default function Settings() {
                     min={field.min}
                     max={field.max}
                     placeholder={String(current[field.key])}
-                    value={draft[field.key] ?? ""}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, [field.key]: event.target.value }))}
+                    aria-invalid={errors[field.key] !== undefined}
+                    aria-describedby={errors[field.key] !== undefined ? `${field.key}-error` : undefined}
+                    {...register(field.key, {
+                      setValueAs: (value: string) => (value.trim() === "" ? undefined : Number(value)),
+                    })}
                   />
+                  {errors[field.key]?.message !== undefined && (
+                    <p id={`${field.key}-error`} className="text-xs text-destructive" role="alert">
+                      {errors[field.key]?.message}
+                    </p>
+                  )}
                 </label>
               ))}
             </div>
+            {errors.root?.message !== undefined && (
+              <p className="text-sm text-destructive" role="alert">
+                {errors.root.message}
+              </p>
+            )}
             <div className="flex gap-2">
-              <Button type="submit" disabled={save.isPending}>
+              <Button type="submit" disabled={isSubmitting || save.isPending}>
                 {save.isPending ? "Saving…" : "Save changes"}
               </Button>
-              <Button type="button" variant="ghost" onClick={() => setDraft({})}>
+              <Button type="button" variant="ghost" onClick={() => reset({})}>
                 Reset
               </Button>
             </div>
@@ -183,27 +213,37 @@ function InviteStaffDialog({
   onOpenChange: (open: boolean) => void
   onInvited: (message: string) => void
 }) {
-  const [email, setEmail] = useState("")
-  const [fullName, setFullName] = useState("")
+  const [formError, setFormError] = useState<string | null>(null)
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<InviteStaffInputShape>({
+    resolver: zodResolver(inviteStaffSchema),
+    defaultValues: { fullName: "", email: "" },
+  })
   const invite = useMutation({
-    mutationFn: () => apiInviteStaff({ email: email.trim(), fullName: fullName.trim() }),
+    mutationFn: (values: InviteStaffInputShape) => apiInviteStaff(values),
     onSuccess: (result) => {
       onInvited(result.message)
-      setEmail("")
-      setFullName("")
+      reset()
     },
+    onError: (error) => {
+      setFormError(applyApiErrors(error, setError) ?? null)
+    },
+  })
+
+  const submit = handleSubmit((values) => {
+    setFormError(null)
+    invite.mutate(values)
   })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <form
-          className="space-y-4"
-          onSubmit={(event) => {
-            event.preventDefault()
-            invite.mutate()
-          }}
-        >
+        <form className="space-y-4" onSubmit={submit} noValidate>
           <DialogHeader>
             <DialogTitle>Invite front-desk staff</DialogTitle>
             <DialogDescription>
@@ -215,26 +255,36 @@ function InviteStaffDialog({
             <Label htmlFor="staff-full-name">Full name</Label>
             <Input
               id="staff-full-name"
-              value={fullName}
-              onChange={(event) => setFullName(event.target.value)}
-              required
+              aria-invalid={errors.fullName !== undefined}
+              aria-describedby={errors.fullName !== undefined ? "staff-full-name-error" : undefined}
+              {...register("fullName")}
             />
+            {errors.fullName?.message !== undefined && (
+              <p id="staff-full-name-error" className="text-xs text-destructive" role="alert">
+                {errors.fullName.message}
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="staff-email">Email</Label>
             <Input
               id="staff-email"
               type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              required
+              aria-invalid={errors.email !== undefined}
+              aria-describedby={errors.email !== undefined ? "staff-email-error" : undefined}
+              {...register("email")}
             />
+            {errors.email?.message !== undefined && (
+              <p id="staff-email-error" className="text-xs text-destructive" role="alert">
+                {errors.email.message}
+              </p>
+            )}
           </div>
 
-          {invite.error instanceof ApiError && (
+          {formError !== null && (
             <Alert variant="destructive">
               <AlertTitle>Invite failed</AlertTitle>
-              <AlertDescription>{invite.error.message}</AlertDescription>
+              <AlertDescription>{formError}</AlertDescription>
             </Alert>
           )}
 
@@ -242,7 +292,7 @@ function InviteStaffDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={invite.isPending || email.trim() === "" || fullName.trim() === ""}>
+            <Button type="submit" disabled={isSubmitting || invite.isPending}>
               {invite.isPending ? "Inviting…" : "Send invite"}
             </Button>
           </DialogFooter>

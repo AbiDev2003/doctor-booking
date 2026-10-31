@@ -1,7 +1,10 @@
 import { useState } from "react"
-import type { FormEvent } from "react"
+import { Link } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CalendarDays, UserPlus } from "lucide-react"
+import { useForm, useWatch } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { CalendarDays, ReceiptText, UserPlus } from "lucide-react"
+import { createDeskBookingSchema } from "@shared/staff"
 import {
   apiCreateDeskBooking,
   apiPublicClinic,
@@ -9,8 +12,9 @@ import {
   apiStaffDoctors,
   ApiError,
 } from "@/lib/api"
-import type { DeskBookingResult } from "@/lib/api"
+import type { CreateDeskBookingInput, DeskBookingResult } from "@/lib/api"
 import { addDays, clinicToday, formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
+import { applyApiErrors } from "@/lib/formErrors"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -33,14 +37,28 @@ const SELECT_CLASS =
  */
 export default function Appointments() {
   const queryClient = useQueryClient()
-  const [fullName, setFullName] = useState("")
-  const [phone, setPhone] = useState("")
-  const [email, setEmail] = useState("")
   const [doctorId, setDoctorId] = useState("")
   const [date, setDate] = useState("")
-  const [slotId, setSlotId] = useState("")
   const [notice, setNotice] = useState<string | null>(null)
   const [booked, setBooked] = useState<DeskBookingResult | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setValue,
+    control,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<CreateDeskBookingInput>({
+    resolver: zodResolver(createDeskBookingSchema),
+    mode: "onChange",
+    defaultValues: {
+      slotId: "",
+      patient: { fullName: "", phone: "", email: "" },
+    },
+  })
+  const slotId = useWatch({ control, name: "slotId" })
 
   const clinic = useQuery({ queryKey: ["public", "clinic"], queryFn: apiPublicClinic })
   const doctors = useQuery({ queryKey: ["staff", "doctors"], queryFn: () => apiStaffDoctors() })
@@ -61,24 +79,23 @@ export default function Appointments() {
   })
 
   const create = useMutation({
-    mutationFn: () =>
-      apiCreateDeskBooking({
-        slotId,
-        patient: {
-          fullName: fullName.trim(),
-          phone: phone.trim(),
-          ...(email.trim() !== "" && { email: email.trim() }),
-        },
-      }),
+    mutationFn: (values: CreateDeskBookingInput) => apiCreateDeskBooking(values),
     onSuccess: (result) => {
       setBooked(result)
       setNotice(result.message)
-      setFullName("")
-      setPhone("")
-      setEmail("")
-      setSlotId("")
+      setFormError(null)
+      reset({
+        slotId: "",
+        patient: { fullName: "", phone: "", email: "" },
+      })
       void queryClient.invalidateQueries({ queryKey: ["staff"] })
+      void queryClient.invalidateQueries({ queryKey: ["admin"] })
       void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
+    },
+    onError: (error) => {
+      setNotice(null)
+      setBooked(null)
+      setFormError(applyApiErrors(error, setError) ?? null)
     },
   })
 
@@ -100,20 +117,6 @@ export default function Appointments() {
 
   const bookableDoctors = doctors.data.doctors.filter((doctor) => doctor.isBookable)
   const slots = availability.data?.availability ?? []
-  const fieldErrors = create.error instanceof ApiError ? create.error.byField() : {}
-  const formError =
-    create.error instanceof ApiError && create.error.fields.length === 0 ? create.error.message : undefined
-  const canSubmit =
-    fullName.trim() !== "" && phone.trim() !== "" && slotId !== "" && !create.isPending
-
-  function submit(event: FormEvent) {
-    event.preventDefault()
-    if (canSubmit) {
-      setNotice(null)
-      setBooked(null)
-      create.mutate()
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -138,11 +141,30 @@ export default function Appointments() {
                 {formatTimeRange(booked.appointment.startTime, booked.appointment.endTime)}.
               </span>
             )}
+            {booked !== null && (
+              <span className="mt-3 flex flex-wrap gap-2">
+                <Button asChild size="sm">
+                  <Link to={`/staff/payments?phone=${encodeURIComponent(booked.patient.phone)}`}>
+                    <ReceiptText /> Collect payment
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="outline">
+                  <Link to={`/staff/patients?phone=${encodeURIComponent(booked.patient.phone)}`}>
+                    <UserPlus /> Patient record
+                  </Link>
+                </Button>
+              </span>
+            )}
           </AlertDescription>
         </Alert>
       )}
 
-      <form onSubmit={submit} className="space-y-4">
+      <form onSubmit={handleSubmit((values) => {
+        setNotice(null)
+        setBooked(null)
+        setFormError(null)
+        create.mutate(values)
+      })} className="space-y-4" noValidate>
         <Card>
           <CardHeader>
             <CardTitle>Patient</CardTitle>
@@ -152,27 +174,33 @@ export default function Appointments() {
               <Label htmlFor="patient-name">Full name</Label>
               <Input
                 id="patient-name"
-                value={fullName}
-                onChange={(event) => setFullName(event.target.value)}
                 autoComplete="off"
                 maxLength={200}
+                aria-invalid={errors.patient?.fullName !== undefined}
+                aria-describedby={errors.patient?.fullName !== undefined ? "patient-name-error" : undefined}
+                {...register("patient.fullName")}
               />
-              {fieldErrors["patient.fullName"] !== undefined && (
-                <p className="text-xs text-destructive">{fieldErrors["patient.fullName"]}</p>
+              {errors.patient?.fullName?.message !== undefined && (
+                <p id="patient-name-error" className="text-xs text-destructive" role="alert">
+                  {errors.patient.fullName.message}
+                </p>
               )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="patient-phone">Phone</Label>
               <Input
                 id="patient-phone"
-                value={phone}
-                onChange={(event) => setPhone(event.target.value)}
                 autoComplete="off"
                 inputMode="tel"
                 placeholder="98765 43210"
+                aria-invalid={errors.patient?.phone !== undefined}
+                aria-describedby={errors.patient?.phone !== undefined ? "patient-phone-error" : undefined}
+                {...register("patient.phone")}
               />
-              {fieldErrors["patient.phone"] !== undefined && (
-                <p className="text-xs text-destructive">{fieldErrors["patient.phone"]}</p>
+              {errors.patient?.phone?.message !== undefined && (
+                <p id="patient-phone-error" className="text-xs text-destructive" role="alert">
+                  {errors.patient.phone.message}
+                </p>
               )}
             </div>
             <div className="space-y-2">
@@ -180,12 +208,17 @@ export default function Appointments() {
               <Input
                 id="patient-email"
                 type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
                 autoComplete="off"
+                aria-invalid={errors.patient?.email !== undefined}
+                aria-describedby={errors.patient?.email !== undefined ? "patient-email-error" : undefined}
+                {...register("patient.email", {
+                  setValueAs: (value: string) => (value.trim() === "" ? undefined : value),
+                })}
               />
-              {fieldErrors["patient.email"] !== undefined && (
-                <p className="text-xs text-destructive">{fieldErrors["patient.email"]}</p>
+              {errors.patient?.email?.message !== undefined && (
+                <p id="patient-email-error" className="text-xs text-destructive" role="alert">
+                  {errors.patient.email.message}
+                </p>
               )}
             </div>
           </CardContent>
@@ -205,7 +238,7 @@ export default function Appointments() {
                   value={selectedDoctorId}
                   onChange={(event) => {
                     setDoctorId(event.target.value)
-                    setSlotId("")
+                    setValue("slotId", "", { shouldValidate: true })
                   }}
                 >
                   {bookableDoctors.length === 0 && <option value="">No verified doctors available</option>}
@@ -227,7 +260,7 @@ export default function Appointments() {
                   max={maxDate}
                   onChange={(event) => {
                     setDate(event.target.value)
-                    setSlotId("")
+                    setValue("slotId", "", { shouldValidate: true })
                   }}
                 />
               </div>
@@ -251,8 +284,10 @@ export default function Appointments() {
               </EmptyState>
             )}
 
-            {fieldErrors["slotId"] !== undefined && (
-              <p className="text-xs text-destructive">{fieldErrors["slotId"]}</p>
+            {errors.slotId?.message !== undefined && (
+              <p className="text-xs text-destructive" role="alert">
+                {errors.slotId.message}
+              </p>
             )}
 
             {slots.length > 0 && (
@@ -274,7 +309,7 @@ export default function Appointments() {
                           name="slot"
                           value={slot.slotId}
                           checked={slotId === slot.slotId}
-                          onChange={() => setSlotId(slot.slotId)}
+                          onChange={() => setValue("slotId", slot.slotId, { shouldValidate: true })}
                         />
                         {formatTimeRange(slot.startTime, slot.endTime)}
                       </span>
@@ -287,7 +322,7 @@ export default function Appointments() {
           </CardContent>
         </Card>
 
-        {formError !== undefined && (
+        {formError !== null && (
           <Alert variant="destructive">
             <AlertTitle>Could not create the booking</AlertTitle>
             <AlertDescription>{formError}</AlertDescription>
@@ -298,7 +333,7 @@ export default function Appointments() {
           <p className="text-sm text-muted-foreground">
             {slotId === "" ? "Choose a slot to continue." : "The fee is resolved by the server when the booking is created."}
           </p>
-          <Button type="submit" disabled={!canSubmit}>
+          <Button type="submit" disabled={isSubmitting || create.isPending}>
             {create.isPending ? "Booking…" : "Create booking"}
           </Button>
         </div>

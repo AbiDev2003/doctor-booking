@@ -80,11 +80,11 @@ export default function Patients() {
               <table className="w-full text-sm">
                 <thead className="border-b text-left text-muted-foreground">
                   <tr>
-                    <th className="py-2 pr-3 font-medium">Patient</th>
-                    <th className="py-2 pr-3 font-medium">Contact</th>
-                    <th className="py-2 pr-3 font-medium">Visits</th>
-                    <th className="py-2 pr-3 font-medium">Last visit</th>
-                    <th className="py-2 font-medium">Flags</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Patient</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Contact</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Visits</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Last visit</th>
+                    <th scope="col" className="py-2 font-medium">Flags</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y">

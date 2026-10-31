@@ -899,6 +899,17 @@ export function apiVisitHistory(phone: string, signal?: AbortSignal): Promise<{ 
   return request(`/patients/visit-history?phone=${encodeURIComponent(phone)}`, { signal });
 }
 
+/** POST /patients/:id/email — attach or correct a provisional walk-in's email. */
+export function apiAttachPatientEmail(
+  patientId: string,
+  email: string,
+): Promise<{ message: string; patient: DeskPatient }> {
+  return request(`/patients/${encodeURIComponent(patientId)}/email`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+}
+
 export function apiArriveAppointment(id: string): Promise<{ message: string; appointment: Appointment }> {
   return request(`/appointments/${encodeURIComponent(id)}/arrive`, { method: "POST" });
 }

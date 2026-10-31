@@ -1,9 +1,13 @@
 import { useState } from "react";
-import type { FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { apiResetPassword, ApiError } from "../lib/api";
-
-type FieldErrors = Record<string, string>;
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { apiResetPassword } from "../lib/api";
+import { applyApiErrors } from "../lib/formErrors";
+import {
+  passwordConfirmationSchema,
+  type PasswordConfirmationValues,
+} from "../lib/passwordForms";
 
 /**
  * §6.2 reset portal — the single destination for BOTH delivery methods: the
@@ -17,45 +21,28 @@ export default function ResetPassword() {
   const token = params.get("token") ?? "";
   const missingToken = token.length === 0;
 
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<PasswordConfirmationValues>({
+    resolver: zodResolver(passwordConfirmationSchema),
+    defaultValues: { password: "", confirm: "" },
+  });
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
+  const onSubmit = handleSubmit(async (values) => {
     setFormError(null);
-    setFieldErrors({});
 
-    if (password !== confirm) {
-      setFieldErrors({ confirm: "Passwords do not match." });
-      return;
-    }
-
-    setSubmitting(true);
     try {
-      await apiResetPassword({ token, password });
+      await apiResetPassword({ token, password: values.password });
       setDone(true);
     } catch (err) {
-      if (err instanceof ApiError) {
-        setFieldErrors(err.byField());
-        // INVALID_OR_EXPIRED_TOKEN covers wrong, expired, and already-used
-        // tokens with one message (§6.2 — no oracle for which), and lands on
-        // no particular field, so it belongs on the banner.
-        if (err.code === "INVALID_OR_EXPIRED_TOKEN") {
-          setFormError(err.message);
-        } else if (err.fields.length === 0) {
-          setFormError(err.message);
-        }
-      } else {
-        setFormError("Something went wrong. Please try again.");
-      }
-    } finally {
-      setSubmitting(false);
+      setFormError(applyApiErrors(err, setError) ?? null);
     }
-  }
+  });
 
   if (missingToken) {
     return (
@@ -91,33 +78,41 @@ export default function ResetPassword() {
         <label htmlFor="password">New password</label>
         <input
           id="password"
-          name="password"
           type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
           autoComplete="new-password"
+          aria-invalid={errors.password !== undefined}
+          aria-describedby={errors.password !== undefined ? "password-error" : undefined}
+          {...register("password")}
         />
-        {fieldErrors.password && <span className="field-error">{fieldErrors.password}</span>}
+        {errors.password?.message !== undefined && (
+          <span id="password-error" className="field-error" role="alert">
+            {errors.password.message}
+          </span>
+        )}
 
         <label htmlFor="confirm">Confirm new password</label>
         <input
           id="confirm"
-          name="confirm"
           type="password"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
           autoComplete="new-password"
+          aria-invalid={errors.confirm !== undefined}
+          aria-describedby={errors.confirm !== undefined ? "confirm-error" : undefined}
+          {...register("confirm")}
         />
-        {fieldErrors.confirm && <span className="field-error">{fieldErrors.confirm}</span>}
+        {errors.confirm?.message !== undefined && (
+          <span id="confirm-error" className="field-error" role="alert">
+            {errors.confirm.message}
+          </span>
+        )}
 
-        {formError && (
+        {formError !== null && (
           <p className="form-error" role="alert">
             {formError}
           </p>
         )}
 
-        <button type="submit" disabled={submitting}>
-          {submitting ? "Updating…" : "Update password"}
+        <button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Updating…" : "Update password"}
         </button>
       </form>
 

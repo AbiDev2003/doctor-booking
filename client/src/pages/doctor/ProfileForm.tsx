@@ -1,16 +1,18 @@
-import { useState } from "react"
-import type { FormEvent } from "react"
+import { useEffect, useState } from "react"
+import type { UseFormRegisterReturn } from "react-hook-form"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { CheckCircle2 } from "lucide-react"
+import { doctorProfileSchema, type DoctorProfileInputShape } from "@shared/doctors"
 import { useSession } from "../../hooks/useSession"
 import { apiGetDoctor, apiUpdateDoctor, ApiError } from "../../lib/api"
+import { applyApiErrors } from "../../lib/formErrors"
 import { PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-
-type FieldErrors = Record<string, string>
 
 /**
  * §5.2's self-edit (Day 31): the descriptive fields plus the credentials the
@@ -21,7 +23,7 @@ type FieldErrors = Record<string, string>
  * offers the field). Everything the page shows about status comes from the
  * UPDATE response, never from local imagination.
  */
-const INITIAL = {
+const INITIAL: DoctorProfileInputShape = {
   fullName: "",
   qualification: "",
   licenseNumber: "",
@@ -39,16 +41,22 @@ export default function ProfileForm() {
     enabled: user !== null,
   })
 
-  const [values, setValues] = useState(INITIAL)
-  const [loadedFor, setLoadedFor] = useState<string | null>(null)
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [banner, setBanner] = useState<string | null>(null)
+  const {
+    register,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<DoctorProfileInputShape>({
+    resolver: zodResolver(doctorProfileSchema),
+    defaultValues: INITIAL,
+  })
 
-  // Seed the form once the row arrives, and only into an untouched form.
-  if (doctor.data !== undefined && loadedFor !== doctor.data.id) {
-    setLoadedFor(doctor.data.id)
-    setValues({
+  useEffect(() => {
+    if (doctor.data === undefined) return
+    reset({
       fullName: doctor.data.fullName,
       qualification: doctor.data.qualification ?? "",
       licenseNumber: doctor.data.licenseNumber ?? "",
@@ -56,10 +64,10 @@ export default function ProfileForm() {
       clinicAssociation: doctor.data.clinicAssociation ?? "",
       specialization: doctor.data.specialization ?? "",
     })
-  }
+  }, [doctor.data, reset])
 
   const mutation = useMutation({
-    mutationFn: () => apiUpdateDoctor(user!.id, values),
+    mutationFn: (values: DoctorProfileInputShape) => apiUpdateDoctor(user!.id, values),
     onSuccess: (result) => {
       setBanner(
         result.verificationStatus === "PENDING_VERIFICATION"
@@ -67,12 +75,12 @@ export default function ProfileForm() {
           : "Profile updated.",
       )
       setFormError(null)
-      setFieldErrors({})
       // The public directory (and the Overview tab) reads this same row; a
       // changed credential can silently unmount a doctor from §26.
       void queryClient.invalidateQueries({ queryKey: ["public", "doctor"] })
       void queryClient.invalidateQueries({ queryKey: ["public", "doctors"] })
       void queryClient.invalidateQueries({ queryKey: ["doctor", user!.id] })
+      void queryClient.invalidateQueries({ queryKey: ["admin"] })
     },
   })
 
@@ -88,32 +96,15 @@ export default function ProfileForm() {
     )
   }
 
-  function update(name: keyof typeof INITIAL, value: string) {
-    setValues((prev) => ({ ...prev, [name]: value }))
-    setFieldErrors((prev) => {
-      if (!(name in prev)) return prev
-      const next = { ...prev }
-      delete next[name]
-      return next
-    })
-  }
-
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault()
+  const onSubmit = handleSubmit(async (values) => {
     setFormError(null)
     setBanner(null)
-    setFieldErrors({})
     try {
-      await mutation.mutateAsync()
+      await mutation.mutateAsync(values)
     } catch (err) {
-      if (err instanceof ApiError) {
-        setFieldErrors(err.byField())
-        if (err.fields.length === 0) setFormError(err.message)
-      } else {
-        setFormError("Something went wrong. Please try again.")
-      }
+      setFormError(applyApiErrors(err, setError) ?? null)
     }
-  }
+  })
 
   return (
     <div className="space-y-6">
@@ -133,23 +124,47 @@ export default function ProfileForm() {
       <form onSubmit={onSubmit} noValidate className="space-y-6">
         <fieldset className="space-y-4 rounded-xl border bg-card p-6">
           <legend className="px-1 text-sm font-semibold">Descriptive details</legend>
-          <TextInput label="Full name" name="fullName" value={values.fullName} error={fieldErrors.fullName} onChange={update} />
-          <TextInput label="Specialization" name="specialization" value={values.specialization} error={fieldErrors.specialization} onChange={update} />
-          <TextInput label="Experience" name="experience" value={values.experience} error={fieldErrors.experience} onChange={update} />
+          <TextInput
+            label="Full name"
+            name="fullName"
+            error={errors.fullName?.message}
+            registration={register("fullName")}
+          />
+          <TextInput
+            label="Specialization"
+            name="specialization"
+            error={errors.specialization?.message}
+            registration={register("specialization")}
+          />
+          <TextInput
+            label="Experience"
+            name="experience"
+            error={errors.experience?.message}
+            registration={register("experience")}
+          />
           <TextInput
             label="Practice / clinic association"
             name="clinicAssociation"
-            value={values.clinicAssociation}
-            error={fieldErrors.clinicAssociation}
-            onChange={update}
+            error={errors.clinicAssociation?.message}
+            registration={register("clinicAssociation")}
           />
         </fieldset>
 
         <fieldset className="space-y-4 rounded-xl border bg-card p-6">
           <legend className="px-1 text-sm font-semibold">Credentials — verified on the public listing</legend>
           <p className="text-sm text-muted-foreground">Editing a credential puts your listing back into re-verification.</p>
-          <TextInput label="Qualification" name="qualification" value={values.qualification} error={fieldErrors.qualification} onChange={update} />
-          <TextInput label="License number" name="licenseNumber" value={values.licenseNumber} error={fieldErrors.licenseNumber} onChange={update} />
+          <TextInput
+            label="Qualification"
+            name="qualification"
+            error={errors.qualification?.message}
+            registration={register("qualification")}
+          />
+          <TextInput
+            label="License number"
+            name="licenseNumber"
+            error={errors.licenseNumber?.message}
+            registration={register("licenseNumber")}
+          />
         </fieldset>
 
         {formError !== null && (
@@ -159,7 +174,7 @@ export default function ProfileForm() {
           </Alert>
         )}
 
-        <Button type="submit" disabled={mutation.isPending}>
+        <Button type="submit" disabled={isSubmitting || mutation.isPending}>
           {mutation.isPending ? "Saving…" : "Save changes"}
         </Button>
       </form>
@@ -170,15 +185,13 @@ export default function ProfileForm() {
 function TextInput({
   label,
   name,
-  value,
   error,
-  onChange,
+  registration,
 }: {
   label: string
-  name: keyof typeof INITIAL
-  value: string
-  error?: string | undefined
-  onChange: (name: keyof typeof INITIAL, value: string) => void
+  name: keyof DoctorProfileInputShape
+  error: string | undefined
+  registration: UseFormRegisterReturn
 }) {
   const errorId = `${name}-error`
   return (
@@ -186,15 +199,13 @@ function TextInput({
       <Label htmlFor={name}>{label}</Label>
       <Input
         id={name}
-        name={name}
         type="text"
-        value={value}
         aria-invalid={error !== undefined}
         aria-describedby={error !== undefined ? errorId : undefined}
-        onChange={(e) => onChange(name, e.target.value)}
+        {...registration}
       />
       {error !== undefined && (
-        <p id={errorId} className="text-sm text-destructive">
+        <p id={errorId} className="text-sm text-destructive" role="alert">
           {error}
         </p>
       )}
