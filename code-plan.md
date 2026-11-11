@@ -9,6 +9,7 @@ book an appointment before a slot exists, and you cannot take payment before an
 appointment exists.
 
 **Current starting state (verified):**
+
 - `client/` — Vite + React + TS shell exists, `npm run dev`/`build`/`lint` work.
 - `server/` — Express + TS exists with one `/api/v1/health` route, `tsx watch` works.
 - No `node_modules` installed yet, no `.env`, no `prisma/`, no git repo, no root
@@ -16,6 +17,7 @@ appointment exists.
 - So Day 1 is genuinely "connect what exists", not "start from scratch."
 
 **Rules that apply every single day:**
+
 - Run `npm run lint` and the typecheck before you commit. Green or it didn't happen.
 - One feature branch per phase (`feature/auth`, `feature/scheduling`, …), §34.
 - Meaningful commits, never commit `.env`, §34.
@@ -32,6 +34,7 @@ The goal of this phase: the two existing apps install, talk to a real database, 
 `/health` proves the DB round-trips. Everything later depends on this.
 
 ### Day 1 — Install, git, and wire the two halves together
+
 - `npm install` in `client/` and `server/`.
 - `git init` at the repo root; add `.gitignore` (ignore `node_modules`, `dist`, `.env`,
   `*.local`). First commit: `chore: initialise repo with client and server scaffolds`.
@@ -42,6 +45,7 @@ The goal of this phase: the two existing apps install, talk to a real database, 
 - **DoD:** both `npm run dev` processes start with no errors.
 
 ### Day 2 — Environment config + server foundation
+
 - `[S]` `npm i zod cors pino pino-http dotenv` and `npm i -D @types/cors`.
 - `server/.env` + `server/.env.example`: `DATABASE_URL`, `PORT`, `JWT_ACCESS_SECRET`,
   `ACCESS_TOKEN_TTL`, `RESEND_API_KEY`, `RAZORPAY_KEY_ID`,
@@ -66,6 +70,7 @@ The goal of this phase: the two existing apps install, talk to a real database, 
   with a clear message; `/api/v1/health` returns `200`.
 
 ### Day 3 — PostgreSQL + Prisma connect
+
 - Create a **non-superuser** role and the database, so `DATABASE_URL` never points at
   `postgres`: `CREATE ROLE doctor_booking LOGIN CREATEDB PASSWORD '…';` then
   `CREATE DATABASE doctor_booking OWNER doctor_booking;`. The role needs `CREATEDB`
@@ -94,7 +99,7 @@ The goal of this phase: the two existing apps install, talk to a real database, 
   **not** auto-load `.env` and deprecates `datasource.url` in the schema; this file is the
   source of truth for the CLI.
 - `server/src/lib/prisma.ts` — `new PrismaClient({ adapter: new PrismaPg({ connectionString:
-  config.DATABASE_URL }) })`. v7 requires a driver adapter (node-pg); the old
+config.DATABASE_URL }) })`. v7 requires a driver adapter (node-pg); the old
   `datasources: { db: { url } }` form is gone.
 - `npx prisma migrate dev --name init`, then `npx prisma generate` — **explicitly**: v7
   removed `--skip-generate`/`--skip-seed` and no longer generates or seeds on its own.
@@ -131,8 +136,8 @@ TypeScript never sees the snake_case form; raw SQL and psql always do.
     [#9823](https://github.com/prisma/prisma/issues/9823)). The native function buys nothing here
     because every insert goes through Prisma; the only hand-written SQL in this plan is DDL, `CHECK`s
     and guarded `UPDATE`s, none of which inserts a row.
-- **Enums:** the enum *type* is mapped to `snake_case` (`@@map("appointment_status")`) but the
-  *values are stored exactly as written* — uppercase, no per-value `@@map`. §23's hand-written SQL
+- **Enums:** the enum _type_ is mapped to `snake_case` (`@@map("appointment_status")`) but the
+  _values are stored exactly as written_ — uppercase, no per-value `@@map`. §23's hand-written SQL
   is literally `status IN ('CONFIRMED','ARRIVED')`; lowercasing the stored values would make that
   SQL wrong on the day it is written.
 - **Column types:** every instant is `@db.Timestamptz(3)`, so "all timestamps are UTC" (§3.2) is a
@@ -158,7 +163,7 @@ traps it exists to prevent, each of which is a real bug rather than a style ques
 - `PaymentStatus` never gets `SUCCESS` — `PAID` is the only payment success value; `SUCCESS` is
   `RefundStatus` vocabulary (§17).
 - `AuditLog.action` is a `String` (`SCREAMING_SNAKE`, e.g. `APPOINTMENT_CAPACITY_CHANGE`) and every
-  `reason` field is free text — neither is an enum (§20 gives *examples*, and a closed enum would
+  `reason` field is free text — neither is an enum (§20 gives _examples_, and a closed enum would
   make every new audited action a migration; §8.4 requires a reason, not a reason code).
 - `NotificationType` is the one open list: one `SCREAMING_SNAKE` value per §18 event, no grouping, no
   catch-all. Only `REMINDER` is named by the plan, because §23's constraint SQL quotes it.
@@ -176,7 +181,7 @@ traps it exists to prevent, each of which is a real bug rather than a style ques
   `pendingEmail?`; `isDeactivated`). No OAuth, no `Department`.
   - `passwordHash` is nullable on purpose (§5.1). The first admin and every doctor/staff account
     are created **without** a password — the person claims the account through the §6.2 reset
-    email, and no temporary password is ever generated or handed over. `null` therefore *means*
+    email, and no temporary password is ever generated or handed over. `null` therefore _means_
     "account exists, not claimed yet", and every login path must treat it as **cannot
     authenticate** rather than comparing it. Patient self-registration writes a real hash at once.
   - `pendingEmail?` holds an unverified email change (§6.1). The active `email` only changes when
@@ -266,7 +271,7 @@ the contract and an unstated field is a migration later.
   later rename or deactivation unable to rewrite attribution (§5.1, §5.2). Append-only tables get
   `createdAt` only, never `updatedAt`.
 - `AuditLog` — the actor block above plus `action` as a **`String`** in `SCREAMING_SNAKE`
-  (`APPOINTMENT_CAPACITY_CHANGE`), *not* an enum — §20 lists examples, and a closed enum would make
+  (`APPOINTMENT_CAPACITY_CHANGE`), _not_ an enum — §20 lists examples, and a closed enum would make
   every new audited action a migration; `targetType` + `targetId` (a polymorphic target, so one table
   covers slot/doctor/appointment/refund writes without a nullable FK to a dozen tables), and a
   mandatory `reason` on the audited actions (§20).
@@ -313,7 +318,7 @@ guard.
 
 This is **documented Prisma 7 behaviour, not a hypothesis**: `where` is supported on `@unique`,
 `@@unique` and `@@index` behind the `partialIndexes` preview feature, with full PostgreSQL support
-for migration *and* introspection. The syntax the spike uses:
+for migration _and_ introspection. The syntax the spike uses:
 
 ```prisma
 generator client {
@@ -332,7 +337,7 @@ So the spike verifies the **predicate round-trip**, which is the real risk:
 - Declare the three partial unique indexes with the exact predicates below, keep the `CHECK`s as raw
   SQL, then run `migrate dev` **three times** and confirm the second and third generate nothing.
 - Then run `prisma db pull` and read what comes back. Introspection returns PostgreSQL's
-  *normalised* form, so a hand-written `raw("status = 'active'")` reappears as
+  _normalised_ form, so a hand-written `raw("status = 'active'")` reappears as
   `raw("(status = 'active'::text)")`. If the canonical form of our `IN (…)` predicate differs from
   the string we wrote, the differ will keep proposing a change to an index that is already correct —
   a no-op migration loop, which is the same guard-removal bug in a different hat. If it round-trips,
@@ -347,13 +352,13 @@ So the spike verifies the **predicate round-trip**, which is the real risk:
 Then write the constraints — **this is not optional; they are the double-booking guard**, and the
 spelling is **snake_case column names**, because these are raw SQL against the mapped columns:
 
-| Constraint | Table | Mechanism |
-|---|---|---|
-| `UNIQUE (patient_id) WHERE released_at IS NULL` — one live hold per patient | `SeatHold` | per spike |
-| `UNIQUE (patient_id, slot_id) WHERE status IN ('CONFIRMED','ARRIVED')` — one active booking per patient per slot | `Appointment` | per spike |
-| `UNIQUE (appointment_id, slot_id) WHERE type = 'REMINDER'` — a reminder is never sent twice (§18) | `Notification` | per spike |
-| `CHECK (booked_count + held_count <= max_patients)` and `CHECK (max_patients > 0)` | `Slot` | raw SQL |
-| `CHECK (amount_paise > 0)` | `Payment` | raw SQL |
+| Constraint                                                                                                       | Table          | Mechanism |
+| ---------------------------------------------------------------------------------------------------------------- | -------------- | --------- |
+| `UNIQUE (patient_id) WHERE released_at IS NULL` — one live hold per patient                                      | `SeatHold`     | per spike |
+| `UNIQUE (patient_id, slot_id) WHERE status IN ('CONFIRMED','ARRIVED')` — one active booking per patient per slot | `Appointment`  | per spike |
+| `UNIQUE (appointment_id, slot_id) WHERE type = 'REMINDER'` — a reminder is never sent twice (§18)                | `Notification` | per spike |
+| `CHECK (booked_count + held_count <= max_patients)` and `CHECK (max_patients > 0)`                               | `Slot`         | raw SQL   |
+| `CHECK (amount_paise > 0)`                                                                                       | `Payment`      | raw SQL   |
 
 The reminder index is keyed on `(appointment_id, slot_id)` **including the slot** on purpose: after
 a §14 reschedule the appointment's slot changes, so a key of `(type, appointment_id)` alone would
@@ -395,7 +400,7 @@ notification type is constrained; §18 locks only the reminder.
   logs which mode it ran in (`null hash, claim via reset link` vs `seeded password`), so nobody has
   to guess why a login failed.
 - §24 also lists a second `SeatHold` index, `UNIQUE (slot_id, patient_id) WHERE released_at IS
-  NULL`; the one-live-hold-per-patient index above already implies it. Settle it during the spike:
+NULL`; the one-live-hold-per-patient index above already implies it. Settle it during the spike:
   ship it as belt-and-braces, or drop it as redundant.
 - **Phase 1 complete. [DONE]**
 
@@ -406,6 +411,7 @@ notification type is constrained; §18 locks only the reminder.
 The biggest server phase. Do it fully before touching scheduling. §3.4: every rule server-side.
 
 ### Day 7 — Registration + email verification
+
 - `[S]` Patient register (email + password, bcrypt). Account starts `EMAIL_UNVERIFIED`.
 - `[S]` Email verify via one-time link/OTP (Resend stub for now — real send in Phase 7;
   log the link to console until then). Booking blocked until verified (§6.3).
@@ -414,6 +420,7 @@ The biggest server phase. Do it fully before touching scheduling. §3.4: every r
 - **DoD:** can register, receive/see a verify link, and are blocked from booking until verified.
 
 ### Day 8 — Login, access + refresh tokens
+
 - `[S]` Login → short-lived JWT access (15 min) + opaque refresh token stored **hashed
   (SHA-256)** in `refresh_tokens`. Refresh rotates and revokes the previous (§6.3).
 - `[S]` HTTP-only cookie for the refresh token; access token in memory/header.
@@ -421,6 +428,7 @@ The biggest server phase. Do it fully before touching scheduling. §3.4: every r
 - **DoD:** login → access API → refresh rotates → logout revokes → old refresh fails.
 
 ### Day 9 — Security hardening
+
 - `[S]` DB-backed `auth_attempts` rate limiting: 5 email failures → 15-min lockout, IP cap,
   OTP send/try limits, escalating lockout, generic 429 (§6.3).
 - `[S]` Per-request status re-check for DOCTOR/STAFF/ADMIN (suspension/deactivation takes
@@ -434,18 +442,18 @@ The biggest server phase. Do it fully before touching scheduling. §3.4: every r
 Six questions came out of reading this day against `plan.md` §6.3 and Day 8's code. Each is
 settled here so the day is mechanical; the reasoning is in `loopholes.md` §7.
 
-| Question | Decision |
-|---|---|
-| Are the thresholds in code or env? | **Env, defaulting to the §6.3 numbers** — `plan.md` fixes the values, but a developer proving the lockout path should not have to fail a login five times to watch it happen. Unset means the spec'd value, so production runs on defaults |
-| How is a count-shaped limit validated? | **`.int().positive()`** — never a bare `z.coerce.number()`. `PORT` already gets away with coercion only because `.positive()` rejects the `0` that `""` coerces into (`config.ts:11`); a limit with no such floor can be turned to `0` by blanking the line, which is a lockout nobody chose |
-| Can the lockout be disabled? | **No, and there is no value that expresses it** — `plan.md` never wants it off, so `0` is rejected at boot rather than read as "no failures allowed". A blank value goes through `blankAsUndefined` (`config.ts:4-5`) and falls back to the default |
-| Are durations numbers or strings? | **Strings matching `/^\d+[smhd]$/`**, like `ACCESS_TOKEN_TTL` (`config.ts:24-26`) — `15m` stays readable, and a duration cannot be typo'd into a count |
-| What do Day 9's `[T]` tests cover? | **The decision logic only, as pure unit tests** — the harness is Day 35 (`code-plan.md:674`) and the DB-backed versions of these same tests are Day 36 (`:678`). The judgment is split into a pure function so the escalation ladder and window boundary are testable with no database |
-| What proves the DoD on Day 9? | **The mechanism, via deactivation** — see the caveat below |
-| Is `express-rate-limit` a second IP authority? | **No — it sheds load before the database, and nothing else** — §6.3 asks for the coarse layer, so the package is taken, but `auth_attempts.ipKey` stays the IP authority. Two limiters disagreeing is how an endpoint ends up enforcing the more permissive one |
-| How is the "≤5 verification tries per OTP" cap keyed, when `/verify-email` carries only the submitted code? | **Both §6.3 keys, because the per-OTP key alone cannot do the job** — the cap is keyed on `hash(submittedCode)`, and brute force works by submitting *different* codes, so each guess arrives under a fresh key with a fresh budget of five. Thirty wrong codes against one issued token returned thirty `400`s and no `429`. What that key genuinely protects is the *valid* token (five looks total, one of them legitimate). Bounding guessing needs the IP key, which §6.3 already assigns to this class of abuse: 20/min against a six-digit space cannot exhaust 10⁶ before the token expires |
-| Is a per-IP verify cap safe on a shared NAT host? | **Yes, because the budget is per IP per *purpose*, not per patient** — 20/min shared across all verification traffic from one host. Legitimate volume is a handful of requests. The earlier worry that one host could spend "every unrelated patient's budget" only applies if the ceiling were per-patient, which it is not — and a per-patient ceiling is not expressible here anyway (below) |
-| Can a wrong OTP guess be attributed to a specific patient? | **No, not with today's endpoint** — a wrong code matches no `auth_tokens` row, so nothing identifies which issued token is being attacked. The honest fix is to carry the address in the verification link, which changes the Day 7 link format and the client with it. Not done on Day 9; recorded here so it is a decision rather than a surprise on Day 11 |
+| Question                                                                                                    | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Are the thresholds in code or env?                                                                          | **Env, defaulting to the §6.3 numbers** — `plan.md` fixes the values, but a developer proving the lockout path should not have to fail a login five times to watch it happen. Unset means the spec'd value, so production runs on defaults                                                                                                                                                                                                                                                                                                                                                          |
+| How is a count-shaped limit validated?                                                                      | **`.int().positive()`** — never a bare `z.coerce.number()`. `PORT` already gets away with coercion only because `.positive()` rejects the `0` that `""` coerces into (`config.ts:11`); a limit with no such floor can be turned to `0` by blanking the line, which is a lockout nobody chose                                                                                                                                                                                                                                                                                                        |
+| Can the lockout be disabled?                                                                                | **No, and there is no value that expresses it** — `plan.md` never wants it off, so `0` is rejected at boot rather than read as "no failures allowed". A blank value goes through `blankAsUndefined` (`config.ts:4-5`) and falls back to the default                                                                                                                                                                                                                                                                                                                                                 |
+| Are durations numbers or strings?                                                                           | **Strings matching `/^\d+[smhd]$/`**, like `ACCESS_TOKEN_TTL` (`config.ts:24-26`) — `15m` stays readable, and a duration cannot be typo'd into a count                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| What do Day 9's `[T]` tests cover?                                                                          | **The decision logic only, as pure unit tests** — the harness is Day 35 (`code-plan.md:674`) and the DB-backed versions of these same tests are Day 36 (`:678`). The judgment is split into a pure function so the escalation ladder and window boundary are testable with no database                                                                                                                                                                                                                                                                                                              |
+| What proves the DoD on Day 9?                                                                               | **The mechanism, via deactivation** — see the caveat below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Is `express-rate-limit` a second IP authority?                                                              | **No — it sheds load before the database, and nothing else** — §6.3 asks for the coarse layer, so the package is taken, but `auth_attempts.ipKey` stays the IP authority. Two limiters disagreeing is how an endpoint ends up enforcing the more permissive one                                                                                                                                                                                                                                                                                                                                     |
+| How is the "≤5 verification tries per OTP" cap keyed, when `/verify-email` carries only the submitted code? | **Both §6.3 keys, because the per-OTP key alone cannot do the job** — the cap is keyed on `hash(submittedCode)`, and brute force works by submitting _different_ codes, so each guess arrives under a fresh key with a fresh budget of five. Thirty wrong codes against one issued token returned thirty `400`s and no `429`. What that key genuinely protects is the _valid_ token (five looks total, one of them legitimate). Bounding guessing needs the IP key, which §6.3 already assigns to this class of abuse: 20/min against a six-digit space cannot exhaust 10⁶ before the token expires |
+| Is a per-IP verify cap safe on a shared NAT host?                                                           | **Yes, because the budget is per IP per _purpose_, not per patient** — 20/min shared across all verification traffic from one host. Legitimate volume is a handful of requests. The earlier worry that one host could spend "every unrelated patient's budget" only applies if the ceiling were per-patient, which it is not — and a per-patient ceiling is not expressible here anyway (below)                                                                                                                                                                                                     |
+| Can a wrong OTP guess be attributed to a specific patient?                                                  | **No, not with today's endpoint** — a wrong code matches no `auth_tokens` row, so nothing identifies which issued token is being attacked. The honest fix is to carry the address in the verification link, which changes the Day 7 link format and the client with it. Not done on Day 9; recorded here so it is a decision rather than a surprise on Day 11                                                                                                                                                                                                                                       |
 
 **Env variable names** (added to `.env.example` and the config schema, all optional with
 §6.3 defaults): `LOCKOUT_FAILURES=5`, `LOCKOUT_WINDOW=15m`, `LOCKOUT_MAX_WINDOW=60m`,
@@ -455,7 +463,7 @@ are separate rather than one JSON blob is that each one is a distinct §6.3 clau
 identity key, the IP key, and the two OTP limits — so they are separately tunable and
 separately citable.
 
-**DoD caveat, stated now rather than discovered on Day 9:** the DoD says *suspending a doctor*,
+**DoD caveat, stated now rather than discovered on Day 9:** the DoD says _suspending a doctor_,
 but doctor suspension is Day 12 (`code-plan.md:499`) and there is no endpoint for it yet, and
 password reset is Day 11. What Day 9 can genuinely prove is the **mechanism**: a per-request
 re-check plus `revokeAllSessions` inside the same transaction, demonstrated through
@@ -465,18 +473,18 @@ real but it is ordering, not uncertainty.
 
 #### Files
 
-| File | |
-|---|---|
-`src/services/rateLimit.service.ts` | **new** — attempt recording, windowed counts, the pure lockout decision, escalation |
-`src/middleware/rateLimit.ts` | **new** — the DB-backed guard as Express middleware; generic 429 |
-| `src/lib/duration.ts` | **new** — `30s`/`15m`/`1h`/`7d` → ms, shared by the three lockout windows, the IP window and the OTP send window, so one parser owns the format instead of five inline regexes |
-`tests/rateLimit.test.ts` | **new** — pure decision-logic tests (ladder, boundary, identity vs IP) |
-`src/middleware/auth.ts` | doctor status re-check on top of Day 8's `isDeactivated` |
-`src/services/auth.service.ts` | record attempts; `deactivateUser()` wrapping `revokeAllSessions` in one transaction |
-`src/routes/auth.ts` | mount the limiter; keep `getClientIp` as the only IP source |
-`src/middleware/errorHandler.ts` | emit `Retry-After` on 429 |
-`src/config.ts`, `.env.example` | the eight vars above, validated as specified |
-`package.json` | `express-rate-limit` — §6.3's coarse outer guard on the auth router |
+| File                                |                                                                                                                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/services/rateLimit.service.ts` | **new** — attempt recording, windowed counts, the pure lockout decision, escalation                                                                                            |
+| `src/middleware/rateLimit.ts`       | **new** — the DB-backed guard as Express middleware; generic 429                                                                                                               |
+| `src/lib/duration.ts`               | **new** — `30s`/`15m`/`1h`/`7d` → ms, shared by the three lockout windows, the IP window and the OTP send window, so one parser owns the format instead of five inline regexes |
+| `tests/rateLimit.test.ts`           | **new** — pure decision-logic tests (ladder, boundary, identity vs IP)                                                                                                         |
+| `src/middleware/auth.ts`            | doctor status re-check on top of Day 8's `isDeactivated`                                                                                                                       |
+| `src/services/auth.service.ts`      | record attempts; `deactivateUser()` wrapping `revokeAllSessions` in one transaction                                                                                            |
+| `src/routes/auth.ts`                | mount the limiter; keep `getClientIp` as the only IP source                                                                                                                    |
+| `src/middleware/errorHandler.ts`    | emit `Retry-After` on 429                                                                                                                                                      |
+| `src/config.ts`, `.env.example`     | the eight vars above, validated as specified                                                                                                                                   |
+| `package.json`                      | `express-rate-limit` — §6.3's coarse outer guard on the auth router                                                                                                            |
 
 **Reused, not rewritten:** `revokeAllSessions` (`auth.service.ts:318`) already exists and is
 Day 9's first caller. `AuthAttempt` (`schema.prisma:1031-1053`) already exists, indexes
@@ -485,19 +493,20 @@ the only place an IP is derived — `ipKey` must be that value, not a second rea
 `x-forwarded-for`.
 
 **On the coarse layer's store:** `express-rate-limit`'s default in-memory store is acceptable
-here *only* because the authoritative cap is DB-backed and the app is single-instance (§18
+here _only_ because the authoritative cap is DB-backed and the app is single-instance (§18
 keeps Redis out of the MVP). That is a dependency, not a coincidence: if the `auth_attempts`
 IP cap is ever removed, an in-memory guard silently becomes the only one and is per-process.
 Set the store explicitly rather than inheriting the default, so the assumption is visible in
 the code instead of implied by a version bump.
 
 ### Day 10 — RBAC + ownership
+
 - `[S]` Role middleware for all four roles. Ownership checks (patient sees only their data;
   doctor sees only their own schedule). §7.
 - `[S]` Bootstrap first admin via a setup command (no admin self-registration).
 - **DoD:** each role can only reach its own endpoints; a patient cannot reach a doctor's.
 
-**DoD caveat, stated now rather than discovered later:** the DoD needs role-gated *endpoints*
+**DoD caveat, stated now rather than discovered later:** the DoD needs role-gated _endpoints_
 to prove itself, and Day 10 builds none — the doctor routes are Day 12, the patient's booking
 routes Day 13, the staff desk Day 14. What Day 10 ships is the middleware itself with unit
 tests (`tests/rbac.test.ts`: all four roles against `requireRole`, the ownership helper's
@@ -505,11 +514,11 @@ self-or-role branch, and a guard against role injection through the register sch
 of those days inherits the live-HTTP proof because it exercises the same middleware. Same
 posture as Day 9's deactivation caveat above: ordering, not uncertainty.
 
-| Question | Decision |
-|---|---|
-| How is "patient sees only their data" proven on Day 10? | **It isn't — there is nothing yet to see.** `requireSelfOrRole` ships exported with no caller and says so in its comment; first callers are Day 13 (patient's own bookings) and Day 14 (doctor's own schedule). A helper with no data behind it earns a unit test, not a fake route |
-| Where does `req.user`'s type live? | **`src/types/express.ts`, not the middleware** — the repo compiles two TS programs (`tsconfig.json` and `tsconfig.tools.json`, the latter including tests), and the tools program never loads `middleware/auth.ts`. An augmentation declared inside auth.ts is invisible to `tsc -p tsconfig.tools.json`, so both programs instead include one shared file that each imports as a dependency marker |
-| What about the `[S]` setup command for the first admin? | **The Day 6 seed already creates one; Day 10 verifies rather than builds.** §5.1 wants no admin self-registration, and the seed satisfies it — a second mechanism that does the same thing is two places to get it wrong. Live check: the seeded admin passes `requireRole("ADMIN")` |
+| Question                                                | Decision                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| How is "patient sees only their data" proven on Day 10? | **It isn't — there is nothing yet to see.** `requireSelfOrRole` ships exported with no caller and says so in its comment; first callers are Day 13 (patient's own bookings) and Day 14 (doctor's own schedule). A helper with no data behind it earns a unit test, not a fake route                                                                                                                 |
+| Where does `req.user`'s type live?                      | **`src/types/express.ts`, not the middleware** — the repo compiles two TS programs (`tsconfig.json` and `tsconfig.tools.json`, the latter including tests), and the tools program never loads `middleware/auth.ts`. An augmentation declared inside auth.ts is invisible to `tsc -p tsconfig.tools.json`, so both programs instead include one shared file that each imports as a dependency marker |
+| What about the `[S]` setup command for the first admin? | **The Day 6 seed already creates one; Day 10 verifies rather than builds.** §5.1 wants no admin self-registration, and the seed satisfies it — a second mechanism that does the same thing is two places to get it wrong. Live check: the seeded admin passes `requireRole("ADMIN")`                                                                                                                |
 
 **Files:** `src/middleware/rbac.ts` (new), `src/lib/ownership.ts` (new),
 `tests/rbac.test.ts` (new), `src/middleware/auth.ts` + `src/types/express.ts` (the `req.user`
@@ -517,24 +526,25 @@ type made precise: `role` as the `$Enums.UserRole` union, `phone`, patient profi
 `tsconfig.tools.json` (include the augmentation file).
 
 ### Day 11 — Forgot password + account management
+
 - `[S]` Forgot password (email reset link or OTP) → set new password → revoke all sessions.
 - `[S]` Patient account: update email/phone (verify new email), delete → anonymise.
 - `[C]` Forgot/reset + profile + delete-account screens.
 - **DoD:** full account lifecycle works; a reset kills all sessions.
 - **Phase 2 complete. [DONE]**
 
-| Question | Decision |
-|---|---|
-| What is the reset TTL? | **`PASSWORD_RESET_TTL`, default `15m`** — §6.2 says configurable, so env with the spec'd default, same shape as the Day 9 lockout vars. `EMAIL_CHANGE` tokens borrow it: both are "how long a recovery/verification secret lives before it must be re-requested", and one meaning across two purposes beats two vars that must be kept equal by hand |
-| Can two issued OTPs collide? | **Yes — and verification would silently pick the wrong account without handling it.** `auth_tokens.token_hash` is globally unique and the verify path is `findUnique` on the submitted code's hash with no userId, so a 6-digit code is a 1-in-a-million key that two in-flight resets *will* eventually share. `issueResetToken` regenerates on collision (≤5 draws). The alternative — composite lookup — would require a schema the plan does not have |
-| Is token issuance inside the reset transaction? | **No.** Postgres aborts a transaction on any statement error, so a unique-violation retry inside a tx would poison everything already written to it. Ordering replaces atomicity instead: consume the patient's prior outstanding token first, then issue — a crash between the two leaves an extra live token, never a blocked reset, and single-use claims cap the blast radius |
-| What does `/forgot-password` return? | **One generic §6.2 message for every input** — unknown address, deactivated account, rate-limited, link or OTP method: same body. The method only changes delivery. The real URL/code is logged server-side only, never in the response — the client echoes the server's copy so the wording cannot drift |
-| What re-auths a phone change or a deletion? | **The current password only** (locked decision: no OTP option) — and the check *participates in the §6.3 LOGIN lockout*: same identity key, failures recorded, success recorded. A password check that does not count toward the lockout is a side door around it: guess forever here, and LOGIN's five-failure promise means nothing |
-| How much audit does Day 11 build? | **The minimal append-only writer: insert and throw, nothing else** (locked decision — Day 20 adds reads/exports). It takes the `DbClient` so the audit row commits inside the same transaction as the change it describes, and `actor.name` is snapshotted at write time because `AuditLog.actorName` is NOT NULL and anonymising a user later must not rewrite the history of what happened |
-| Why do release/void run before the delete guards? | **Because the guards would otherwise trip over the delete's own actions.** Releasing the patient's held seat and voiding its pending order are always-safe; if they ran after the guard check, `PENDING_PAYMENT` would block deleting an account whose only pending order was for the seat we were about to release. Everything is one transaction, so a guard failure still rolls the whole attempt back |
-| Why 409 for `EMAIL_UNCHANGED`/`PHONE_UNCHANGED`? | **Setting a value to what it already is is a conflict with current state, not a validation failure** — 422 would blame the input's shape, which is well-formed. Same reasoning as `EMAIL_ALREADY_EXISTS` on register |
-| Where did the Login screen come from? | **It is a plan gap, absorbed into Day 11 by decision** — the day list has no `[C]` login task before this, yet `/profile`, phone change and delete need a session to exist at all. Added with the bearer/`credentials:"include"` plumbing, which is what makes every Day 11 screen more than a form posting into the void |
-| How does the client hold the session? | **Access token in module memory, refresh token in its httpOnly cookie** — never localStorage (an XSS must not read a 15-minute credential; memory dies with the tab). Every request sends `credentials: "include"`; an expired access token triggers exactly one `/auth/refresh` + replay, deduped across concurrent 401s because the refresh token is single-use. `INVALID_CREDENTIALS` and `INVALID_REFRESH_TOKEN` are terminal and never retried — retrying them would turn "wrong password" into a phantom network failure |
+| Question                                          | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| What is the reset TTL?                            | **`PASSWORD_RESET_TTL`, default `15m`** — §6.2 says configurable, so env with the spec'd default, same shape as the Day 9 lockout vars. `EMAIL_CHANGE` tokens borrow it: both are "how long a recovery/verification secret lives before it must be re-requested", and one meaning across two purposes beats two vars that must be kept equal by hand                                                                                                                                                                           |
+| Can two issued OTPs collide?                      | **Yes — and verification would silently pick the wrong account without handling it.** `auth_tokens.token_hash` is globally unique and the verify path is `findUnique` on the submitted code's hash with no userId, so a 6-digit code is a 1-in-a-million key that two in-flight resets _will_ eventually share. `issueResetToken` regenerates on collision (≤5 draws). The alternative — composite lookup — would require a schema the plan does not have                                                                      |
+| Is token issuance inside the reset transaction?   | **No.** Postgres aborts a transaction on any statement error, so a unique-violation retry inside a tx would poison everything already written to it. Ordering replaces atomicity instead: consume the patient's prior outstanding token first, then issue — a crash between the two leaves an extra live token, never a blocked reset, and single-use claims cap the blast radius                                                                                                                                              |
+| What does `/forgot-password` return?              | **One generic §6.2 message for every input** — unknown address, deactivated account, rate-limited, link or OTP method: same body. The method only changes delivery. The real URL/code is logged server-side only, never in the response — the client echoes the server's copy so the wording cannot drift                                                                                                                                                                                                                      |
+| What re-auths a phone change or a deletion?       | **The current password only** (locked decision: no OTP option) — and the check _participates in the §6.3 LOGIN lockout_: same identity key, failures recorded, success recorded. A password check that does not count toward the lockout is a side door around it: guess forever here, and LOGIN's five-failure promise means nothing                                                                                                                                                                                          |
+| How much audit does Day 11 build?                 | **The minimal append-only writer: insert and throw, nothing else** (locked decision — Day 20 adds reads/exports). It takes the `DbClient` so the audit row commits inside the same transaction as the change it describes, and `actor.name` is snapshotted at write time because `AuditLog.actorName` is NOT NULL and anonymising a user later must not rewrite the history of what happened                                                                                                                                   |
+| Why do release/void run before the delete guards? | **Because the guards would otherwise trip over the delete's own actions.** Releasing the patient's held seat and voiding its pending order are always-safe; if they ran after the guard check, `PENDING_PAYMENT` would block deleting an account whose only pending order was for the seat we were about to release. Everything is one transaction, so a guard failure still rolls the whole attempt back                                                                                                                      |
+| Why 409 for `EMAIL_UNCHANGED`/`PHONE_UNCHANGED`?  | **Setting a value to what it already is is a conflict with current state, not a validation failure** — 422 would blame the input's shape, which is well-formed. Same reasoning as `EMAIL_ALREADY_EXISTS` on register                                                                                                                                                                                                                                                                                                           |
+| Where did the Login screen come from?             | **It is a plan gap, absorbed into Day 11 by decision** — the day list has no `[C]` login task before this, yet `/profile`, phone change and delete need a session to exist at all. Added with the bearer/`credentials:"include"` plumbing, which is what makes every Day 11 screen more than a form posting into the void                                                                                                                                                                                                      |
+| How does the client hold the session?             | **Access token in module memory, refresh token in its httpOnly cookie** — never localStorage (an XSS must not read a 15-minute credential; memory dies with the tab). Every request sends `credentials: "include"`; an expired access token triggers exactly one `/auth/refresh` + replay, deduped across concurrent 401s because the refresh token is single-use. `INVALID_CREDENTIALS` and `INVALID_REFRESH_TOKEN` are terminal and never retried — retrying them would turn "wrong password" into a phantom network failure |
 
 **Files:** `src/config.ts` + `.env.example` (`PASSWORD_RESET_TTL`); `src/lib/auth.ts`
 (`generateOtp`, `looksLikeOtp`, `getPasswordResetExpiry`); `src/lib/prisma.ts` (`DbClient`,
@@ -559,7 +569,7 @@ verification; `requireRole` (Day 10) is what makes `/change-phone`, `/change-ema
 
 **Delete-account guard order (§6.1, one transaction):** release live holds → void those
 orders → guards (upcoming appointments, `PENDING` payment, `PENDING` refund) → deactivate +
-anonymise → revoke sessions → audit. Outstanding `auth_tokens` are deliberately *not* deleted:
+anonymise → revoke sessions → audit. Outstanding `auth_tokens` are deliberately _not_ deleted:
 every verify path already rejects `isDeactivated`, so a leftover link fails closed with the
 same generic message a forged one gets.
 
@@ -568,6 +578,7 @@ same generic message a forged one gets.
 ## Phase 3 — Doctor & Clinic Management (Days 12–14)
 
 ### Day 12 — Doctor onboarding + verification (backend)
+
 - `[S]` Invite/claim flow (admin→staff, admin/staff→doctor) (§5.1).
 - `[S]` Doctor CRUD by admin; staff may create/update/suspend/archive but **not** verify,
   un-archive, un-suspend (§5.2, admin-only).
@@ -577,12 +588,14 @@ same generic message a forged one gets.
 - **DoD:** the §5 transition matrix is enforced; role limits hold.
 
 ### Day 13 — Public doctor surface
+
 - `[S]` Public list + profile endpoints (verified doctors only; suspended hidden).
 - `[C]` Landing page, public doctor list, specialization browse, doctor cards, booking
   entry points (§26).
 - **DoD:** a verified doctor appears publicly; a suspended one does not.
 
 ### Day 14 — Doctor dashboard foundation
+
 - `[C]` Doctor shell: profile edit (triggers re-verification), schedule placeholder, today's
   appointments, read-only live queue (name + masked contact + status, "up next") (§28).
 - **DoD:** doctor can view/edit own profile and see today's queue read-only.
@@ -593,26 +606,29 @@ same generic message a forged one gets.
 ## Phase 4 — Scheduling Engine (Days 15–18)
 
 ### Day 15 — Schedule + slot generation
+
 - `[S]` Schedule template CRUD (working days, window start/end, `maxPatients`).
 - `[S]` Materialize dated `Slot`s from the template across the 60-day horizon; idempotent
   (unique `doctorId+slotDate+startTime`) (§11).
 - **DoD:** creating a schedule produces correct slots; re-running doesn't duplicate.
 
 #### Decisions locked for Day 15
-| # | Decision |
-|---|----------|
-| 1 | Idempotency = whole-DATE skip (Option A): a `(doctorId, slotDate)` already holding any slot is skipped entirely. Template edits then affect only ungenerated dates (§11). |
-| 2 | Roles: ADMIN/STAFF manage any doctor's template; DOCTOR manages own. DOCTOR cannot change `maxPatients` on PATCH (403, §8.3 reasoning like `consultationFee`); create may include it. |
-| 3 | Overlapping windows on the same weekday → 422 `SCHEDULE_WINDOW_OVERLAP` (app-level); unique key `(doctorId, weekday, startTime)` backstops races → 409 `SCHEDULE_WINDOW_EXISTS`. |
-| 4 | Timezone: `Clinic.timezone` DB row is the SINGLE runtime authority (generator + `/doctors/me/today` queue). `APP_TIMEZONE` only bootstraps the row and is IANA-validated at boot; seed warns but never overwrites a different existing value. Queue route + seed + demo script touch points swept. |
-| 5 | Reason mandatory on UPDATE and DELETE audits, optional on CREATE (§20). |
-| 6 | No audit rows for materialization — Pino log only; template CRUD audited with before/after `HH:MM` snapshots. |
-| 7 | DoD via pure unit tests (`tests/slotPlan.test.ts`, no config/prisma) + scratch `scripts/day15-dod.ts` proving idempotency against the seeded DB. DB-backed tests land with Day 36. |
-| 8 | Horizon `[today, today + bookingHorizonDays]` is INCLUSIVE of today — generate today's elapsed windows too. |
-| 9 | Materialization runs AFTER the mutating transaction (never 500s a saved edit; failure logged, recoverable via `POST /schedules/materialize`). Wired into verify/unsuspend/unarchive (materialisation resumes on the §5 VERIFIED set). |
-| 10 | Seed's §4 slot block DELETED in favor of calling `materializeSlots()` — the generator is the only Slot-row writer; the previous minimal "this-week" block is gone. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                           |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Idempotency = whole-DATE skip (Option A): a `(doctorId, slotDate)` already holding any slot is skipped entirely. Template edits then affect only ungenerated dates (§11).                                                                                                                          |
+| 2   | Roles: ADMIN/STAFF manage any doctor's template; DOCTOR manages own. DOCTOR cannot change `maxPatients` on PATCH (403, §8.3 reasoning like `consultationFee`); create may include it.                                                                                                              |
+| 3   | Overlapping windows on the same weekday → 422 `SCHEDULE_WINDOW_OVERLAP` (app-level); unique key `(doctorId, weekday, startTime)` backstops races → 409 `SCHEDULE_WINDOW_EXISTS`.                                                                                                                   |
+| 4   | Timezone: `Clinic.timezone` DB row is the SINGLE runtime authority (generator + `/doctors/me/today` queue). `APP_TIMEZONE` only bootstraps the row and is IANA-validated at boot; seed warns but never overwrites a different existing value. Queue route + seed + demo script touch points swept. |
+| 5   | Reason mandatory on UPDATE and DELETE audits, optional on CREATE (§20).                                                                                                                                                                                                                            |
+| 6   | No audit rows for materialization — Pino log only; template CRUD audited with before/after `HH:MM` snapshots.                                                                                                                                                                                      |
+| 7   | DoD via pure unit tests (`tests/slotPlan.test.ts`, no config/prisma) + scratch `scripts/day15-dod.ts` proving idempotency against the seeded DB. DB-backed tests land with Day 36.                                                                                                                 |
+| 8   | Horizon `[today, today + bookingHorizonDays]` is INCLUSIVE of today — generate today's elapsed windows too.                                                                                                                                                                                        |
+| 9   | Materialization runs AFTER the mutating transaction (never 500s a saved edit; failure logged, recoverable via `POST /schedules/materialize`). Wired into verify/unsuspend/unarchive (materialisation resumes on the §5 VERIFIED set).                                                              |
+| 10  | Seed's §4 slot block DELETED in favor of calling `materializeSlots()` — the generator is the only Slot-row writer; the previous minimal "this-week" block is gone.                                                                                                                                 |
 
 ### Day 16 — Slot management + capacity + horizon
+
 - `[S]` Slot create/edit/disable with the §8.4 guards: block date/time edits and
   disable/remove while the slot still holds a seat or a live hold; capacity-only edits
   allowed, always with a reason (audited).
@@ -621,28 +637,31 @@ same generic message a forged one gets.
   is audited.
 
 #### Decisions locked for Day 16
-| # | Decision |
-|---|----------|
-| 1 | Roles: slot create/edit/disable/enable = ADMIN/STAFF only; DOCTOR excluded (their availability tool is Day 18's `DoctorUnavailability`). Reads ADMIN/STAFF. Gate = existing `requireRole(ADMIN, STAFF)`; service re-enforces. |
-| 2 | Reason contract mirrors Day 15: mandatory on edit/disable/enable (422 if missing), OPTIONAL on create. |
-| 3 | ONE shared seat-or-hold predicate (`lib/slotGuard.ts`, pure) gates BOTH time-edit and disable (409 `SLOT_HELD`): `CONFIRMED`/`ARRIVED` always; `COMPLETED`/`NO_SHOW` only while the slot has not ended (§13.1); live hold = `releasedAt IS NULL AND expiresAt > now()` (§8.6). Capacity-only edits SKIP it. |
-| 4 | Capacity-lower: `newMaxPatients < bookedCount + heldCount` → 409 `CAPACITY_BELOW_BOOKED` with §8.4's message; DB CHECK (counters ≤ max) backstops races; counters re-read inside the transaction. |
-| 5 | Time/date edits recompute `startAt`/`endAt` ONLY through `localDateTimeToUtc` with `Clinic.timezone`; overlap vs the same doctor's slots on that `slotDate` → 422 `SLOT_OVERLAP` (half-open windows via `windowsOverlap`, excluding self). |
-| 6 | Manual create: `(doctorId, slotDate, startTime)` unique → 409 `SLOT_EXISTS` (race backstop under the overlap check); create restricted to `[today, today + bookingHorizonDays]` (422 `SLOT_OUTSIDE_HORIZON`). |
-| 7 | No hard DELETE in MVP — disable = `isDisabled` + `disabledReason`; re-enable audited with mandatory reason. Bulk-week create (`POST /slots/bulk`) deferred. |
-| 8 | Audit + DoctorHistory double-write in the same transaction: AuditLog `SLOT_CREATED`/`SLOT_UPDATED` (time edit)/`SLOT_CAPACITY_CHANGE`/`SLOT_DISABLED`/`SLOT_ENABLED`, targetType `slot`, before/after snapshots, reason/ip/requestId; AND a `DoctorHistory` row on the doctor's timeline (plan §5.2 records §8.4 slot edits there; `eventType` free string). |
-| 9 | Settings PATCH scope = the SIX scheduling tunables only (`bookingHorizonDays`, `cancelCutoffMinutes`, `holdDurationMinutes`, `minLeadMinutes`, `reminderLeadMinutes`, `maxActiveBookingsPerPatient`); `timezone`/`currency`/`name`/`defaultConsultationFee` excluded. Audited `CLINIC_SETTINGS_UPDATED` with before/after, reason optional. `GET /api/v1/clinics/settings` ADMIN/STAFF; PATCH ADMIN-only. |
-| 10 | Horizon change re-runs `materializeSlots()` AFTER commit: widened horizon tops up idempotently; narrowed writes nothing (leftover far-future slots hidden by Day 17 read model / Day 19 booking-horizon check, never deleted). |
-| 11 | DoD: pure `tests/slotGuard.test.ts` (statuses × end/now × holds × capacity) + scratch `scripts/day16-dod.ts` — synthetic CONFIRMED appointment + live hold on a generated slot asserts time-edit/disable rejected (409 `SLOT_HELD`), capacity raise lands an audit row, self-cleaning. DB-backed seat tests land with Day 36. |
-| 12 | Error codes: 422 missing reason; 409 `SLOT_HELD`/`CAPACITY_BELOW_BOOKED`/`SLOT_OVERLAP`/`SLOT_EXISTS`; 404 `SLOT_NOT_FOUND`. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                  |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Roles: slot create/edit/disable/enable = ADMIN/STAFF only; DOCTOR excluded (their availability tool is Day 18's `DoctorUnavailability`). Reads ADMIN/STAFF. Gate = existing `requireRole(ADMIN, STAFF)`; service re-enforces.                                                                                                                                                                             |
+| 2   | Reason contract mirrors Day 15: mandatory on edit/disable/enable (422 if missing), OPTIONAL on create.                                                                                                                                                                                                                                                                                                    |
+| 3   | ONE shared seat-or-hold predicate (`lib/slotGuard.ts`, pure) gates BOTH time-edit and disable (409 `SLOT_HELD`): `CONFIRMED`/`ARRIVED` always; `COMPLETED`/`NO_SHOW` only while the slot has not ended (§13.1); live hold = `releasedAt IS NULL AND expiresAt > now()` (§8.6). Capacity-only edits SKIP it.                                                                                               |
+| 4   | Capacity-lower: `newMaxPatients < bookedCount + heldCount` → 409 `CAPACITY_BELOW_BOOKED` with §8.4's message; DB CHECK (counters ≤ max) backstops races; counters re-read inside the transaction.                                                                                                                                                                                                         |
+| 5   | Time/date edits recompute `startAt`/`endAt` ONLY through `localDateTimeToUtc` with `Clinic.timezone`; overlap vs the same doctor's slots on that `slotDate` → 422 `SLOT_OVERLAP` (half-open windows via `windowsOverlap`, excluding self).                                                                                                                                                                |
+| 6   | Manual create: `(doctorId, slotDate, startTime)` unique → 409 `SLOT_EXISTS` (race backstop under the overlap check); create restricted to `[today, today + bookingHorizonDays]` (422 `SLOT_OUTSIDE_HORIZON`).                                                                                                                                                                                             |
+| 7   | No hard DELETE in MVP — disable = `isDisabled` + `disabledReason`; re-enable audited with mandatory reason. Bulk-week create (`POST /slots/bulk`) deferred.                                                                                                                                                                                                                                               |
+| 8   | Audit + DoctorHistory double-write in the same transaction: AuditLog `SLOT_CREATED`/`SLOT_UPDATED` (time edit)/`SLOT_CAPACITY_CHANGE`/`SLOT_DISABLED`/`SLOT_ENABLED`, targetType `slot`, before/after snapshots, reason/ip/requestId; AND a `DoctorHistory` row on the doctor's timeline (plan §5.2 records §8.4 slot edits there; `eventType` free string).                                              |
+| 9   | Settings PATCH scope = the SIX scheduling tunables only (`bookingHorizonDays`, `cancelCutoffMinutes`, `holdDurationMinutes`, `minLeadMinutes`, `reminderLeadMinutes`, `maxActiveBookingsPerPatient`); `timezone`/`currency`/`name`/`defaultConsultationFee` excluded. Audited `CLINIC_SETTINGS_UPDATED` with before/after, reason optional. `GET /api/v1/clinics/settings` ADMIN/STAFF; PATCH ADMIN-only. |
+| 10  | Horizon change re-runs `materializeSlots()` AFTER commit: widened horizon tops up idempotently; narrowed writes nothing (leftover far-future slots hidden by Day 17 read model / Day 19 booking-horizon check, never deleted).                                                                                                                                                                            |
+| 11  | DoD: pure `tests/slotGuard.test.ts` (statuses × end/now × holds × capacity) + scratch `scripts/day16-dod.ts` — synthetic CONFIRMED appointment + live hold on a generated slot asserts time-edit/disable rejected (409 `SLOT_HELD`), capacity raise lands an audit row, self-cleaning. DB-backed seat tests land with Day 36.                                                                             |
+| 12  | Error codes: 422 missing reason; 409 `SLOT_HELD`/`CAPACITY_BELOW_BOOKED`/`SLOT_OVERLAP`/`SLOT_EXISTS`; 404 `SLOT_NOT_FOUND`.                                                                                                                                                                                                                                                                              |
 
 ### Day 17 — Availability read model
+
 - `[S]` "Bookable slots for doctor X on date D" endpoint — hides suspended/unverified
   doctors, closed slots, full slots, and slots overlapping `DoctorUnavailability` (§11).
 - `[C]` Slot picker on the doctor profile / patient dashboard.
 - **DoD:** patient sees only genuinely bookable slots.
 
 ### Day 18 — Unavailability
+
 - `[S]` Staff/admin/doctor mark unavailability; affected slots close; existing confirmed
   appointments cascade (notify, waive cutoff, auto-cancel + auto-refund) (§12).
 - `[T]` "Attendance is never overwritten" — a `COMPLETED`/`NO_SHOW` patient is not
@@ -657,6 +676,7 @@ same generic message a forged one gets.
 The correctness-critical phase. Slow down here.
 
 ### Day 19 — Booking (pay-at-clinic path first)
+
 - `[S]` Book a slot → `CONFIRMED` appointment. Guarded update: `booked + held < maxPatients`
   inside a transaction, `SELECT … FOR UPDATE` on the slot (§15).
 - `[S]` Per-patient caps: max 3 active bookings, one active booking per slot (partial unique
@@ -665,34 +685,38 @@ The correctness-critical phase. Slow down here.
 - **DoD:** two people race for the last seat — exactly one wins; no overbooking.
 
 #### Decisions locked for Day 19
-| # | Decision |
-|---|----------|
-| 1 | Scope = patient self-booking, pay-at-clinic only, born `CONFIRMED`. No `Payment` row and no `SeatHold` (money is Phase 6); desk/walk-in booking is Day 32. |
-| 2 | Last-seat guard = §15's atomic `UPDATE slots … WHERE booked_count + held_count < max_patients` via `$executeRaw` (Prisma `where` cannot compare two columns); 0 rows → 409 `SLOT_FULL`. The `booked_count + held_count <= max_patients` CHECK is the backstop. The `FOR UPDATE` lock is on the PATIENT row, not the slot. |
-| 3 | Per-patient cap (§15) counts `CONFIRMED`+`ARRIVED` bookings **and** live holds (`released_at IS NULL AND expires_at > now()`), read inside the transaction after `SELECT … FROM users WHERE id = ? FOR UPDATE` — the patient-row lock serializes same-patient attempts so two cannot both pass. |
-| 4 | Same-slot rule = §15's partial unique index, with an explicit pre-check (`ACTIVE_BOOKING_STATUSES = [CONFIRMED, ARRIVED]`) for a clean 409 `ALREADY_BOOKED`; a P2002 race is mapped to the same. |
-| 5 | §6.3 e-mail gate read off the locked row → 403 `EMAIL_NOT_VERIFIED`. §5 bookability re-applied in-transaction via `isBookable`; the five non-capacity hides live in pure `lib/bookingGuard.ts` (fullness deliberately excluded — the guarded UPDATE owns it). |
-| 6 | One transaction writes `Appointment` (snapshots `doctorName`/`feeAmount`/`bookingTime`) + `AppointmentHistory` `BOOKED` + `AuditLog` `APPOINTMENT_BOOKED`. Route `POST /api/v1/appointments`, PATIENT-only (service re-enforces). Queue position stays a rank over `bookingTime` — no stored counter. |
-| 7 | Error codes: 404 `SLOT_NOT_FOUND`/`DOCTOR_NOT_FOUND`; 409 `SLOT_FULL`/`SLOT_DISABLED`/`SLOT_STARTED`/`DOCTOR_UNAVAILABLE`/`ALREADY_BOOKED`/`BOOKING_CAP_REACHED`; 422 `BOOKING_OUTSIDE_HORIZON`; 403 `EMAIL_NOT_VERIFIED`. |
-| 8 | DoD: pure `tests/bookingGuard.test.ts` + scratch `scripts/day19-dod.ts` (concurrent last-seat race, self-cleaning). The DB-backed concurrency suite lands Day 20/36. |
-| 9 | The doctor profile's Book button is live: signed-out → `/login?returnTo=/doctors/:id` (Login honours a relative `returnTo` and refreshes the session query); non-patient → desk message; patient → confirmation panel. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                  |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Scope = patient self-booking, pay-at-clinic only, born `CONFIRMED`. No `Payment` row and no `SeatHold` (money is Phase 6); desk/walk-in booking is Day 32.                                                                                                                                                                |
+| 2   | Last-seat guard = §15's atomic `UPDATE slots … WHERE booked_count + held_count < max_patients` via `$executeRaw` (Prisma `where` cannot compare two columns); 0 rows → 409 `SLOT_FULL`. The `booked_count + held_count <= max_patients` CHECK is the backstop. The `FOR UPDATE` lock is on the PATIENT row, not the slot. |
+| 3   | Per-patient cap (§15) counts `CONFIRMED`+`ARRIVED` bookings **and** live holds (`released_at IS NULL AND expires_at > now()`), read inside the transaction after `SELECT … FROM users WHERE id = ? FOR UPDATE` — the patient-row lock serializes same-patient attempts so two cannot both pass.                           |
+| 4   | Same-slot rule = §15's partial unique index, with an explicit pre-check (`ACTIVE_BOOKING_STATUSES = [CONFIRMED, ARRIVED]`) for a clean 409 `ALREADY_BOOKED`; a P2002 race is mapped to the same.                                                                                                                          |
+| 5   | §6.3 e-mail gate read off the locked row → 403 `EMAIL_NOT_VERIFIED`. §5 bookability re-applied in-transaction via `isBookable`; the five non-capacity hides live in pure `lib/bookingGuard.ts` (fullness deliberately excluded — the guarded UPDATE owns it).                                                             |
+| 6   | One transaction writes `Appointment` (snapshots `doctorName`/`feeAmount`/`bookingTime`) + `AppointmentHistory` `BOOKED` + `AuditLog` `APPOINTMENT_BOOKED`. Route `POST /api/v1/appointments`, PATIENT-only (service re-enforces). Queue position stays a rank over `bookingTime` — no stored counter.                     |
+| 7   | Error codes: 404 `SLOT_NOT_FOUND`/`DOCTOR_NOT_FOUND`; 409 `SLOT_FULL`/`SLOT_DISABLED`/`SLOT_STARTED`/`DOCTOR_UNAVAILABLE`/`ALREADY_BOOKED`/`BOOKING_CAP_REACHED`; 422 `BOOKING_OUTSIDE_HORIZON`; 403 `EMAIL_NOT_VERIFIED`.                                                                                                |
+| 8   | DoD: pure `tests/bookingGuard.test.ts` + scratch `scripts/day19-dod.ts` (concurrent last-seat race, self-cleaning). The DB-backed concurrency suite lands Day 20/36.                                                                                                                                                      |
+| 9   | The doctor profile's Book button is live: signed-out → `/login?returnTo=/doctors/:id` (Login honours a relative `returnTo` and refreshes the session query); non-patient → desk message; patient → confirmation panel.                                                                                                    |
 
 ### Day 20 — Concurrency + audit
+
 - `[S]` Double-booking/overbooking tests hammering the last seat (§15, `[T]`).
 - `[S]` `AuditLog` on every state change; `AppointmentHistory` timeline written.
 - **DoD:** concurrency tests green; every booking/cancel/transition is audited + in history.
 
 #### Decisions locked for Day 20
-| # | Decision |
-|---|----------|
-| 1 | Concurrency proof = scratch `scripts/day20-dod.ts` against the seeded local DB (day19-dod style, self-cleaning). The Vitest+Supertest harness stays Day 35; `npm test` stays DB-free. |
-| 2 | Races: 5 patients × 2 seats (exactly 2 winners); same-patient same-slot concurrent → 1 + `ALREADY_BOOKED` (P2002 path); same-patient 4 different slots vs cap 3 → 1 × `BOOKING_CAP_REACHED`; per-winner exactly 1 BOOKED history + 1 audit row, losers write none. Plus a synthetic live `SeatHold` counting toward the cap. |
-| 3 | Audit scope today = completeness sweep of existing writers + the read side. Cancel/attendance/reschedule auditing lands with Days 21–22 services (same in-transaction `writeAudit` contract); nothing pulled forward. |
-| 4 | Audit read = `listAuditEntries` + `GET /api/v1/audit` ADMIN-only, filters `targetType`/`targetId`/`action`, keyset pagination on `(createdAt, id)`. No UI (Day 33), no file export (§42). |
-| 5 | §20 append-only proven by a pure unit test asserting `audit.service.ts` exports no update/delete mutator; DB-level checks stay in `scripts/assert-constraints.ts`; REVOKE grants deferred (§42). |
-| 6 | Wiring: new `scripts/day20-dod.ts`, `npx tsx`, no new npm script; day19-dod untouched. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                     |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Concurrency proof = scratch `scripts/day20-dod.ts` against the seeded local DB (day19-dod style, self-cleaning). The Vitest+Supertest harness stays Day 35; `npm test` stays DB-free.                                                                                                                                        |
+| 2   | Races: 5 patients × 2 seats (exactly 2 winners); same-patient same-slot concurrent → 1 + `ALREADY_BOOKED` (P2002 path); same-patient 4 different slots vs cap 3 → 1 × `BOOKING_CAP_REACHED`; per-winner exactly 1 BOOKED history + 1 audit row, losers write none. Plus a synthetic live `SeatHold` counting toward the cap. |
+| 3   | Audit scope today = completeness sweep of existing writers + the read side. Cancel/attendance/reschedule auditing lands with Days 21–22 services (same in-transaction `writeAudit` contract); nothing pulled forward.                                                                                                        |
+| 4   | Audit read = `listAuditEntries` + `GET /api/v1/audit` ADMIN-only, filters `targetType`/`targetId`/`action`, keyset pagination on `(createdAt, id)`. No UI (Day 33), no file export (§42).                                                                                                                                    |
+| 5   | §20 append-only proven by a pure unit test asserting `audit.service.ts` exports no update/delete mutator; DB-level checks stay in `scripts/assert-constraints.ts`; REVOKE grants deferred (§42).                                                                                                                             |
+| 6   | Wiring: new `scripts/day20-dod.ts`, `npx tsx`, no new npm script; day19-dod untouched.                                                                                                                                                                                                                                       |
 
 ### Day 21 — Status transitions + attendance
+
 - `[S]` Enforce the §13 matrix server-side (terminal states; no `COMPLETED` directly from
   `CONFIRMED`; `NO_SHOW` only after `endAt`; `REJECTED` needs a reason).
 - `[S]` Check-in (`ARRIVED`) and `COMPLETED`/`NO_SHOW`, admin/staff only.
@@ -700,18 +724,20 @@ The correctness-critical phase. Slow down here.
 - **DoD:** illegal transitions are rejected; check-in flow works.
 
 #### Decisions locked for Day 21
-| # | Decision |
-|---|----------|
-| 1 | Surface = five explicit verb routes, `POST /api/v1/appointments/:id/{arrive,complete,no-show,reject,cancel}` (no single `PATCH status`). A verb names its intent, so the matrix row and its wall are unambiguous at the edge. |
-| 2 | Reason rule: rejecting and a STAFF cancellation require a non-blank `reason` (422 `REASON_REQUIRED`); a patient self-cancel's reason is optional. |
-| 3 | The §13.1 `PENDING`-payment wall on `COMPLETED`/`NO_SHOW` is built now as a no-op (`payment.count`, always 0 until Phase 6) so the guard is in place before money rows exist. |
-| 4 | `REJECTED` refund is DEFERRED to Phase 6 (Day 25). Today writes zero money code and one comment naming the deferred refund; the notification row is still queued (§18). |
-| 5 | Cancellations and rejections queue their §18 `APPOINTMENT_CANCELLED`/`APPOINTMENT_REJECTED` `Notification` row now via `queueNotification`; actual sending is Phase 7. A provisional desk patient with no email is skipped (`recipient` NOT NULL, §16). |
-| 6 | The whole §13 matrix, the clock walls (`SLOT_NOT_STARTED`, `SLOT_NOT_ENDED`, `CUTOFF_REACHED`), the payment/reason guards and the history-event mapping live in the pure `lib/transitionGuard.ts`; the service `appointmentTransition.service.ts` owns only the transaction (load → ownership → matrix → wall → conditional write → history/notification/audit). |
-| 7 | Race backstop = conditional `UPDATE … WHERE id = ? AND status = <status just read>` (`updateMany`, count ≠ 1 → 409 `INVALID_TRANSITION`), matching Day 19/20's guarded-write contract. Ownership is checked BEFORE the matrix so a stranger gets 403 regardless of status. |
-| 8 | DoD: pure `tests/transitionGuard.test.ts` + self-cleaning scratch `scripts/day21-dod.ts` (matrix/wall/reason refusals, ARRIVED→COMPLETED, NO_SHOW seat-keeping, REJECT + patient-cancel seat-freeing, cutoff enforce + clinic-caused waiver, staff-cancel-vs-auto-cancel interplay, concurrent no-show → one winner). The DB-backed HTTP suite stays Day 35; `npm test` stays DB-free. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                               |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Surface = five explicit verb routes, `POST /api/v1/appointments/:id/{arrive,complete,no-show,reject,cancel}` (no single `PATCH status`). A verb names its intent, so the matrix row and its wall are unambiguous at the edge.                                                                                                                                                          |
+| 2   | Reason rule: rejecting and a STAFF cancellation require a non-blank `reason` (422 `REASON_REQUIRED`); a patient self-cancel's reason is optional.                                                                                                                                                                                                                                      |
+| 3   | The §13.1 `PENDING`-payment wall on `COMPLETED`/`NO_SHOW` is built now as a no-op (`payment.count`, always 0 until Phase 6) so the guard is in place before money rows exist.                                                                                                                                                                                                          |
+| 4   | `REJECTED` refund is DEFERRED to Phase 6 (Day 25). Today writes zero money code and one comment naming the deferred refund; the notification row is still queued (§18).                                                                                                                                                                                                                |
+| 5   | Cancellations and rejections queue their §18 `APPOINTMENT_CANCELLED`/`APPOINTMENT_REJECTED` `Notification` row now via `queueNotification`; actual sending is Phase 7. A provisional desk patient with no email is skipped (`recipient` NOT NULL, §16).                                                                                                                                |
+| 6   | The whole §13 matrix, the clock walls (`SLOT_NOT_STARTED`, `SLOT_NOT_ENDED`, `CUTOFF_REACHED`), the payment/reason guards and the history-event mapping live in the pure `lib/transitionGuard.ts`; the service `appointmentTransition.service.ts` owns only the transaction (load → ownership → matrix → wall → conditional write → history/notification/audit).                       |
+| 7   | Race backstop = conditional `UPDATE … WHERE id = ? AND status = <status just read>` (`updateMany`, count ≠ 1 → 409 `INVALID_TRANSITION`), matching Day 19/20's guarded-write contract. Ownership is checked BEFORE the matrix so a stranger gets 403 regardless of status.                                                                                                             |
+| 8   | DoD: pure `tests/transitionGuard.test.ts` + self-cleaning scratch `scripts/day21-dod.ts` (matrix/wall/reason refusals, ARRIVED→COMPLETED, NO_SHOW seat-keeping, REJECT + patient-cancel seat-freeing, cutoff enforce + clinic-caused waiver, staff-cancel-vs-auto-cancel interplay, concurrent no-show → one winner). The DB-backed HTTP suite stays Day 35; `npm test` stays DB-free. |
 
 ### Day 22 — Rescheduling
+
 - `[S]` Reschedule = same row, new slot (never a `RESCHEDULED` status). Enforce cutoff +
   capacity; higher fee → payment before commit; lower fee → automatic refund (§14).
 - **DoD:** reschedule moves the appointment, writes a `RESCHEDULED` history event, and
@@ -719,43 +745,47 @@ The correctness-critical phase. Slow down here.
 - **Phase 5 complete.**
 
 #### Decisions locked for Day 22
-| # | Decision |
-|---|----------|
-| 1 | Fee-delta settlement (§14): `delta = 0` is a no-op; no `PAID` payment → settle by rewriting the `feeAmount`/`doctorName`/`doctorId` snapshots on the row (with the delta in the history metadata), which is every booking reachable until Phase 6; `PAID` + `delta > 0` → 409 `PAYMENT_REQUIRED` (unreachable until money rows exist — Day 24 does payment-before-commit); `PAID` + `delta < 0` → queue a `PENDING` `Refund` (`RefundKind.RESCHEDULE_DELTA`) for the Day 25 executor. |
-| 2 | The §8.5 60-minute cutoff applies to a **patient** self-reschedule only; STAFF/ADMIN are exempt (a desk move is never blocked by a clock). A patient reuses `assertPatientCancelAllowed`, so a clinic-caused move (active unavailability over the slot) is waived exactly as a cancellation is. |
-| 3 | A DOCTOR can never reschedule (moves are the patient's or the desk's), so `RESCHEDULE_ROLES = { PATIENT, ADMIN, STAFF }`. |
-| 4 | Only `CONFIRMED` is reschedulable; any other status → 409 `INVALID_TRANSITION` (reschedule is a slot move, not a §13 status transition). |
-| 5 | Moving off a slot clears the appointment's `doctorUnavailabilityId` marker — the booking is no longer attached to the disruption it was flagged by. |
-| 6 | The original `bookingTime` is preserved on a move so the §15 queue position does not change. |
-| 7 | A reason is mandatory for STAFF/ADMIN and optional for a patient self-reschedule (consistent with Day 21's cancel rule). |
-| 8 | The move queues one §18 `APPOINTMENT_RESCHEDULED` notification to the patient; the desk/staff is not notified. |
-| 9 | Concurrency: one `$transaction` that locks both slot rows `FOR UPDATE` in `id` order, atomically claims the target seat, guarded-releases the old one, and conditionally updates the appointment (`WHERE id = ? AND slotId = <old>` + `status = CONFIRMED`) as a race backstop. A per-patient active-booking cap is **not** re-checked (a move is net-zero). |
-| 10 | DoD: pure `tests/rescheduleGuard.test.ts` covers the judgment layer (roles, ownership, scope, reason, status, same-slot, delta classification); the self-cleaning `scripts/day22-dod.ts` proves the happy path, scope/status/cutoff+waiver refusals, the staff cross-doctor fee-snapshot/delta move, target guards, the last-seat race and the double-move race. DB-backed HTTP coverage stays Day 35; `npm test` stays DB-free. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Fee-delta settlement (§14): `delta = 0` is a no-op; no `PAID` payment → settle by rewriting the `feeAmount`/`doctorName`/`doctorId` snapshots on the row (with the delta in the history metadata), which is every booking reachable until Phase 6; `PAID` + `delta > 0` → 409 `PAYMENT_REQUIRED` (unreachable until money rows exist — Day 24 does payment-before-commit); `PAID` + `delta < 0` → queue a `PENDING` `Refund` (`RefundKind.RESCHEDULE_DELTA`) for the Day 25 executor. |
+| 2   | The §8.5 60-minute cutoff applies to a **patient** self-reschedule only; STAFF/ADMIN are exempt (a desk move is never blocked by a clock). A patient reuses `assertPatientCancelAllowed`, so a clinic-caused move (active unavailability over the slot) is waived exactly as a cancellation is.                                                                                                                                                                                       |
+| 3   | A DOCTOR can never reschedule (moves are the patient's or the desk's), so `RESCHEDULE_ROLES = { PATIENT, ADMIN, STAFF }`.                                                                                                                                                                                                                                                                                                                                                             |
+| 4   | Only `CONFIRMED` is reschedulable; any other status → 409 `INVALID_TRANSITION` (reschedule is a slot move, not a §13 status transition).                                                                                                                                                                                                                                                                                                                                              |
+| 5   | Moving off a slot clears the appointment's `doctorUnavailabilityId` marker — the booking is no longer attached to the disruption it was flagged by.                                                                                                                                                                                                                                                                                                                                   |
+| 6   | The original `bookingTime` is preserved on a move so the §15 queue position does not change.                                                                                                                                                                                                                                                                                                                                                                                          |
+| 7   | A reason is mandatory for STAFF/ADMIN and optional for a patient self-reschedule (consistent with Day 21's cancel rule).                                                                                                                                                                                                                                                                                                                                                              |
+| 8   | The move queues one §18 `APPOINTMENT_RESCHEDULED` notification to the patient; the desk/staff is not notified.                                                                                                                                                                                                                                                                                                                                                                        |
+| 9   | Concurrency: one `$transaction` that locks both slot rows `FOR UPDATE` in `id` order, atomically claims the target seat, guarded-releases the old one, and conditionally updates the appointment (`WHERE id = ? AND slotId = <old>` + `status = CONFIRMED`) as a race backstop. A per-patient active-booking cap is **not** re-checked (a move is net-zero).                                                                                                                          |
+| 10  | DoD: pure `tests/rescheduleGuard.test.ts` covers the judgment layer (roles, ownership, scope, reason, status, same-slot, delta classification); the self-cleaning `scripts/day22-dod.ts` proves the happy path, scope/status/cutoff+waiver refusals, the staff cross-doctor fee-snapshot/delta move, target guards, the last-seat race and the double-move race. DB-backed HTTP coverage stays Day 35; `npm test` stays DB-free.                                                      |
 
 ---
 
 ## Phase 6 — Payments (Days 23–26)
 
 ### Day 23 — Razorpay order + client checkout
+
 - `[S]` Create order (fee from §3.2/§24; check against the booking-time `feeAmount`
   snapshot). `[C]` Razorpay checkout UI.
 - **DoD:** an order is created and the checkout opens.
 
 #### Decisions locked for Day 23
-| # | Decision |
-|---|----------|
-| 1 | Surface: `POST /api/v1/payments/orders`, PATIENT-only (route + service double-enforced), body `{slotId}`, 201 → `{message, order: {orderId, keyId, amountPaise, currency}}`. `keyId` is the publishable key shipped inside the response — no client env var, and the secret never reaches a browser. |
-| 2 | Day 23 persists a `PENDING` `Payment` (`appointmentId` null) BEFORE the gateway call. **No `SeatHold`, no capacity claim** — Day 24's hold transaction adds both; Day 23's DoD asserts counters are byte-identical afterwards. |
-| 3 | The gateway call is NEVER inside a DB transaction: insert row → gateway call outside any tx → guarded `UPDATE … WHERE status='PENDING' AND order_id IS NULL` linking the gateway orderId + `PAYMENT_ORDER_CREATED` audit in one tx. Gateway failure → guarded `PENDING→FAILED` + `PAYMENT_ORDER_FAILED` audit → 502 `PAYMENT_GATEWAY_ERROR`. |
-| 4 | Amount = `deriveConsultationFee(profile.consultationFee, clinic.defaultConsultationFee)` from the new shared `lib/fee.ts` (also refactored into booking.service so both paths quote the same number). `fee <= 0` → 422 `ZERO_CONSULTATION_FEE` (the Day 6 `CHECK (amount_paise > 0)`). The "check against the booking-time `feeAmount` snapshot" of the day brief is vacuous on Day 23 — no appointment exists yet to snapshot; it starts mattering on Day 24. |
-| 5 | Currency = `clinic.currency` everywhere (unpatchable; seed = INR per §3.2). |
-| 6 | Gateway seam: `PaymentGateway` interface + `createRazorpayGateway` factory (official `razorpay` npm SDK v2.9.8). Missing keys → 503 `PAYMENTS_NOT_CONFIGURED` checked BEFORE any row is written. Verification/webhooks are Day 24. |
-| 7 | The `ensureEmailVerified` wall runs before any row; slot/doctor 404s mirror booking (`SLOT_NOT_FOUND`/`DOCTOR_NOT_FOUND`, generic per §26). The §8.5/§10/§12/cap/same-slot guards are NOT implemented on Day 23 — Day 24's hold transaction owns them. |
-| 8 | Audit: exactly one `PAYMENT_ORDER_CREATED` (happy path) or `PAYMENT_ORDER_FAILED` (gateway refusal) per attempt, written via in-transaction `writeAudit`. |
-| 9 | UI: a second explicit **Pay online** button beside **Book** in each `.slot-row` of `DoctorProfile.tsx` — two flows, two server paths, no mode flag on `POST /appointments`. `client/src/lib/razorpay.ts` lazily loads checkout.js on first use; paid → "verification pending" copy, dismissed → "not charged" copy — Day 23 never claims a booking. |
-| 10 | DoD: key-free pure tests (`tests/paymentOrder.test.ts`, `npm test` stays DB-free) + self-cleaning `scripts/day23-dod.ts` against the real DB + real Razorpay TEST API (loud skip, exit 0, when keys are absent; fixtures purged + `finally` cleanup). The checkout OPENING in a browser is the one manual DoD item. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Surface: `POST /api/v1/payments/orders`, PATIENT-only (route + service double-enforced), body `{slotId}`, 201 → `{message, order: {orderId, keyId, amountPaise, currency}}`. `keyId` is the publishable key shipped inside the response — no client env var, and the secret never reaches a browser.                                                                                                                                                           |
+| 2   | Day 23 persists a `PENDING` `Payment` (`appointmentId` null) BEFORE the gateway call. **No `SeatHold`, no capacity claim** — Day 24's hold transaction adds both; Day 23's DoD asserts counters are byte-identical afterwards.                                                                                                                                                                                                                                 |
+| 3   | The gateway call is NEVER inside a DB transaction: insert row → gateway call outside any tx → guarded `UPDATE … WHERE status='PENDING' AND order_id IS NULL` linking the gateway orderId + `PAYMENT_ORDER_CREATED` audit in one tx. Gateway failure → guarded `PENDING→FAILED` + `PAYMENT_ORDER_FAILED` audit → 502 `PAYMENT_GATEWAY_ERROR`.                                                                                                                   |
+| 4   | Amount = `deriveConsultationFee(profile.consultationFee, clinic.defaultConsultationFee)` from the new shared `lib/fee.ts` (also refactored into booking.service so both paths quote the same number). `fee <= 0` → 422 `ZERO_CONSULTATION_FEE` (the Day 6 `CHECK (amount_paise > 0)`). The "check against the booking-time `feeAmount` snapshot" of the day brief is vacuous on Day 23 — no appointment exists yet to snapshot; it starts mattering on Day 24. |
+| 5   | Currency = `clinic.currency` everywhere (unpatchable; seed = INR per §3.2).                                                                                                                                                                                                                                                                                                                                                                                    |
+| 6   | Gateway seam: `PaymentGateway` interface + `createRazorpayGateway` factory (official `razorpay` npm SDK v2.9.8). Missing keys → 503 `PAYMENTS_NOT_CONFIGURED` checked BEFORE any row is written. Verification/webhooks are Day 24.                                                                                                                                                                                                                             |
+| 7   | The `ensureEmailVerified` wall runs before any row; slot/doctor 404s mirror booking (`SLOT_NOT_FOUND`/`DOCTOR_NOT_FOUND`, generic per §26). The §8.5/§10/§12/cap/same-slot guards are NOT implemented on Day 23 — Day 24's hold transaction owns them.                                                                                                                                                                                                         |
+| 8   | Audit: exactly one `PAYMENT_ORDER_CREATED` (happy path) or `PAYMENT_ORDER_FAILED` (gateway refusal) per attempt, written via in-transaction `writeAudit`.                                                                                                                                                                                                                                                                                                      |
+| 9   | UI: a second explicit **Pay online** button beside **Book** in each `.slot-row` of `DoctorProfile.tsx` — two flows, two server paths, no mode flag on `POST /appointments`. `client/src/lib/razorpay.ts` lazily loads checkout.js on first use; paid → "verification pending" copy, dismissed → "not charged" copy — Day 23 never claims a booking.                                                                                                            |
+| 10  | DoD: key-free pure tests (`tests/paymentOrder.test.ts`, `npm test` stays DB-free) + self-cleaning `scripts/day23-dod.ts` against the real DB + real Razorpay TEST API (loud skip, exit 0, when keys are absent; fixtures purged + `finally` cleanup). The checkout OPENING in a browser is the one manual DoD item.                                                                                                                                            |
 
 ### Day 24 — Seat hold + conversion
+
 - `[S]` **Seat hold** before payment: create `SeatHold` + `PENDING` payment, 10-min expiry
   = `min(now+10min, slot.startAt)`; the seat is held, not booked (§8.6).
 - `[S]` Webhook + verify → one transaction: hold→`CONVERTED`, seat `held→booked`,
@@ -763,20 +793,22 @@ The correctness-critical phase. Slow down here.
 - **DoD:** paying converts the hold into exactly one confirmed appointment.
 
 #### Decisions locked for Day 24
-| # | Decision |
-|---|----------|
-| 1 | Hold folded into `POST /payments/orders` — no separate hold endpoint. One call runs the §15 guards (patient row `FOR UPDATE`, shared `bookingGuard`, same-slot pre-money, own unreleased holds released `ABANDONED`/`EXPIRED` with paired `heldCount-1`, per-patient cap counted after release), claims capacity with the raw guarded `UPDATE … booked+held < max_patients` (0 rows → 409 `SLOT_FULL`), then creates `SeatHold` + `PENDING` `Payment` in one tx — the gateway call happens only AFTER all of that, outside any transaction. |
-| 2 | Hold duration = `clinic.holdDurationMinutes` read from the existing `ClinicSettings` row (seed default 10), **not** a new config constant; expiry stored as `min(now + duration, slot.startAt)` through the new pure `holdExpiresAt` in `lib/slotGuard.ts` (unit-tested). |
-| 3 | Two edges, one core: `POST /payments/verify` (PATIENT, gateway triple, `KEY_SECRET` HMAC → 400 `PAYMENT_SIGNATURE_INVALID`, ownership via `expectedPatientId` → 404) and `POST /payments/webhook` (no auth; `RAZORPAY_WEBHOOK_SECRET` unset → 503 `WEBHOOK_NOT_CONFIGURED`, non-Buffer body → 400, sig → 403, `order.paid` event only, actor `{name:"system"}`). Signature checking lives ONLY at the edges — `paymentConvert.service.ts` never sees one. |
-| 4 | `RAZORPAY_WEBHOOK_SECRET` is an `optionalSecret` distinct from `KEY_SECRET` (different credentials); the webhook route is mounted on `express.raw({type:"application/json"})` in `app.ts` BEFORE `express.json` (byte-exact HMAC needs the Buffer), otherwise 503-until-configured. |
-| 5 | Conversion = `paymentConvert.service.ts` `convertPayment`, keyed by `order_id`: `SELECT … FOR UPDATE` on the payment row IS the idempotency (replay → stored appointment, zero writes; concurrent verify+webhook serialize). Pre-tx refusals (`PAYMENT_NOT_FOUND`, `PAYMENT_NOT_PENDING`, `HOLD_NOT_FOUND/RELEASED/EXPIRED`) change NOTHING — payment stays `PENDING`; refunding captured-but-unbooked money is Day 25's. **Superseded on Day 25:** a signed captured payment behind a refusal is now settled `PAID` + full refund; see Day 25 decisions 1–12. |
-| 6 | Inside the conversion tx: doctor/slot/same-slot re-checks, seat move `held-1/booked+1 WHERE held_count>0` (0 rows → 409 `CONVERSION_FAILED`), appointment created `CONFIRMED` with `feeAmount = payments.amount_paise` (the PAID number, never re-derived), hold → `CONVERTED` and payment → `PAID` both guarded, `BOOKED` history + `APPOINTMENT_BOOKED`/`PAYMENT_PAID` audits — one tx; unique-index race → 409 `ALREADY_BOOKED`. |
-| 7 | Webhook error contract: `AppError` → HTTP 200 `{status:"rejected",code}` (stops Razorpay's retries — a refusal will not become a success), unexpected → 500 (retry is right), unparsable/foreign events → 200 `{status:"ignored"}`. A wrong-patient order id is the SAME 404 as a nonexistent one (§26). |
-| 8 | Client: `openRazorpayCheckout` now resolves `CheckoutSuccess \| "dismissed"` (the handler passes the triple out — no more "paid" placeholder); `payOnline` posts it to `apiVerifyPayment`, shows "Confirming…", on success reuses booking's own confirmation panel + availability refetch (both flows converge on one rendered result); network failure during verify → "Payment received — your booking will complete automatically", never "failed". |
-| 9 | One phrase per code: `paymentErrorMessage` handles payment-specific codes then DELEGATES to `bookingErrorMessage` — the hold tx shares §8.5/§10/§15's codes and the two flows must not phrase the same refusal differently. |
-| 10 | DoD: `scripts/day24-dod.ts` against the real DB + real TEST gateway, with its OWN fixture doctor/slots/patients (seed read-free, self-cleaning). **Deviation (decision B3): §17 step 4's re-fetch of `pay_…` from the gateway is skipped** — the script fabricates a `pay_` id and computes the HMAC locally with the TEST key secret (the exact construction `/verify` checks), so it never claims the gateway vouched for it. Scenario set: hold+link+expiry math, conversion invariants, idempotent replay, wrong patient 404, expired hold, full slot, same-slot, `ABANDONED` release. Raw-body webhook wiring + a real test-card payment remain MANUAL (printed by the script). **Updated on Day 25:** the expired-hold expectation is now `PAID` + released `EXPIRED` seat + full queued refund. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Hold folded into `POST /payments/orders` — no separate hold endpoint. One call runs the §15 guards (patient row `FOR UPDATE`, shared `bookingGuard`, same-slot pre-money, own unreleased holds released `ABANDONED`/`EXPIRED` with paired `heldCount-1`, per-patient cap counted after release), claims capacity with the raw guarded `UPDATE … booked+held < max_patients` (0 rows → 409 `SLOT_FULL`), then creates `SeatHold` + `PENDING` `Payment` in one tx — the gateway call happens only AFTER all of that, outside any transaction.                                                                                                                                                                                                                                                            |
+| 2   | Hold duration = `clinic.holdDurationMinutes` read from the existing `ClinicSettings` row (seed default 10), **not** a new config constant; expiry stored as `min(now + duration, slot.startAt)` through the new pure `holdExpiresAt` in `lib/slotGuard.ts` (unit-tested).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| 3   | Two edges, one core: `POST /payments/verify` (PATIENT, gateway triple, `KEY_SECRET` HMAC → 400 `PAYMENT_SIGNATURE_INVALID`, ownership via `expectedPatientId` → 404) and `POST /payments/webhook` (no auth; `RAZORPAY_WEBHOOK_SECRET` unset → 503 `WEBHOOK_NOT_CONFIGURED`, non-Buffer body → 400, sig → 403, `order.paid` event only, actor `{name:"system"}`). Signature checking lives ONLY at the edges — `paymentConvert.service.ts` never sees one.                                                                                                                                                                                                                                                                                                                                              |
+| 4   | `RAZORPAY_WEBHOOK_SECRET` is an `optionalSecret` distinct from `KEY_SECRET` (different credentials); the webhook route is mounted on `express.raw({type:"application/json"})` in `app.ts` BEFORE `express.json` (byte-exact HMAC needs the Buffer), otherwise 503-until-configured.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 5   | Conversion = `paymentConvert.service.ts` `convertPayment`, keyed by `order_id`: `SELECT … FOR UPDATE` on the payment row IS the idempotency (replay → stored appointment, zero writes; concurrent verify+webhook serialize). Pre-tx refusals (`PAYMENT_NOT_FOUND`, `PAYMENT_NOT_PENDING`, `HOLD_NOT_FOUND/RELEASED/EXPIRED`) change NOTHING — payment stays `PENDING`; refunding captured-but-unbooked money is Day 25's. **Superseded on Day 25:** a signed captured payment behind a refusal is now settled `PAID` + full refund; see Day 25 decisions 1–12.                                                                                                                                                                                                                                         |
+| 6   | Inside the conversion tx: doctor/slot/same-slot re-checks, seat move `held-1/booked+1 WHERE held_count>0` (0 rows → 409 `CONVERSION_FAILED`), appointment created `CONFIRMED` with `feeAmount = payments.amount_paise` (the PAID number, never re-derived), hold → `CONVERTED` and payment → `PAID` both guarded, `BOOKED` history + `APPOINTMENT_BOOKED`/`PAYMENT_PAID` audits — one tx; unique-index race → 409 `ALREADY_BOOKED`.                                                                                                                                                                                                                                                                                                                                                                    |
+| 7   | Webhook error contract: `AppError` → HTTP 200 `{status:"rejected",code}` (stops Razorpay's retries — a refusal will not become a success), unexpected → 500 (retry is right), unparsable/foreign events → 200 `{status:"ignored"}`. A wrong-patient order id is the SAME 404 as a nonexistent one (§26).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| 8   | Client: `openRazorpayCheckout` now resolves `CheckoutSuccess \| "dismissed"` (the handler passes the triple out — no more "paid" placeholder); `payOnline` posts it to `apiVerifyPayment`, shows "Confirming…", on success reuses booking's own confirmation panel + availability refetch (both flows converge on one rendered result); network failure during verify → "Payment received — your booking will complete automatically", never "failed".                                                                                                                                                                                                                                                                                                                                                 |
+| 9   | One phrase per code: `paymentErrorMessage` handles payment-specific codes then DELEGATES to `bookingErrorMessage` — the hold tx shares §8.5/§10/§15's codes and the two flows must not phrase the same refusal differently.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 10  | DoD: `scripts/day24-dod.ts` against the real DB + real TEST gateway, with its OWN fixture doctor/slots/patients (seed read-free, self-cleaning). **Deviation (decision B3): §17 step 4's re-fetch of `pay_…` from the gateway is skipped** — the script fabricates a `pay_` id and computes the HMAC locally with the TEST key secret (the exact construction `/verify` checks), so it never claims the gateway vouched for it. Scenario set: hold+link+expiry math, conversion invariants, idempotent replay, wrong patient 404, expired hold, full slot, same-slot, `ABANDONED` release. Raw-body webhook wiring + a real test-card payment remain MANUAL (printed by the script). **Updated on Day 25:** the expired-hold expectation is now `PAID` + released `EXPIRED` seat + full queued refund. |
 
 ### Day 25 — Failure, idempotency, refunds
+
 - `[S]` **Any** step-5 rejection after payment → no appointment + full auto-refund, per
   cause (§17). `[T]` Each cause asserted: no appointment, `Payment` stays `PAID`,
   `Refund`→`SUCCESS`, seat freed.
@@ -787,22 +819,24 @@ The correctness-critical phase. Slow down here.
 - **DoD:** every refund scenario behaves per §17 and notifies the patient (Phase 7).
 
 #### Decisions locked for Day 25
-| # | Decision |
-|---|----------|
-| 1 | Refund policy is pure (`lib/refundPolicy.ts`): remaining-amount math, cancel/reject kind selection, conversion-failure kind + hold-release reason, and notification type. `refund.service.ts` owns the transactions and the gateway call. |
-| 2 | `queueRefund` locks the `Payment` row, computes `remaining = payment.amountPaise − every existing refund amount` (PENDING, SUCCESS **and** FAILED — a FAILED row is still an unpaid obligation), caps the new amount to that remainder, and writes one PENDING `Refund` + `REFUND_QUEUED` audit inside the caller's transaction. |
-| 3 | Staff/admin cancellation and rejection are always `CLINIC_CAUSED` full refunds. A patient cancellation allowed by §8.5 is `CLINIC_CAUSED` when the booking is clinic-caused, otherwise `CANCELLATION`; the transition service queues it only after the guarded status write. |
-| 4 | Captured payment + failed conversion: the conversion tx rolls back, then a separate settlement tx marks the payment `PAID` (storing the signed gateway payment id + `paidAt`), releases the live hold (`EXPIRED` for `HOLD_EXPIRED`, new `CONVERSION_FAILED` otherwise) with its paired `heldCount-1`, queues the full refund (`EXPIRED_HOLD` / `CONVERSION_FAILED`) and audits `PAYMENT_CONVERSION_FAILED`. The original AppError is still returned; no appointment exists. |
-| 5 | Refund execution is best-effort after commit: route-level `kickRefundWorker()` schedules `executePendingRefunds()`; the sweep runs PENDING rows oldest-first and leaves them PENDING when Razorpay is not configured. Day 29 will own the periodic sweep. |
-| 6 | The gateway seam gained `refundPayment`; Razorpay sends the amount in paise with the local `Refund.id` in notes and the adapter refuses an amount echo mismatch (a currency mismatch is refused too). No new env vars. |
-| 7 | `executeRefund` is single-flight per refund id in-process and guards `PENDING → SUCCESS/FAILED` with `updateMany`; a successful refund stores `gatewayRefundId`, queues `REFUND_COMPLETED` (or `PAYMENT_LATE_REFUND` for an expired hold) and audits `REFUND_SUCCEEDED`. A gateway error marks `FAILED` + `REFUND_FAILED`; FAILED is deliberately not auto-retried (Day 26 admin queue). |
-| 8 | Refunds against a payment with no gateway `paymentId` (offline money) are labelled `DESK_HAND_BACK` and left PENDING for the Day 26 staff hand-back surface; no gateway call is attempted. **Superseded on Day 26:** offline money keeps its POLICY kind (`CANCELLATION`, `RESCHEDULE_DELTA`, `CLINIC_CAUSED`, …) and the desk queue selects `payment.paymentId IS NULL` instead of relabelling. |
-| 9 | Refund notification targeting reuses `Notification`: `appointmentId` when the payment has one, else the slot recovered from the hold by `orderId`; a provisional patient with no email is skipped (§16/§18). |
-| 10 | Schema: `SeatHoldReleaseReason` gains `CONVERSION_FAILED` via a hand-written enum migration; `RefundKind`/`RefundStatus` were already complete. |
-| 11 | Day 24's expired-hold DoD expectation is updated to the Day 25 contract (PAID, hold released EXPIRED, seat freed, full PENDING refund) instead of “payment stays PENDING”. |
-| 12 | DoD: `scripts/day25-dod.ts` is DB-backed and key-free — a deterministic injectable `FakeGateway` proves exact paise/currency, double-sweep single execution, success notifications/audits, staff vs patient cancel kinds, reject refund, delta-then-cancel remainder, and gateway-failure visibility with no auto-retry. A real TEST-mode refund remains MANUAL/optional. Refund-queue UI, admin approve/retry and staff hand-back endpoints are deferred to Day 26/Phase 8. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Refund policy is pure (`lib/refundPolicy.ts`): remaining-amount math, cancel/reject kind selection, conversion-failure kind + hold-release reason, and notification type. `refund.service.ts` owns the transactions and the gateway call.                                                                                                                                                                                                                                    |
+| 2   | `queueRefund` locks the `Payment` row, computes `remaining = payment.amountPaise − every existing refund amount` (PENDING, SUCCESS **and** FAILED — a FAILED row is still an unpaid obligation), caps the new amount to that remainder, and writes one PENDING `Refund` + `REFUND_QUEUED` audit inside the caller's transaction.                                                                                                                                             |
+| 3   | Staff/admin cancellation and rejection are always `CLINIC_CAUSED` full refunds. A patient cancellation allowed by §8.5 is `CLINIC_CAUSED` when the booking is clinic-caused, otherwise `CANCELLATION`; the transition service queues it only after the guarded status write.                                                                                                                                                                                                 |
+| 4   | Captured payment + failed conversion: the conversion tx rolls back, then a separate settlement tx marks the payment `PAID` (storing the signed gateway payment id + `paidAt`), releases the live hold (`EXPIRED` for `HOLD_EXPIRED`, new `CONVERSION_FAILED` otherwise) with its paired `heldCount-1`, queues the full refund (`EXPIRED_HOLD` / `CONVERSION_FAILED`) and audits `PAYMENT_CONVERSION_FAILED`. The original AppError is still returned; no appointment exists. |
+| 5   | Refund execution is best-effort after commit: route-level `kickRefundWorker()` schedules `executePendingRefunds()`; the sweep runs PENDING rows oldest-first and leaves them PENDING when Razorpay is not configured. Day 29 will own the periodic sweep.                                                                                                                                                                                                                    |
+| 6   | The gateway seam gained `refundPayment`; Razorpay sends the amount in paise with the local `Refund.id` in notes and the adapter refuses an amount echo mismatch (a currency mismatch is refused too). No new env vars.                                                                                                                                                                                                                                                       |
+| 7   | `executeRefund` is single-flight per refund id in-process and guards `PENDING → SUCCESS/FAILED` with `updateMany`; a successful refund stores `gatewayRefundId`, queues `REFUND_COMPLETED` (or `PAYMENT_LATE_REFUND` for an expired hold) and audits `REFUND_SUCCEEDED`. A gateway error marks `FAILED` + `REFUND_FAILED`; FAILED is deliberately not auto-retried (Day 26 admin queue).                                                                                     |
+| 8   | Refunds against a payment with no gateway `paymentId` (offline money) are labelled `DESK_HAND_BACK` and left PENDING for the Day 26 staff hand-back surface; no gateway call is attempted. **Superseded on Day 26:** offline money keeps its POLICY kind (`CANCELLATION`, `RESCHEDULE_DELTA`, `CLINIC_CAUSED`, …) and the desk queue selects `payment.paymentId IS NULL` instead of relabelling.                                                                             |
+| 9   | Refund notification targeting reuses `Notification`: `appointmentId` when the payment has one, else the slot recovered from the hold by `orderId`; a provisional patient with no email is skipped (§16/§18).                                                                                                                                                                                                                                                                 |
+| 10  | Schema: `SeatHoldReleaseReason` gains `CONVERSION_FAILED` via a hand-written enum migration; `RefundKind`/`RefundStatus` were already complete.                                                                                                                                                                                                                                                                                                                              |
+| 11  | Day 24's expired-hold DoD expectation is updated to the Day 25 contract (PAID, hold released EXPIRED, seat freed, full PENDING refund) instead of “payment stays PENDING”.                                                                                                                                                                                                                                                                                                   |
+| 12  | DoD: `scripts/day25-dod.ts` is DB-backed and key-free — a deterministic injectable `FakeGateway` proves exact paise/currency, double-sweep single execution, success notifications/audits, staff vs patient cancel kinds, reject refund, delta-then-cancel remainder, and gateway-failure visibility with no auto-retry. A real TEST-mode refund remains MANUAL/optional. Refund-queue UI, admin approve/retry and staff hand-back endpoints are deferred to Day 26/Phase 8. |
 
 ### Day 26 — Pay-at-clinic + offline hand-back
+
 - `[S]` Record offline payment; desk voids unpaid; the auto-cancel job closes out the
   remaining `CONFIRMED` after the slot (§17).
 - `[S]` Cash/UPI hand-back recorded against the refund (staff dashboard, no gateway).
@@ -810,26 +844,28 @@ The correctness-critical phase. Slow down here.
 - **Phase 6 complete.**
 
 #### Decisions locked for Day 26
-| # | Decision |
-|---|----------|
-| 1 | Booking now creates the pay-at-clinic receivable inside its own transaction: one `PENDING` `Payment` with `amountPaise = feeAmount`, no method/gateway ids, `paymentId`/`paymentStatus` echoed in `APPOINTMENT_BOOKED`. A zero-fee booking creates no row (`amountPaise > 0` is a database CHECK). |
-| 2 | Keep the refund POLICY kind for offline money; do not override it to `DESK_HAND_BACK`. Offline is identified by `Payment.paymentId === null`. This supersedes Day 25 decision 8 and lets one offline payment carry a `RESCHEDULE_DELTA` and a later `CANCELLATION` as two rows. |
-| 3 | `POST /payments/offline/collect` (STAFF/ADMIN, CASH/CARD/UPI): locks the appointment row first, requires `CONFIRMED`/`ARRIVED`, requires exactly one `PENDING` payment, stores `PAID` + method + `paidAt` + collector + `collectedAt`, queues `PAYMENT_SUCCESSFUL` and audits `PAYMENT_COLLECTED`. |
-| 4 | Collection may be LESS than the fee (a concession): optional `amountPaise` in `1..outstanding` becomes the stored amount and therefore the refundable baseline. It may never exceed the outstanding amount, and no second payment row is created. |
-| 5 | `POST /payments/offline/void` (STAFF/ADMIN, reason required) writes off one `PENDING` receivable as `VOIDED` + `PAYMENT_VOIDED`, regardless of appointment state; a paid row is never voided. Cancel/reject/auto-cancel use the same rule through `voidPendingPaymentForAppointment` inside their existing transaction. |
-| 6 | Offline delta math uses actual captured money: `remainingRefundablePaise(payment.amountPaise, existing refunds)` instead of the booking-time fee snapshot. Online refunds keep Day 22's snapshot rule. |
-| 7 | Rescheduling an UNPAID offline booking rewrites its `PENDING` amount to the new fee in the same transaction (+ `PAYMENT_AMOUNT_ADJUSTED` audit). Known edge: a move to a zero-fee slot leaves the old positive amount untouched because the schema forbids `amountPaise = 0`. |
-| 8 | `GET /payments/refunds/desk-hand-backs` lists `PENDING` refunds whose payment has no gateway id, oldest first, carrying the policy kind and patient identity. `POST /payments/refunds/:id/hand-back` (STAFF/ADMIN) completes the exact queued amount as CASH or UPI only, overwrites the refund actor with the person who handed the money over, queues `REFUND_COMPLETED` and audits `REFUND_HANDED_BACK`. No partial hand-back. |
-| 9 | `POST /payments/refunds/:id/retry` is ADMIN-only and only moves an ONLINE `FAILED` refund back to `PENDING` (+ `REFUND_RETRY_REQUESTED`, worker kick). An offline hand-back is refused `REFUND_NOT_GATEWAY`; any non-FAILED row is refused `REFUND_NOT_FAILED`. |
-| 10 | Collection and cancellation serialize on the appointment row (`SELECT … FOR UPDATE` in both paths): either collection wins and cancellation queues the hand-back, or cancellation wins and collection refuses `APPOINTMENT_NOT_PAYABLE`. A cancelled appointment never keeps a `PENDING` receivable. |
-| 11 | No schema migration and no backfill: `Refund.method` already existed; old appointments simply have no receivable until touched. Day 26 is backend-only (no desk UI), answering Day 25's deferred hand-back and retry surfaces. |
-| 12 | DoD: `scripts/day26-dod.ts` is DB-backed, key-free and self-cleaning. It proves collection/concession, actual-based delta + later cancellation remainder, unpaid reschedule amount adjustment, void, cancel-unpaid, clinic-caused auto-cancel for paid and unpaid, FAILED gateway retry vs offline refusal, and a live collect-vs-cancel race. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Booking now creates the pay-at-clinic receivable inside its own transaction: one `PENDING` `Payment` with `amountPaise = feeAmount`, no method/gateway ids, `paymentId`/`paymentStatus` echoed in `APPOINTMENT_BOOKED`. A zero-fee booking creates no row (`amountPaise > 0` is a database CHECK).                                                                                                                                |
+| 2   | Keep the refund POLICY kind for offline money; do not override it to `DESK_HAND_BACK`. Offline is identified by `Payment.paymentId === null`. This supersedes Day 25 decision 8 and lets one offline payment carry a `RESCHEDULE_DELTA` and a later `CANCELLATION` as two rows.                                                                                                                                                   |
+| 3   | `POST /payments/offline/collect` (STAFF/ADMIN, CASH/CARD/UPI): locks the appointment row first, requires `CONFIRMED`/`ARRIVED`, requires exactly one `PENDING` payment, stores `PAID` + method + `paidAt` + collector + `collectedAt`, queues `PAYMENT_SUCCESSFUL` and audits `PAYMENT_COLLECTED`.                                                                                                                                |
+| 4   | Collection may be LESS than the fee (a concession): optional `amountPaise` in `1..outstanding` becomes the stored amount and therefore the refundable baseline. It may never exceed the outstanding amount, and no second payment row is created.                                                                                                                                                                                 |
+| 5   | `POST /payments/offline/void` (STAFF/ADMIN, reason required) writes off one `PENDING` receivable as `VOIDED` + `PAYMENT_VOIDED`, regardless of appointment state; a paid row is never voided. Cancel/reject/auto-cancel use the same rule through `voidPendingPaymentForAppointment` inside their existing transaction.                                                                                                           |
+| 6   | Offline delta math uses actual captured money: `remainingRefundablePaise(payment.amountPaise, existing refunds)` instead of the booking-time fee snapshot. Online refunds keep Day 22's snapshot rule.                                                                                                                                                                                                                            |
+| 7   | Rescheduling an UNPAID offline booking rewrites its `PENDING` amount to the new fee in the same transaction (+ `PAYMENT_AMOUNT_ADJUSTED` audit). Known edge: a move to a zero-fee slot leaves the old positive amount untouched because the schema forbids `amountPaise = 0`.                                                                                                                                                     |
+| 8   | `GET /payments/refunds/desk-hand-backs` lists `PENDING` refunds whose payment has no gateway id, oldest first, carrying the policy kind and patient identity. `POST /payments/refunds/:id/hand-back` (STAFF/ADMIN) completes the exact queued amount as CASH or UPI only, overwrites the refund actor with the person who handed the money over, queues `REFUND_COMPLETED` and audits `REFUND_HANDED_BACK`. No partial hand-back. |
+| 9   | `POST /payments/refunds/:id/retry` is ADMIN-only and only moves an ONLINE `FAILED` refund back to `PENDING` (+ `REFUND_RETRY_REQUESTED`, worker kick). An offline hand-back is refused `REFUND_NOT_GATEWAY`; any non-FAILED row is refused `REFUND_NOT_FAILED`.                                                                                                                                                                   |
+| 10  | Collection and cancellation serialize on the appointment row (`SELECT … FOR UPDATE` in both paths): either collection wins and cancellation queues the hand-back, or cancellation wins and collection refuses `APPOINTMENT_NOT_PAYABLE`. A cancelled appointment never keeps a `PENDING` receivable.                                                                                                                              |
+| 11  | No schema migration and no backfill: `Refund.method` already existed; old appointments simply have no receivable until touched. Day 26 is backend-only (no desk UI), answering Day 25's deferred hand-back and retry surfaces.                                                                                                                                                                                                    |
+| 12  | DoD: `scripts/day26-dod.ts` is DB-backed, key-free and self-cleaning. It proves collection/concession, actual-based delta + later cancellation remainder, unpaid reschedule amount adjustment, void, cancel-unpaid, clinic-caused auto-cancel for paid and unpaid, FAILED gateway retry vs offline refusal, and a live collect-vs-cancel race.                                                                                    |
 
 ---
 
 ## Phase 7 — Notifications (Days 27–29)
 
 ### Day 27 — Notification service
+
 - `[S]` Resend integration + `Notification` row per send (`type`, `recipient`, `status`,
   `sentAt`, provider error). A send must never block an HTTP request — fire from the
   service, not inline (§18).
@@ -840,21 +876,24 @@ The correctness-critical phase. Slow down here.
 - **DoD:** every auth email sends and is logged.
 
 #### Decisions locked for Day 27
-| # | Decision |
-|---|----------|
-| 1 | `POST /api/v1/users/:id/revoke-sessions` is ADMIN-only. It targets another account's sessions, so it lives under `/users` rather than the caller-scoped `/auth` surface. The body carries an optional reason; the route validates the uuid and reason before the service. |
-| 2 | Revocation is §6.3's single statement — set `revokedAt` on every live `RefreshToken` for the target — inside one transaction with the §20 audit row (`USER_SESSIONS_REVOKED`, `targetType: "user"`, before/after active-session count). It does not deactivate, change role, or alter any account status. |
-| 3 | The §18 `ACCOUNT_ALL_SESSIONS_REVOKED` notification is queued in the same transaction, only when at least one live token was revoked and the target still has an email. It is dispatched through the existing post-commit `setImmediate` seam. |
-| 4 | The operation is idempotent: a second call returns `revokedCount: 0`, writes its own audit row, and queues no second email. A missing target is `404 USER_NOT_FOUND`; a target with no live sessions is `200` with `revokedCount: 0`. |
-| 5 | Already-issued access tokens remain valid until their 15-minute TTL. The per-request guard re-checks account state (suspension/archive/deactivation), not a session epoch; adding immediate access-token invalidation would require the session table §42 defers. |
-| 6 | DoD extends `scripts/day27-dod.ts`: two live tokens are revoked, the audit actor/session-count snapshot is asserted, one notice reaches `SENT`, and a repeated call adds no second notice. |
+
+| #   | Decision                                                                                                                                                                                                                                                                                                  |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `POST /api/v1/users/:id/revoke-sessions` is ADMIN-only. It targets another account's sessions, so it lives under `/users` rather than the caller-scoped `/auth` surface. The body carries an optional reason; the route validates the uuid and reason before the service.                                 |
+| 2   | Revocation is §6.3's single statement — set `revokedAt` on every live `RefreshToken` for the target — inside one transaction with the §20 audit row (`USER_SESSIONS_REVOKED`, `targetType: "user"`, before/after active-session count). It does not deactivate, change role, or alter any account status. |
+| 3   | The §18 `ACCOUNT_ALL_SESSIONS_REVOKED` notification is queued in the same transaction, only when at least one live token was revoked and the target still has an email. It is dispatched through the existing post-commit `setImmediate` seam.                                                            |
+| 4   | The operation is idempotent: a second call returns `revokedCount: 0`, writes its own audit row, and queues no second email. A missing target is `404 USER_NOT_FOUND`; a target with no live sessions is `200` with `revokedCount: 0`.                                                                     |
+| 5   | Already-issued access tokens remain valid until their 15-minute TTL. The per-request guard re-checks account state (suspension/archive/deactivation), not a session epoch; adding immediate access-token invalidation would require the session table §42 defers.                                         |
+| 6   | DoD extends `scripts/day27-dod.ts`: two live tokens are revoked, the audit actor/session-count snapshot is asserted, one notice reaches `SENT`, and a repeated call adds no second notice.                                                                                                                |
 
 ### Day 28 — Appointment + payment emails
+
 - `[S]` Booking confirmation (fires at payment verification), cancelled, rescheduled,
   rejected, doctor-unavailable, auto-cancelled, payment receipt, every refund completion.
 - **DoD:** each event produces the right logged email.
 
 ### Day 29 — Reminders + in-process jobs
+
 - `[S]` In-process interval scheduler (no queue, no Redis): the **2-hour** reminder, hold
   expiry, the §12 auto-cancel, slot generation. The **hold-expiry sweep runs once at
   startup before serving traffic** (§8.6, §18).
@@ -868,22 +907,27 @@ The correctness-critical phase. Slow down here.
 ## Phase 8 — Dashboards & UI (Days 30–34)
 
 ### Day 30 — Patient dashboard
+
 - `[C]` Upcoming/past appointments, cancel, reschedule, payment info, profile. Fetch with
   TanStack Query; loading/error/empty states throughout.
 
 ### Day 31 — Doctor dashboard
+
 - `[C]` Today's schedule, availability editor, mark unavailable, read-only live queue.
 
 ### Day 32 — Staff dashboard (front desk)
+
 - `[C]` Today's slots + queue, check-in, mark completed/no-show, create walk-in booking
   (provisional patient), record offline payment, staff refund hand-backs, visit-history
   lookup, slot/capacity/unavailability management.
 
 ### Day 33 — Admin dashboard
+
 - `[C]` Stats, doctor management + verification, patients, appointments, attendance,
   schedule/slot/capacity, refund dispute queue, payments, notifications, audit log.
 
 ### Day 34 — Walk-ins, polish, accessibility
+
 - `[C]` Wire the provisional/walk-in path end-to-end; responsive pass; form validation
   (Zod + RHF shared with the server schemas); a11y basics (labels, focus, contrast).
 - **Phase 8 complete.**
@@ -895,10 +939,12 @@ The correctness-critical phase. Slow down here.
 Not a phase you defer — this is where you prove the hard rules. Mirror `plan.md` §33.
 
 ### Day 35 — Test harness
+
 - Vitest + Supertest in `server/`; a test DB helper (fresh migrate per run); arrange
   factories for clinic/doctor/patient/slot.
 
 ### Day 36 — Auth + authorization tests
+
 - Lockout, rotation, immediate revocation, email uniqueness across entry points, RBAC +
   ownership per role.
 - **Not a repeat of Day 9:** that day's tests are pure decision-logic unit tests with no
@@ -906,12 +952,21 @@ Not a phase you defer — this is where you prove the hard rules. Mirror `plan.m
   HTTP, and they are what prove the windowed count queries — the part a pure test cannot
   reach.
 
+  (
+  execute in chunks:
+    1. Registration, email uniqueness, and login.
+    2. Lockout behavior and refresh-token rotation/revocation.
+    3. Role-based authorization and resource ownership.
+   )
+
 ### Day 37 — Business-rule + concurrency tests
+
 - Booking/overbooking races, same-slot duplicates, cutoff boundaries, reschedule fee delta,
   the §13 matrix (all illegal transitions), the three DB constraints, and **every** step-5
   rejection → no appointment + auto-refund.
 
 ### Day 38 — Security + review sweep
+
 - Review against §33's list: payment enum discipline (`SUCCESS` only on `Refund`),
   audit append-only, ownership on every route, error handling, logging, DB constraints.
   Walk the §38 completion criteria end-to-end.
@@ -927,6 +982,7 @@ concurrency safety. The two phases most likely to overrun are **Phase 2 (auth)**
 **Phase 6 (payments)** — the money and security paths deserve the time.
 
 **If you need it smaller, cut in this order (all already deferred in `plan.md`):**
+
 1. Pay-at-clinic only — drop online Razorpay first (largest single saving, §42).
 2. Drop the doctor dashboard to read-only.
 3. Ship one reminder only (already the case) and skip the reminder tuning.

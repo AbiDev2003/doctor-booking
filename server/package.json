@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "test": "node --import tsx --test \"tests/*.test.ts\"",
+    "test:integration": "tsx scripts/test-integration.ts",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
@@ -22,7 +23,8 @@
     "dev:create-patient": "tsx scripts/dev-create-patient.ts",
     "demo:queue": "tsx scripts/demo-queue.ts",
     "day27:dod": "tsx scripts/day27-dod.ts",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.tools.json"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.tools.json",
+    "typecheck:tests": "tsc --noEmit -p tsconfig.tests.json"
   },
   "keywords": [],
   "author": "",
@@ -49,11 +51,15 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.2",
+    "@types/supertest": "^7.2.1",
     "eslint": "^10.11.0",
     "globals": "^17.12.0",
     "prisma": "^7.10.0",
+    "supertest": "^7.3.2",
     "tsx": "^4.23.15",
     "typescript": "~6.0.2",
-    "typescript-eslint": "^8.70.1"
+    "typescript-eslint": "^8.70.1",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
   }
 }

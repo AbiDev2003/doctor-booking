@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": [
+    "scripts/test-integration.ts",
+    "tests/integration/**/*.ts",
+    "vitest.config.ts"
+  ]
+}
