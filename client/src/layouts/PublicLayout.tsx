@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import type { SessionUser } from "../lib/api";
 import { useSession } from "../hooks/useSession";
+import { ROLE_HOMES, ROLE_HOME_LABELS } from "../lib/roleHome";
 
 /**
  * plan.md §26's storefront shell (Day 13): shared nav + footer around the
@@ -9,21 +10,14 @@ import { useSession } from "../hooks/useSession";
  * "Sign in". Nothing here hides content: the public pages themselves only ever
  * render what the unauthenticated API sends.
  *
- * The actionable-role map is the *client's* idea of the fastest useful next
- * step and is deliberately cosmetic — every destination re-checks its own
- * guard on load, so a stale token or an unusual role resolves server-side.
+ * The role → path mapping lives in `lib/roleHome.ts`, shared with the login
+ * redirect and the `/profile` back link, so the three cannot disagree. Every
+ * destination re-checks its own guard on load, so a stale token or an unusual
+ * role resolves server-side.
  */
-const ROLE_HOMES: Record<SessionUser["role"], string> = {
-  ADMIN: "/staff",
-  STAFF: "/staff",
-  DOCTOR: "/doctor",
-  PATIENT: "/patient",
-};
-
 function AccountLink({ user }: { user: SessionUser | null }) {
   if (!user) return <Link to="/login">Sign in</Link>;
-  const label = user.role === "PATIENT" || user.role === "DOCTOR" ? "My dashboard" : "Front desk";
-  return <Link to={ROLE_HOMES[user.role]}>{label}</Link>;
+  return <Link to={ROLE_HOMES[user.role]}>{ROLE_HOME_LABELS[user.role]}</Link>;
 }
 
 export default function PublicLayout() {

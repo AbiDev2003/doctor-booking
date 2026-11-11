@@ -20,6 +20,11 @@ import {
   inviteDoctor,
   inviteStaff,
   listDoctors,
+  listDoctorInvitations,
+  listStaffInvitations,
+  listStaffAccounts,
+  resendInvitation,
+  revokeInvitation,
   getDoctor,
   getTodayQueue,
   updateDoctorProfile,
@@ -146,9 +151,9 @@ doctorsRouter.post("/", requireRole($Enums.UserRole.ADMIN, $Enums.UserRole.STAFF
         expiresIn: durationLabel(config.ACCOUNT_CLAIM_TTL),
       }),
     );
-    adminSummaryStub(req, "DOCTOR_INVITED", result.userId);
+    adminSummaryStub(req, "DOCTOR_INVITED", result.invitationId);
 
-    res.status(201).json({ message: "Doctor invited.", userId: result.userId });
+    res.status(201).json({ message: "Doctor invited.", invitationId: result.invitationId });
   } catch (err) {
     next(err);
   }
@@ -158,6 +163,67 @@ doctorsRouter.post("/", requireRole($Enums.UserRole.ADMIN, $Enums.UserRole.STAFF
 doctorsRouter.get("/", requireRole($Enums.UserRole.ADMIN, $Enums.UserRole.STAFF), async (_req, res, next) => {
   try {
     res.status(200).json({ doctors: await listDoctors() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* §5.1 — pending doctor invitations (resend / revoke)                 */
+/* ------------------------------------------------------------------ */
+
+const invitationManagers = requireRole($Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
+
+/** Registered BEFORE `/:id`, or "invitations" would be parsed as a uuid. */
+doctorsRouter.get("/invitations", invitationManagers, async (_req, res, next) => {
+  try {
+    res.status(200).json({ invitations: await listDoctorInvitations() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+doctorsRouter.post("/invitations/:id/resend", invitationManagers, async (req, res, next) => {
+  try {
+    const { id } = doctorIdParamSchema.parse(req.params);
+    const result = await resendInvitation({
+      invitationId: id,
+      role: $Enums.UserRole.DOCTOR,
+      actor: actorOf(req),
+      ...requestMeta(req, res),
+    });
+
+    const claimUrl = `${config.CLIENT_URL}/claim-account?token=${result.rawToken}`;
+    dispatchNotificationInBackground(
+      result.notificationId,
+      accountInvitationEmail({
+        fullName: result.invitation.fullName,
+        link: claimUrl,
+        roleLabel: "doctor",
+        expiresIn: durationLabel(config.ACCOUNT_CLAIM_TTL),
+      }),
+    );
+
+    adminSummaryStub(req, "DOCTOR_INVITATION_RESENT", id);
+    res.status(200).json({ message: "Invitation resent.", invitation: result.invitation });
+  } catch (err) {
+    next(err);
+  }
+});
+
+doctorsRouter.post("/invitations/:id/revoke", invitationManagers, async (req, res, next) => {
+  try {
+    const { id } = doctorIdParamSchema.parse(req.params);
+    const { reason } = optionalReasonSchema.parse(req.body);
+    await revokeInvitation({
+      invitationId: id,
+      role: $Enums.UserRole.DOCTOR,
+      reason: reason ?? null,
+      actor: actorOf(req),
+      ...requestMeta(req, res),
+    });
+    adminSummaryStub(req, "DOCTOR_INVITATION_REVOKED", id);
+    res.status(200).json({ message: "Invitation revoked." });
   } catch (err) {
     next(err);
   }
@@ -370,7 +436,61 @@ staffRouter.post("/", requireRole($Enums.UserRole.ADMIN), async (req, res, next)
       }),
     );
 
-    res.status(201).json({ message: "Staff member invited.", userId: result.userId });
+    res.status(201).json({ message: "Staff member invited.", invitationId: result.invitationId });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Accepted staff accounts for the admin Staff tab. */
+staffRouter.get("/", requireRole($Enums.UserRole.ADMIN), async (_req, res, next) => {
+  try {
+    const [staff, invitations] = await Promise.all([listStaffAccounts(), listStaffInvitations()]);
+    res.status(200).json({ staff, invitations });
+  } catch (err) {
+    next(err);
+  }
+});
+
+staffRouter.post("/invitations/:id/resend", requireRole($Enums.UserRole.ADMIN), async (req, res, next) => {
+  try {
+    const { id } = doctorIdParamSchema.parse(req.params);
+    const result = await resendInvitation({
+      invitationId: id,
+      role: $Enums.UserRole.STAFF,
+      actor: actorOf(req),
+      ...requestMeta(req, res),
+    });
+
+    const claimUrl = `${config.CLIENT_URL}/claim-account?token=${result.rawToken}`;
+    dispatchNotificationInBackground(
+      result.notificationId,
+      accountInvitationEmail({
+        fullName: result.invitation.fullName,
+        link: claimUrl,
+        roleLabel: "staff member",
+        expiresIn: durationLabel(config.ACCOUNT_CLAIM_TTL),
+      }),
+    );
+
+    res.status(200).json({ message: "Invitation resent.", invitation: result.invitation });
+  } catch (err) {
+    next(err);
+  }
+});
+
+staffRouter.post("/invitations/:id/revoke", requireRole($Enums.UserRole.ADMIN), async (req, res, next) => {
+  try {
+    const { id } = doctorIdParamSchema.parse(req.params);
+    const { reason } = optionalReasonSchema.parse(req.body);
+    await revokeInvitation({
+      invitationId: id,
+      role: $Enums.UserRole.STAFF,
+      reason: reason ?? null,
+      actor: actorOf(req),
+      ...requestMeta(req, res),
+    });
+    res.status(200).json({ message: "Invitation revoked." });
   } catch (err) {
     next(err);
   }

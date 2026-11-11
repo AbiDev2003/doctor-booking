@@ -17,6 +17,8 @@ import {
   listAdminPayments,
   listAdminRefunds,
 } from "../services/admin/adminRead.service.js";
+import { listOutstandingPayments } from "../services/payments/outstandingPayments.service.js";
+import { outstandingPaymentsQuerySchema } from "../schemas/payments.js";
 
 /**
  * plan.md §29/§31 — the admin dashboard's read surface, Day 33.
@@ -83,6 +85,16 @@ adminRouter.get("/payments", adminOnly, async (req, res, next) => {
         limit: query.limit,
       }),
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Outstanding receivables — the same read the desk uses, admin view-only. */
+adminRouter.get("/outstanding", adminOnly, async (req, res, next) => {
+  try {
+    const query = outstandingPaymentsQuerySchema.parse(req.query);
+    res.json(await listOutstandingPayments({ limit: query.limit }));
   } catch (err) {
     next(err);
   }

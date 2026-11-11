@@ -3,6 +3,7 @@ import type { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../lib/prisma.js";
 import { localDateTimeToUtc, utcToLocalDateTime } from "../../lib/time.js";
 import { getClinicSettings } from "../clinic.service.js";
+import { findPatientIds } from "../patients/patientSearch.service.js";
 import type {
   AdminAppointmentDto,
   AdminAppointmentsDto,
@@ -239,19 +240,20 @@ export async function listAdminPatients(input: {
   readonly search?: string | undefined;
   readonly limit: number;
 }): Promise<AdminPatientsDto> {
-  const where: Prisma.UserWhereInput = {
-    role: $Enums.UserRole.PATIENT,
-    ...(input.search !== undefined && input.search !== "" && {
-      OR: [
-        { fullName: { contains: input.search, mode: "insensitive" } },
-        { email: { contains: input.search, mode: "insensitive" } },
-        { patientProfile: { phone: { contains: input.search } } },
-      ],
-    }),
-  };
+  // Search is shared with the desk: digits look up a phone prefix, text uses
+  // pg_trgm fuzzy names, so "abonash" still finds Abinash/Avinash/Abhinash.
+  const matchIds =
+    input.search !== undefined && input.search !== ""
+      ? await findPatientIds(input.search, input.limit)
+      : null;
+
+  if (matchIds !== null && matchIds.length === 0) return { patients: [] };
 
   const rows = await prisma.user.findMany({
-    where,
+    where: {
+      role: $Enums.UserRole.PATIENT,
+      ...(matchIds !== null && { id: { in: matchIds } }),
+    },
     orderBy: { createdAt: "desc" },
     take: input.limit,
     select: {
@@ -263,6 +265,12 @@ export async function listAdminPatients(input: {
       patientProfile: { select: { phone: true, isProvisional: true } },
     },
   });
+
+  // Preserve relevance order for a search (similarity DESC, then recency).
+  if (matchIds !== null) {
+    const rank = new Map(matchIds.map((id, index) => [id, index]));
+    rows.sort((a, b) => (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+  }
 
   const ids = rows.map((row) => row.id);
   if (ids.length === 0) return { patients: [] };

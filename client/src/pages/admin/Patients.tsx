@@ -42,7 +42,7 @@ export default function Patients() {
           >
             <Input
               aria-label="Search patients"
-              placeholder="Name, email or phone"
+              placeholder="Name, email or 2+ phone digits"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               className="max-w-sm"
@@ -63,6 +63,10 @@ export default function Patients() {
               </Button>
             )}
           </form>
+          <p className="text-xs text-muted-foreground">
+            Phone search matches any number containing those digits (at least 2). Name search tolerates small
+            misspellings. Up to 100 matches are shown — press Enter or Search.
+          </p>
 
           {patients.isPending && <PageLoading label="Loading patients…" />}
           {patients.isError && (

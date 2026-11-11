@@ -277,7 +277,10 @@ export function apiVerifyEmail(token: string, signal?: AbortSignal): Promise<{ m
  * echoed back to the page rather than composed there, so the copy cannot drift
  * from the server's genericity.
  */
-export function apiForgotPassword(input: { email: string; method: "link" | "otp" }): Promise<{ message: string }> {
+export function apiForgotPassword(input: {
+  email: string;
+  method: "link" | "otp";
+}): Promise<{ message: string; codeTtlSeconds?: number }> {
   return request("/auth/forgot-password", { method: "POST", body: JSON.stringify(input) });
 }
 
@@ -899,6 +902,60 @@ export function apiVisitHistory(phone: string, signal?: AbortSignal): Promise<{ 
   return request(`/patients/visit-history?phone=${encodeURIComponent(phone)}`, { signal });
 }
 
+/* ------------------------------------------------------------------ */
+/* Slot-wise patient view (staff)                                      */
+/* ------------------------------------------------------------------ */
+
+export interface SlotViewAppointment {
+  id: string
+  patientId: string
+  patientName: string
+  phone: string
+  email: string | null
+  isProvisional: boolean
+  status: AppointmentStatus
+  bookingTime: string
+  feeAmount: number
+  payment: DeskPaymentSummary
+}
+
+export interface SlotViewSlot {
+  slotId: string
+  startTime: string
+  endTime: string
+  startAt: string
+  endAt: string
+  maxPatients: number
+  bookedCount: number
+  isDisabled: boolean
+  appointments: SlotViewAppointment[]
+}
+
+export interface SlotViewDoctor {
+  doctorId: string
+  doctorName: string
+  slots: SlotViewSlot[]
+}
+
+export interface PatientSlotView {
+  date: string
+  doctors: SlotViewDoctor[]
+  totalAppointments: number
+}
+
+/** GET /patients/slot-view — a clinic day grouped doctor → slot → patients. */
+export function apiPatientSlotView(
+  input: { date?: string; search?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<PatientSlotView> {
+  const params = new URLSearchParams()
+  if (input.date !== undefined && input.date !== "") params.set("date", input.date)
+  if (input.search !== undefined && input.search !== "") params.set("search", input.search)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return request(`/patients/slot-view${query === "" ? "" : `?${query}`}`, { signal })
+}
+
 /** POST /patients/:id/email — attach or correct a provisional walk-in's email. */
 export function apiAttachPatientEmail(
   patientId: string,
@@ -971,6 +1028,66 @@ export interface DeskHandBack {
 
 export function apiDeskHandBacks(signal?: AbortSignal): Promise<{ handBacks: DeskHandBack[] }> {
   return request("/payments/refunds/desk-hand-backs", { signal });
+}
+
+/* ------------------------------------------------------------------ */
+/* Outstanding receivables (admin + staff)                             */
+/* ------------------------------------------------------------------ */
+
+export type OutstandingDueState = "OVERDUE" | "TODAY" | "UPCOMING"
+
+export interface OutstandingPayment {
+  paymentId: string
+  appointmentId: string
+  patientId: string
+  patientName: string
+  patientPhone: string
+  doctorName: string
+  slotDate: string
+  startTime: string
+  endTime: string
+  slotStartsAt: string
+  amountPaise: number
+  currency: string
+  dueState: OutstandingDueState
+  appointmentStatus: AppointmentStatus
+}
+
+export interface OutstandingTotals {
+  overduePaise: number
+  todayPaise: number
+  upcomingPaise: number
+  totalPaise: number
+  count: number
+}
+
+export interface OutstandingPayments {
+  date: string
+  payments: OutstandingPayment[]
+  totals: OutstandingTotals
+}
+
+function outstandingQuery(input: { limit?: number }): string {
+  const params = new URLSearchParams()
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  const query = params.toString()
+  return query === "" ? "" : `?${query}`
+}
+
+/** GET /payments/outstanding — the desk's actionable list. */
+export function apiOutstandingPayments(
+  input: { limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<OutstandingPayments> {
+  return request(`/payments/outstanding${outstandingQuery(input)}`, { signal })
+}
+
+/** GET /admin/outstanding — read-only twin for the admin dashboard. */
+export function apiAdminOutstandingPayments(
+  input: { limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<OutstandingPayments> {
+  return request(`/admin/outstanding${outstandingQuery(input)}`, { signal })
 }
 
 export function apiCompleteHandBack(
@@ -1115,15 +1232,72 @@ export function apiUpdateClinicSettings(
 export function apiInviteDoctor(input: {
   email: string
   fullName: string
-}): Promise<{ message: string; userId: string }> {
+}): Promise<{ message: string; invitationId: string }> {
   return request("/doctors", { method: "POST", body: JSON.stringify(input) })
 }
 
 export function apiInviteStaff(input: {
   email: string
   fullName: string
-}): Promise<{ message: string; userId: string }> {
+}): Promise<{ message: string; invitationId: string }> {
   return request("/staff", { method: "POST", body: JSON.stringify(input) })
+}
+
+/* ------------------------------------------------------------------ */
+/* Pending invitations + staff accounts                                */
+/* ------------------------------------------------------------------ */
+
+export interface PendingInvitation {
+  id: string
+  role: SessionUser["role"]
+  fullName: string
+  email: string
+  status: "PENDING" | "EXPIRED"
+  expiresAt: string
+  createdAt: string
+  invitedByName: string | null
+}
+
+export interface StaffAccount {
+  id: string
+  fullName: string
+  email: string | null
+  isDeactivated: boolean
+  createdAt: string
+}
+
+/** GET /doctors/invitations — pending doctor invitations (ADMIN + STAFF). */
+export function apiDoctorInvitations(signal?: AbortSignal): Promise<{ invitations: PendingInvitation[] }> {
+  return request("/doctors/invitations", { signal })
+}
+
+/** GET /staff — accepted staff plus pending staff invitations (ADMIN). */
+export function apiStaffAccounts(
+  signal?: AbortSignal,
+): Promise<{ staff: StaffAccount[]; invitations: PendingInvitation[] }> {
+  return request("/staff", { signal })
+}
+
+export function apiResendDoctorInvitation(id: string): Promise<{ message: string; invitation: PendingInvitation }> {
+  return request(`/doctors/invitations/${encodeURIComponent(id)}/resend`, { method: "POST" })
+}
+
+export function apiRevokeDoctorInvitation(id: string, reason?: string): Promise<{ message: string }> {
+  return request(`/doctors/invitations/${encodeURIComponent(id)}/revoke`, {
+    method: "POST",
+    body: JSON.stringify(reason !== undefined && reason !== "" ? { reason } : {}),
+  })
+}
+
+export function apiResendStaffInvitation(id: string): Promise<{ message: string; invitation: PendingInvitation }> {
+  return request(`/staff/invitations/${encodeURIComponent(id)}/resend`, { method: "POST" })
+}
+
+export function apiRevokeStaffInvitation(id: string, reason?: string): Promise<{ message: string }> {
+  return request(`/staff/invitations/${encodeURIComponent(id)}/revoke`, {
+    method: "POST",
+    body: JSON.stringify(reason !== undefined && reason !== "" ? { reason } : {}),
+  })
 }
 
 export function apiVerifyDoctor(id: string): Promise<{ message: string; verificationStatus: DoctorVerificationStatus }> {

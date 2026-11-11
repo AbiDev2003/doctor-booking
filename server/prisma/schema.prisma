@@ -326,7 +326,12 @@ model User {
   unavailabilities      DoctorUnavailability[] @relation("DoctorUnavailability")
   unavailabilityCreated DoctorUnavailability[] @relation("UnavailabilityCreator")
   refreshTokens         RefreshToken[]
+  pendingInvitationsSent PendingInvitation[] @relation("PendingInvitationInviter")
+  pendingInvitationClaim PendingInvitation?  @relation("PendingInvitationClaimedUser")
 
+  // pg_trgm backs the fuzzy patient-name search (see the migration). The GIN
+  // index is declared here so `migrate dev` does not try to drop it as drift.
+  @@index([fullName(ops: raw("gin_trgm_ops"))], type: Gin, map: "users_full_name_trgm_idx")
   @@map("users")
 }
 
@@ -418,6 +423,51 @@ model AuthToken {
   // Backs "invalidate everything outstanding for this user and purpose", and the latest-token lookup on resend.
   @@index([userId, purpose], map: "auth_tokens_user_id_purpose_idx")
   @@map("auth_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// PendingInvitation — an invitation that has NOT created an account yet (§5.1)
+//
+// The invite flow deliberately no longer writes a `User` + `DoctorProfile` at
+// send time. A person who never claims leaves no account behind, and an address
+// can be invited again after a revoke/expiry. The claim endpoint materialises
+// the account in one transaction: role, name, password hash, optional
+// DoctorProfile and the INVITED history row.
+//
+// The token lives here rather than in AuthToken because AuthToken.userId is a
+// required FK, and the whole point is that the user does not exist yet.
+// ---------------------------------------------------------------------------
+
+model PendingInvitation {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  role     UserRole @map("role")
+  fullName String   @map("full_name")
+  email    String   @map("email")
+
+  // SHA-256 hex, exactly like AuthToken/RefreshToken: a leaked database must
+  // not hand out live invitation links.
+  tokenHash String @unique @map("token_hash") @db.VarChar(64)
+
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(3)
+
+  invitedById String? @map("invited_by_id") @db.Uuid
+  invitedBy   User?   @relation("PendingInvitationInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  claimedUserId String? @unique @map("claimed_user_id") @db.Uuid
+  claimedUser   User?   @relation("PendingInvitationClaimedUser", fields: [claimedUserId], references: [id], onDelete: SetNull)
+
+  ip        String?  @map("ip") @db.Inet
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  // At most one live invitation per address. A consumed/revoked row stays for
+  // the audit trail, hence the partial predicate rather than a plain unique.
+  @@unique([email], where: raw("(consumed_at IS NULL AND revoked_at IS NULL)"), map: "pending_invitations_live_email_unique")
+  @@index([role, createdAt], map: "pending_invitations_role_created_at_idx")
+  @@index([expiresAt], map: "pending_invitations_expires_at_idx")
+  @@map("pending_invitations")
 }
 
 // ===========================================================================

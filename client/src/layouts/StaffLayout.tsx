@@ -2,6 +2,7 @@ import { Link, NavLink, Navigate, Outlet, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { useSession } from "../hooks/useSession"
 import { apiLogout } from "../lib/api"
+import { ROLE_HOMES, ROLE_HOME_LABELS } from "../lib/roleHome"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -77,6 +78,28 @@ export default function StaffLayout() {
             <NavLink to="/staff/schedule" className={navClass}>
               Schedule
             </NavLink>
+            <NavLink to="/staff/doctors" className={navClass}>
+              Doctors
+            </NavLink>
+            {/* ADMIN is admitted to this shell because an admin can do anything
+                a staff member can, and /admin already links here ("Front desk").
+                This is the return trip, shown only to ADMIN: a STAFF member
+                would be bounced by AdminLayout's guard, so the link would be
+                dead. Destination and label come from the shared role table. */}
+            {user.role === "ADMIN" && (
+              <Link
+                to={ROLE_HOMES.ADMIN}
+                className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                {ROLE_HOME_LABELS.ADMIN}
+              </Link>
+            )}
+            <Link
+              to="/profile"
+              className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              Profile
+            </Link>
             <Link
               to="/"
               className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"

@@ -150,3 +150,51 @@ export interface PatientPaymentDto {
   readonly endTime: string | null;
   readonly refunds: readonly PatientRefundDto[];
 }
+
+/**
+ * Outstanding receivables (pay-at-clinic money not yet collected).
+ *
+ * One row per PENDING payment on a live booking. `dueState` is computed
+ * server-side against the CLINIC's calendar day, so the desk and the admin
+ * dashboard classify "overdue" identically regardless of the browser clock.
+ */
+export const outstandingPaymentsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+});
+
+export type OutstandingPaymentsQueryShape = z.infer<typeof outstandingPaymentsQuerySchema>;
+
+export type OutstandingDueState = "OVERDUE" | "TODAY" | "UPCOMING";
+
+export interface OutstandingPaymentDto {
+  readonly paymentId: string;
+  readonly appointmentId: string;
+  readonly patientId: string;
+  readonly patientName: string;
+  readonly patientPhone: string;
+  readonly doctorName: string;
+  /** Clinic-local `YYYY-MM-DD`. */
+  readonly slotDate: string;
+  /** Clinic-local `HH:MM`. */
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly slotStartsAt: string;
+  readonly amountPaise: number;
+  readonly currency: string;
+  readonly dueState: OutstandingDueState;
+  readonly appointmentStatus: $Enums.AppointmentStatus;
+}
+
+export interface OutstandingTotalsDto {
+  readonly overduePaise: number;
+  readonly todayPaise: number;
+  readonly upcomingPaise: number;
+  readonly totalPaise: number;
+  readonly count: number;
+}
+
+export interface OutstandingPaymentsDto {
+  readonly date: string;
+  readonly payments: readonly OutstandingPaymentDto[];
+  readonly totals: OutstandingTotalsDto;
+}

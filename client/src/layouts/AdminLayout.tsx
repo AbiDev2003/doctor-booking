@@ -21,6 +21,7 @@ function navClass({ isActive }: { isActive: boolean }): string {
 const TABS = [
   { to: "/admin", end: true, label: "Overview" },
   { to: "/admin/doctors", label: "Doctors" },
+  { to: "/admin/staff", label: "Staff" },
   { to: "/admin/patients", label: "Patients" },
   { to: "/admin/appointments", label: "Appointments" },
   { to: "/admin/schedule", label: "Schedule" },

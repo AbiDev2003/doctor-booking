@@ -27,9 +27,11 @@ import StaffAppointments from "./pages/staff/Appointments.tsx";
 import StaffPatients from "./pages/staff/Patients.tsx";
 import StaffPayments from "./pages/staff/Payments.tsx";
 import StaffSchedule from "./pages/staff/Schedule.tsx";
+import StaffDoctors from "./pages/staff/Doctors.tsx";
 import AdminLayout from "./layouts/AdminLayout.tsx";
 import AdminOverview from "./pages/admin/Overview.tsx";
 import AdminDoctors from "./pages/admin/Doctors.tsx";
+import AdminStaff from "./pages/admin/Staff.tsx";
 import AdminPatients from "./pages/admin/Patients.tsx";
 import AdminAppointments from "./pages/admin/Appointments.tsx";
 import AdminSchedule from "./pages/admin/Schedule.tsx";
@@ -78,12 +80,14 @@ export default function App() {
         <Route path="patients" element={<StaffPatients />} />
         <Route path="payments" element={<StaffPayments />} />
         <Route path="schedule" element={<StaffSchedule />} />
+        <Route path="doctors" element={<StaffDoctors />} />
       </Route>
 
       {/* §29 admin dashboard (Day 33). STAFF are redirected to the desk. */}
       <Route path="/admin" element={<AdminLayout />}>
         <Route index element={<AdminOverview />} />
         <Route path="doctors" element={<AdminDoctors />} />
+        <Route path="staff" element={<AdminStaff />} />
         <Route path="patients" element={<AdminPatients />} />
         <Route path="appointments" element={<AdminAppointments />} />
         <Route path="schedule" element={<AdminSchedule />} />

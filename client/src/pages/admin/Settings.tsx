@@ -3,24 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { clinicSettingsPatchSchema } from "@shared/clinics"
-import { inviteStaffSchema, type InviteStaffInputShape } from "@shared/doctors"
-import { apiClinicSettings, apiInviteStaff, apiUpdateClinicSettings, ApiError } from "@/lib/api"
+import { apiClinicSettings, apiUpdateClinicSettings, ApiError } from "@/lib/api"
 import type { ClinicSettingsPatch } from "@/lib/api"
 import { applyApiErrors } from "@/lib/formErrors"
 import { PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 
 const FIELDS = [
   { key: "bookingHorizonDays", label: "Booking horizon (days)", min: 1, max: 365 },
@@ -31,11 +21,10 @@ const FIELDS = [
   { key: "maxActiveBookingsPerPatient", label: "Max active bookings / patient", min: 1, max: 100 },
 ] as const
 
-/** §29's settings tab (Day 33): the six scheduling tunables and staff invites. */
+/** §29's settings tab (Day 33): the six scheduling tunables. */
 export default function Settings() {
   const queryClient = useQueryClient()
   const [notice, setNotice] = useState<string | null>(null)
-  const [inviteOpen, setInviteOpen] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const {
     register,
@@ -95,16 +84,11 @@ export default function Settings() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Settings</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Scheduling tunables apply clinic-wide. Name, timezone, currency and default fee are seed-owned.
-          </p>
-        </div>
-        <Button variant="outline" onClick={() => setInviteOpen(true)}>
-          Invite staff
-        </Button>
+      <div>
+        <h1 className="text-2xl font-semibold">Settings</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Scheduling tunables apply clinic-wide. Name, timezone, currency and default fee are seed-owned.
+        </p>
       </div>
 
       {notice !== null && (
@@ -191,113 +175,7 @@ export default function Settings() {
           </form>
         </CardContent>
       </Card>
-
-      <InviteStaffDialog
-        open={inviteOpen}
-        onOpenChange={setInviteOpen}
-        onInvited={(message) => {
-          setNotice(message)
-          setInviteOpen(false)
-        }}
-      />
     </div>
   )
 }
 
-function InviteStaffDialog({
-  open,
-  onOpenChange,
-  onInvited,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onInvited: (message: string) => void
-}) {
-  const [formError, setFormError] = useState<string | null>(null)
-  const {
-    register,
-    handleSubmit,
-    reset,
-    setError,
-    formState: { errors, isSubmitting },
-  } = useForm<InviteStaffInputShape>({
-    resolver: zodResolver(inviteStaffSchema),
-    defaultValues: { fullName: "", email: "" },
-  })
-  const invite = useMutation({
-    mutationFn: (values: InviteStaffInputShape) => apiInviteStaff(values),
-    onSuccess: (result) => {
-      onInvited(result.message)
-      reset()
-    },
-    onError: (error) => {
-      setFormError(applyApiErrors(error, setError) ?? null)
-    },
-  })
-
-  const submit = handleSubmit((values) => {
-    setFormError(null)
-    invite.mutate(values)
-  })
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <form className="space-y-4" onSubmit={submit} noValidate>
-          <DialogHeader>
-            <DialogTitle>Invite front-desk staff</DialogTitle>
-            <DialogDescription>
-              Staff can run the desk but cannot reach the admin dashboard.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-2">
-            <Label htmlFor="staff-full-name">Full name</Label>
-            <Input
-              id="staff-full-name"
-              aria-invalid={errors.fullName !== undefined}
-              aria-describedby={errors.fullName !== undefined ? "staff-full-name-error" : undefined}
-              {...register("fullName")}
-            />
-            {errors.fullName?.message !== undefined && (
-              <p id="staff-full-name-error" className="text-xs text-destructive" role="alert">
-                {errors.fullName.message}
-              </p>
-            )}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="staff-email">Email</Label>
-            <Input
-              id="staff-email"
-              type="email"
-              aria-invalid={errors.email !== undefined}
-              aria-describedby={errors.email !== undefined ? "staff-email-error" : undefined}
-              {...register("email")}
-            />
-            {errors.email?.message !== undefined && (
-              <p id="staff-email-error" className="text-xs text-destructive" role="alert">
-                {errors.email.message}
-              </p>
-            )}
-          </div>
-
-          {formError !== null && (
-            <Alert variant="destructive">
-              <AlertTitle>Invite failed</AlertTitle>
-              <AlertDescription>{formError}</AlertDescription>
-            </Alert>
-          )}
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isSubmitting || invite.isPending}>
-              {invite.isPending ? "Inviting…" : "Send invite"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}

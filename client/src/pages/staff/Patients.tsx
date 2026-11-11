@@ -1,19 +1,19 @@
 import { useEffect, useRef, useState } from "react"
 import type { FormEvent } from "react"
 import { useSearchParams } from "react-router-dom"
-import { useMutation } from "@tanstack/react-query"
+import { useMutation, useQuery } from "@tanstack/react-query"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { Search, UserRound } from "lucide-react"
+import { CalendarDays, Search, UserRound } from "lucide-react"
 import { attachPatientEmailSchema } from "@shared/staff"
-import { apiAttachPatientEmail, apiVisitHistory, ApiError } from "@/lib/api"
-import type { DeskPatient, VisitHistory } from "@/lib/api"
-import { formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
+import { apiAttachPatientEmail, apiPatientSlotView, apiPublicClinic, apiVisitHistory, ApiError } from "@/lib/api"
+import type { DeskPatient, SlotViewAppointment, SlotViewSlot, VisitHistory } from "@/lib/api"
+import { addDays, clinicToday, formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
 import { applyApiErrors } from "@/lib/formErrors"
 import { formatPaise } from "@/lib/money"
 import { AppointmentActions } from "@/components/staff/appointment-actions"
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge"
-import { EmptyState, PageLoading } from "@/components/async-state"
+import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -22,17 +22,257 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 
+type Tab = "slots" | "lookup"
+
 /**
- * §16's phone lookup (Day 32): one number → the patient on file, their
- * completed/no-show/upcoming counts, the doctors they have seen, and the
- * bookings the desk can still act on.
+ * §16's two ways into a patient: the day grouped by doctor → slot → patient
+ * (the front desk's default), and the phone-keyed returning-patient lookup.
  *
- * The lookup is exact-match on the normalised phone, and the server owns the
- * normalization. An unknown number is a truthful "not found", not an error.
+ * The slot view opens on the clinic's own today and can be searched with the
+ * same phone-prefix / fuzzy-name input the admin directory uses. The phone
+ * lookup stays exact on the normalised number because its job is one record,
+ * not a list.
  */
 export default function Patients() {
   const [params] = useSearchParams()
   const initialPhone = params.get("phone") ?? ""
+  const [tab, setTab] = useState<Tab>(() => (params.get("tab") === "lookup" ? "lookup" : "slots"))
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">Patients</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          See the day slot by slot, or look up a returning patient by phone. The desk sees the same record the clinic
+          keeps.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button variant={tab === "slots" ? "default" : "outline"} size="sm" onClick={() => setTab("slots")}>
+          By slot
+        </Button>
+        <Button variant={tab === "lookup" ? "default" : "outline"} size="sm" onClick={() => setTab("lookup")}>
+          Phone lookup
+        </Button>
+      </div>
+
+      {tab === "slots" ? <SlotView /> : <PhoneLookup initialPhone={initialPhone} />}
+    </div>
+  )
+}
+
+function SlotView() {
+  const clinic = useQuery({ queryKey: ["public", "clinic"], queryFn: () => apiPublicClinic() })
+  const timezone = clinic.data?.clinic.timezone
+
+  const [date, setDate] = useState("")
+  const [search, setSearch] = useState("")
+  const [submitted, setSubmitted] = useState("")
+
+  // An empty `date` means "follow the clinic's today"; the button and the
+  // picker both write a concrete date once the desk steps away from today.
+  const selectedDate = date !== "" ? date : timezone !== undefined ? clinicToday(timezone) : ""
+
+  const view = useQuery({
+    queryKey: ["staff", "patient-slot-view", selectedDate, submitted],
+    queryFn: ({ signal }) =>
+      apiPatientSlotView(
+        {
+          date: selectedDate,
+          ...(submitted !== "" && { search: submitted }),
+          limit: 100,
+        },
+        signal,
+      ),
+    enabled: selectedDate !== "",
+  })
+
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    setSubmitted(search.trim())
+  }
+
+  function today() {
+    setDate(timezone !== undefined ? clinicToday(timezone) : "")
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="space-y-2">
+          <Label htmlFor="slot-date">Clinic date</Label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              id="slot-date"
+              type="date"
+              className="w-44"
+              value={selectedDate}
+              disabled={selectedDate === ""}
+              onChange={(event) => setDate(event.target.value)}
+            />
+            <Button type="button" variant="outline" size="sm" onClick={today} disabled={selectedDate === ""}>
+              Today
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={selectedDate === ""}
+              onClick={() => setDate(addDays(selectedDate, -1))}
+            >
+              Previous
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={selectedDate === ""}
+              onClick={() => setDate(addDays(selectedDate, 1))}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+
+        <form onSubmit={submit} className="flex flex-1 flex-wrap items-end gap-2">
+          <div className="w-full max-w-sm space-y-2">
+            <Label htmlFor="slot-search">Search patient</Label>
+            <Input
+              id="slot-search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Phone or name"
+              autoComplete="off"
+            />
+          </div>
+          <Button type="submit" disabled={view.isFetching}>
+            <Search className="size-4" />
+            {view.isFetching ? "Searching…" : "Search"}
+          </Button>
+          {submitted !== "" && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setSearch("")
+                setSubmitted("")
+              }}
+            >
+              Clear
+            </Button>
+          )}
+        </form>
+      </div>
+
+      {view.isPending && <PageLoading label="Loading the day…" />}
+      {view.isError && (
+        <PageError
+          title="The day could not be loaded"
+          message={view.error instanceof ApiError ? view.error.message : undefined}
+          onRetry={() => void view.refetch()}
+        />
+      )}
+
+      {view.data !== undefined && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            {submitted === ""
+              ? `${view.data.totalAppointments} booked appointment${
+                  view.data.totalAppointments === 1 ? "" : "s"
+                } on ${formatSlotDate(view.data.date)}.`
+              : `${view.data.totalAppointments} match${view.data.totalAppointments === 1 ? "" : "es"} for “${submitted}” on ${formatSlotDate(
+                  view.data.date,
+                )}.`}
+          </p>
+
+          {view.data.doctors.length === 0 && (
+            <EmptyState
+              title={submitted === "" ? "No slots on this day" : "No matching patients"}
+              description={
+                submitted === ""
+                  ? "No doctor has slots for this clinic date."
+                  : "No patient on this day matches that phone prefix or name."
+              }
+            >
+              <CalendarDays className="size-4" />
+            </EmptyState>
+          )}
+
+          {view.data.doctors.map((doctor) => (
+            <Card key={doctor.doctorId}>
+              <CardHeader>
+                <CardTitle>{doctor.doctorName}</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  {doctor.slots.length} slot{doctor.slots.length === 1 ? "" : "s"} shown
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {doctor.slots.map((slot) => (
+                  <SlotBlock key={slot.slotId} slot={slot} />
+                ))}
+              </CardContent>
+            </Card>
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
+function SlotBlock({ slot }: { slot: SlotViewSlot }) {
+  return (
+    <div className="rounded-lg border">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{formatTimeRange(slot.startTime, slot.endTime)}</span>
+          <Badge variant="outline">
+            {slot.bookedCount}/{slot.maxPatients} booked
+          </Badge>
+          {slot.isDisabled && <Badge variant="destructive">disabled</Badge>}
+        </div>
+      </div>
+
+      {slot.appointments.length === 0 ? (
+        <p className="px-3 py-3 text-sm text-muted-foreground">No bookings in this slot.</p>
+      ) : (
+        <ul className="divide-y">
+          {slot.appointments.map((appointment) => (
+            <SlotAppointmentRow key={appointment.id} appointment={appointment} />
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function SlotAppointmentRow({ appointment }: { appointment: SlotViewAppointment }) {
+  return (
+    <li className="flex flex-wrap items-start justify-between gap-3 px-3 py-3">
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">{appointment.patientName}</span>
+          <AppointmentStatusBadge status={appointment.status} />
+          {appointment.isProvisional && <Badge variant="outline">walk-in</Badge>}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {appointment.phone}
+          {appointment.email !== null ? ` · ${appointment.email}` : ""}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Fee {formatPaise(appointment.feeAmount, "INR")}
+          {appointment.payment.outstandingPaise > 0
+            ? ` · ${formatPaise(appointment.payment.outstandingPaise, "INR")} outstanding`
+            : appointment.payment.paidPaise > 0
+              ? " · paid"
+              : ""}
+        </p>
+      </div>
+    </li>
+  )
+}
+
+function PhoneLookup({ initialPhone }: { initialPhone: string }) {
   const [phone, setPhone] = useState(initialPhone)
   const [lookedUpPhone, setLookedUpPhone] = useState<string | null>(null)
   const autoSearched = useRef(false)
@@ -59,13 +299,6 @@ export default function Patients() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Patient lookup</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Type the phone number the patient gave at booking. The desk sees the same record the clinic keeps.
-        </p>
-      </div>
-
       <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
         <div className="w-full max-w-sm space-y-2">
           <Label htmlFor="lookup-phone">Phone</Label>

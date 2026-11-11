@@ -6,10 +6,10 @@ import { getClientIp } from "../lib/clientIp.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireRole } from "../middleware/rbac.js";
 import { getRequestId } from "../middleware/requestId.js";
-import { attachPatientEmailSchema, visitHistoryQuerySchema } from "../schemas/staff.js";
+import { attachPatientEmailSchema, patientSlotViewQuerySchema, visitHistoryQuerySchema } from "../schemas/staff.js";
 import { userIdParamSchema } from "../schemas/users.js";
 import { attachProvisionalPatientEmail } from "../services/staff/patientEmail.service.js";
-import { getPatientVisitHistory } from "../services/staff/staffDesk.service.js";
+import { getPatientVisitHistory, listPatientSlotView } from "../services/staff/staffDesk.service.js";
 
 /**
  * plan.md §16 — the returning-patient lookup (Day 32).
@@ -43,6 +43,16 @@ patientsRouter.get("/visit-history", staffOnly, async (req, res, next) => {
   try {
     const { phone } = visitHistoryQuerySchema.parse(req.query);
     res.json({ history: await getPatientVisitHistory(phone) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /slot-view — the day grouped by doctor → slot → patients. */
+patientsRouter.get("/slot-view", staffOnly, async (req, res, next) => {
+  try {
+    const query = patientSlotViewQuerySchema.parse(req.query);
+    res.json(await listPatientSlotView({ date: query.date, search: query.search, limit: query.limit }));
   } catch (err) {
     next(err);
   }

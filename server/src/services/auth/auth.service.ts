@@ -631,7 +631,7 @@ async function issueResetToken(
           userId,
           purpose: $Enums.AuthTokenPurpose.PASSWORD_RESET,
           tokenHash: hashToken(rawToken),
-          expiresAt: getPasswordResetExpiry(),
+          expiresAt: getPasswordResetExpiry(method),
           consumedAt: null,
           ip,
         },
@@ -907,10 +907,10 @@ export interface ClaimAccountInput {
  *   could never log in (login compares against a null hash and fails), so
  *   there is no session to revoke. A second claim racing the first is settled
  *   by the conditional token claim, not by revocation.
- * - **No `DoctorHistory` row:** claiming is an auth event on a `User`, not a
- *   doctor-lifecycle event. The `AuditLog` row below is the record; the
- *   `INVITED` history row was written when the invitation created the
- *   profile.
+ * - **`DoctorHistory` is written at claim time, not invite time:** the new
+ *   invitation flow creates no `DoctorProfile` until this point, so the
+ *   `INVITED` row lands here together with the profile it describes. The
+ *   `AuditLog` row below records the auth event itself.
  *
  * The DoctorProfile's `verificationStatus` deliberately does not move here:
  * `INVITED` means "has not submitted profile details yet" (§5), and a
@@ -932,6 +932,138 @@ export async function claimAccount(input: ClaimAccountInput): Promise<{ userId: 
     purpose: $Enums.AuthAttemptPurpose.OTP_VERIFY,
   };
 
+  const rejectInvalidToken = async (): Promise<never> => {
+    await recordFailureQuietly(attempt);
+    throw new AppError(400, "INVALID_OR_EXPIRED_TOKEN", "Invalid or expired invitation token");
+  };
+
+  const now = new Date();
+
+  /**
+   * Claim-time provisioning: `PendingInvitation` is the primary path. The
+   * account is created HERE, not when the inviter clicked send, so an address
+   * that never claims leaves no User/DoctorProfile behind.
+   */
+  const pending = await prisma.pendingInvitation.findUnique({
+    where: { tokenHash },
+    include: { invitedBy: { select: { id: true, role: true, fullName: true } } },
+  });
+
+  if (pending !== null) {
+    if (
+      pending.consumedAt !== null ||
+      pending.revokedAt !== null ||
+      pending.expiresAt < now
+    ) {
+      return rejectInvalidToken();
+    }
+
+    await recordAttempt({ ...attempt, succeeded: true });
+
+    // bcrypt BEFORE the transaction — ~100ms must not hold a connection open.
+    const passwordHash = await hashPassword(input.password);
+
+    const userId = await prisma.$transaction(async (tx) => {
+      // The conditional claim IS the single-use lock: two racing submits both
+      // read `consumedAt = null`, only one flips it.
+      const claimed = await tx.pendingInvitation.updateMany({
+        where: { id: pending.id, consumedAt: null, revokedAt: null, expiresAt: { gt: now } },
+        data: { consumedAt: now },
+      });
+      if (claimed.count !== 1) {
+        throw new AppError(400, "INVALID_OR_EXPIRED_TOKEN", "Invalid or expired invitation token");
+      }
+
+      // Backward compatibility with invitations created before this table
+      // existed: the migration copied their tokens here, but their unclaimed
+      // User row is still present. Adopt it rather than colliding on email.
+      const existing = await tx.user.findUnique({ where: { email: pending.email } });
+      let user;
+
+      if (existing !== null) {
+        if (existing.passwordHash !== null) {
+          throw new AppError(400, "INVALID_OR_EXPIRED_TOKEN", "Invalid or expired invitation token");
+        }
+        user = await tx.user.update({
+          where: { id: existing.id },
+          data: {
+            fullName: pending.fullName,
+            passwordHash,
+            emailVerifiedAt: now,
+          },
+        });
+      } else {
+        user = await tx.user.create({
+          data: {
+            role: pending.role,
+            fullName: pending.fullName,
+            email: pending.email,
+            passwordHash,
+            emailVerifiedAt: now,
+          },
+        });
+      }
+
+      if (pending.role === $Enums.UserRole.DOCTOR) {
+        await tx.doctorProfile.upsert({
+          where: { userId: user.id },
+          create: { userId: user.id, verificationStatus: $Enums.DoctorVerificationStatus.INVITED },
+          update: {},
+        });
+      }
+
+      await tx.pendingInvitation.update({
+        where: { id: pending.id },
+        data: { claimedUserId: user.id },
+      });
+
+      // Legacy tokens for the same account are now superseded.
+      await tx.authToken.updateMany({
+        where: { userId: user.id, purpose: $Enums.AuthTokenPurpose.ACCOUNT_CLAIM, consumedAt: null },
+        data: { consumedAt: now },
+      });
+
+      await writeAudit(tx, {
+        action: "ACCOUNT_CLAIMED",
+        targetType: "user",
+        targetId: user.id,
+        actor: { id: user.id, role: user.role, name: user.fullName },
+        after: {
+          passwordSet: true,
+          emailVerified: true,
+          invitationId: pending.id,
+          invitedById: pending.invitedById,
+        },
+        ip: input.ip ?? null,
+        requestId: input.requestId ?? null,
+      });
+
+      if (pending.role === $Enums.UserRole.DOCTOR) {
+        await tx.doctorHistory.create({
+          data: {
+            doctorId: user.id,
+            eventType: "INVITED",
+            actorId: user.id,
+            actorRole: user.role,
+            actorName: user.fullName,
+            ip: input.ip ?? null,
+            requestId: input.requestId ?? null,
+            metadata: { email: pending.email, invitationId: pending.id },
+          },
+        });
+      }
+
+      return user.id;
+    });
+
+    return { userId };
+  }
+
+  /**
+   * Legacy fallback: an `AuthToken` with ACCOUNT_CLAIM for a User that already
+   * exists. New invitations never take this path; it keeps links minted before
+   * the PendingInvitation migration working.
+   */
   const authToken = await prisma.authToken.findUnique({
     where: { tokenHash },
     include: { user: true },
@@ -940,11 +1072,6 @@ export async function claimAccount(input: ClaimAccountInput): Promise<{ userId: 
   // One refusal for every way a token can be wrong: distinguishing "no such
   // token" from "already claimed" would tell a prober which of their guesses
   // was real. Same doctrine as verifyEmail and resetPassword.
-  const rejectInvalidToken = async (): Promise<never> => {
-    await recordFailureQuietly(attempt);
-    throw new AppError(400, "INVALID_OR_EXPIRED_TOKEN", "Invalid or expired invitation token");
-  };
-
   if (!authToken) {
     return rejectInvalidToken();
   }
@@ -954,7 +1081,7 @@ export async function claimAccount(input: ClaimAccountInput): Promise<{ userId: 
   if (authToken.consumedAt !== null) {
     return rejectInvalidToken();
   }
-  if (authToken.expiresAt < new Date()) {
+  if (authToken.expiresAt < now) {
     return rejectInvalidToken();
   }
   if (authToken.user.isDeactivated) {
@@ -966,7 +1093,6 @@ export async function claimAccount(input: ClaimAccountInput): Promise<{ userId: 
 
   // bcrypt BEFORE the transaction — ~100ms must not hold a connection open.
   const passwordHash = await hashPassword(input.password);
-  const now = new Date();
 
   await prisma.$transaction(async (tx) => {
     // The conditional claim IS the single-use lock: two racing submits both

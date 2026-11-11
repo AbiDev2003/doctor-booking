@@ -16,6 +16,9 @@
     "db:seed": "prisma db seed",
     "db:reset": "prisma migrate reset --force && prisma db seed",
     "db:assert": "tsx scripts/assert-constraints.ts",
+    "dev:set-password": "tsx scripts/dev-set-password.ts",
+    "dev:create-admin": "tsx scripts/dev-create-admin.ts",
+    "dev:create-account": "tsx scripts/dev-create-account.ts",
     "demo:queue": "tsx scripts/demo-queue.ts",
     "day27:dod": "tsx scripts/day27-dod.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.tools.json"

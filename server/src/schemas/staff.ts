@@ -131,3 +131,51 @@ export interface VisitHistoryDto {
   readonly doctorsSeen: readonly string[];
   readonly upcomingAppointments: readonly DeskAppointmentEntry[];
 }
+
+/** GET /patients/slot-view?date=…&search=… — the desk's day grouped by doctor/slot. */
+export const patientSlotViewQuerySchema = z.object({
+  date: date.optional(),
+  search: z.string().trim().max(100).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+});
+
+export type PatientSlotViewQueryShape = z.infer<typeof patientSlotViewQuerySchema>;
+
+/** One booking inside the slot-wise view (contact details, no action flags). */
+export interface SlotViewAppointmentDto {
+  readonly id: string;
+  readonly patientId: string;
+  readonly patientName: string;
+  readonly phone: string;
+  readonly email: string | null;
+  readonly isProvisional: boolean;
+  readonly status: $Enums.AppointmentStatus;
+  readonly bookingTime: string;
+  readonly feeAmount: number;
+  readonly payment: DeskPaymentSummary;
+}
+
+export interface SlotViewSlotDto {
+  readonly slotId: string;
+  /** Clinic-local `HH:MM`. */
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly startAt: string;
+  readonly endAt: string;
+  readonly maxPatients: number;
+  readonly bookedCount: number;
+  readonly isDisabled: boolean;
+  readonly appointments: readonly SlotViewAppointmentDto[];
+}
+
+export interface SlotViewDoctorDto {
+  readonly doctorId: string;
+  readonly doctorName: string;
+  readonly slots: readonly SlotViewSlotDto[];
+}
+
+export interface PatientSlotViewDto {
+  readonly date: string;
+  readonly doctors: readonly SlotViewDoctorDto[];
+  readonly totalAppointments: number;
+}

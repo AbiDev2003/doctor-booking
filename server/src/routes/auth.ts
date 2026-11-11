@@ -23,7 +23,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { authBurstGuard } from "../middleware/rateLimit.js";
 import { getRequestId } from "../middleware/requestId.js";
 import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
-import { durationLabel } from "../lib/duration.js";
+import { durationLabel, durationToMs } from "../lib/duration.js";
 import {
   emailVerificationEmail,
   passwordResetCompletedEmail,
@@ -217,13 +217,21 @@ authRouter.post("/forgot-password", async (req, res, next) => {
           method: result.method,
           link: resetUrl,
           otp: result.method === "OTP" ? result.rawToken : undefined,
-          expiresIn: durationLabel(config.PASSWORD_RESET_TTL),
+          expiresIn: durationLabel(
+            result.method === "OTP" ? config.PASSWORD_RESET_OTP_TTL : config.PASSWORD_RESET_TTL,
+          ),
         }),
       );
     }
 
     res.status(200).json({
       message: "If an account exists for that email, a recovery message has been sent.",
+      // Constant policy metadata, not account state: the client uses it to
+      // restart the resend countdown. It is the same for known/unknown
+      // addresses, so it cannot become an existence oracle.
+      ...(parsed.method === "otp" && {
+        codeTtlSeconds: Math.round(durationToMs(config.PASSWORD_RESET_OTP_TTL) / 1000),
+      }),
     });
   } catch (err) {
     next(err);

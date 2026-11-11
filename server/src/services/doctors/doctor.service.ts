@@ -142,165 +142,261 @@ export interface InviteInput extends RequestMeta {
 }
 
 export interface InviteResult {
-  readonly userId: string;
+  readonly invitationId: string;
+  readonly rawToken: string;
+  readonly notificationId: string;
+}
+
+export interface PendingInvitationDto {
+  readonly id: string;
+  readonly role: $Enums.UserRole;
+  readonly fullName: string;
+  readonly email: string;
+  readonly status: "PENDING" | "EXPIRED";
+  readonly expiresAt: string;
+  readonly createdAt: string;
+  readonly invitedByName: string | null;
+}
+
+function toInvitationDto(row: {
+  id: string;
+  role: $Enums.UserRole;
+  fullName: string;
+  email: string;
+  expiresAt: Date;
+  createdAt: Date;
+  invitedBy: { fullName: string } | null;
+}, now = new Date()): PendingInvitationDto {
+  return {
+    id: row.id,
+    role: row.role,
+    fullName: row.fullName,
+    email: row.email,
+    status: row.expiresAt < now ? "EXPIRED" : "PENDING",
+    expiresAt: row.expiresAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    invitedByName: row.invitedBy?.fullName ?? null,
+  };
+}
+
+const INVITATION_SELECT = {
+  id: true,
+  role: true,
+  fullName: true,
+  email: true,
+  expiresAt: true,
+  createdAt: true,
+  invitedBy: { select: { fullName: true } },
+} as const;
+
+/** §5.1 — create a pending invitation, never a User/DoctorProfile. */
+async function createInvitation(
+  input: InviteInput,
+  role: $Enums.UserRole,
+): Promise<{ invitationId: string; rawToken: string; notificationId: string }> {
+  const email = input.email.trim().toLowerCase();
+
+  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+  if (existing) {
+    throw new AppError(409, "EMAIL_ALREADY_EXISTS", "An account with this email address already exists");
+  }
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const live = await tx.pendingInvitation.findFirst({
+        where: { email, consumedAt: null, revokedAt: null },
+        select: { id: true, expiresAt: true },
+      });
+
+      if (live) {
+        if (live.expiresAt >= new Date()) {
+          throw new AppError(409, "INVITATION_ALREADY_PENDING", "An invitation is already pending for this email address");
+        }
+        // An expired row still occupies the live partial-unique key; close it
+        // before issuing the replacement.
+        await tx.pendingInvitation.update({
+          where: { id: live.id },
+          data: { revokedAt: new Date() },
+        });
+      }
+
+      const rawToken = generateToken(32);
+      const invitation = await tx.pendingInvitation.create({
+        data: {
+          role,
+          fullName: input.fullName.trim(),
+          email,
+          tokenHash: hashToken(rawToken),
+          expiresAt: getAccountClaimExpiry(),
+          invitedById: input.actor.id ?? null,
+          ip: input.ip ?? null,
+        },
+        select: { id: true },
+      });
+
+      const isDoctor = role === $Enums.UserRole.DOCTOR;
+      await writeAudit(tx, {
+        action: isDoctor ? "DOCTOR_INVITED" : "STAFF_INVITED",
+        targetType: "pending_invitation",
+        targetId: invitation.id,
+        actor: input.actor,
+        after: { email, fullName: input.fullName.trim(), role },
+        ip: input.ip ?? null,
+        requestId: input.requestId ?? null,
+      });
+
+      const notification = await queueNotification(tx, {
+        type: $Enums.NotificationType.ACCOUNT_INVITATION,
+        recipient: email,
+      });
+
+      return { invitationId: invitation.id, rawToken, notificationId: notification.id };
+    });
+  } catch (err) {
+    if (isUniqueConstraintViolation(err)) {
+      throw new AppError(409, "INVITATION_ALREADY_PENDING", "An invitation is already pending for this email address");
+    }
+    throw err;
+  }
+}
+
+/**
+ * §5.1 — ADMIN or STAFF invites a doctor. The account is NOT created here:
+ * the invite is a `PendingInvitation`, and `claimAccount` materialises the
+ * `User` + `DoctorProfile` in one transaction when the link is used. That keeps
+ * an unclaimed address out of the roster and out of `users.email` uniqueness.
+ */
+export async function inviteDoctor(input: InviteInput): Promise<InviteResult> {
+  return createInvitation(input, $Enums.UserRole.DOCTOR);
+}
+
+/** §5.1 — ADMIN invites STAFF. Same pending-invitation mechanic. */
+export async function inviteStaff(input: InviteInput): Promise<InviteResult> {
+  return createInvitation(input, $Enums.UserRole.STAFF);
+}
+
+/** Pending doctor invitations, visible to ADMIN/STAFF (resend/revoke). */
+export async function listDoctorInvitations(): Promise<PendingInvitationDto[]> {
+  const rows = await prisma.pendingInvitation.findMany({
+    where: { role: $Enums.UserRole.DOCTOR, consumedAt: null, revokedAt: null },
+    select: INVITATION_SELECT,
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map((row) => toInvitationDto(row));
+}
+
+/** Pending staff invitations, ADMIN-only (the staff tab). */
+export async function listStaffInvitations(): Promise<PendingInvitationDto[]> {
+  const rows = await prisma.pendingInvitation.findMany({
+    where: { role: $Enums.UserRole.STAFF, consumedAt: null, revokedAt: null },
+    select: INVITATION_SELECT,
+    orderBy: { createdAt: "desc" },
+  });
+  return rows.map((row) => toInvitationDto(row));
+}
+
+export interface ResendInvitationResult {
+  readonly invitation: PendingInvitationDto;
   readonly rawToken: string;
   readonly notificationId: string;
 }
 
 /**
- * §5.1 — ADMIN or STAFF creates/invites a doctor. The account is born in the
- * exact state the plan describes: `passwordHash = null` (exists, never
- * claimed — §5.1 forbids temporary passwords), `emailVerifiedAt = null`
- * (set when the claim link is opened), `DoctorProfile.verificationStatus =
- * INVITED` ("has not submitted profile details yet", §5).
- *
- * The invitation token (`ACCOUNT_CLAIM`, 24h) is issued in the same
- * transaction as the account — an invite email whose link was never minted is
- * a broken onboarding that no one notices until the doctor is confused.
- *
- * §6.4: an invitation to an address that is already registered cannot be
- * claimed, so the address is refused up front with the same 409 registration
- * uses. The unique index inside the transaction closes the race between two
- * invites to the same address.
+ * Resend invalidates the previous link first: the row's token hash and expiry
+ * are replaced in one update, so the older email stops working the moment the
+ * new one is minted. Audited because a resend is an administrative action on
+ * an identity.
  */
-export async function inviteDoctor(input: InviteInput): Promise<InviteResult> {
-  const email = input.email.trim().toLowerCase();
+export async function resendInvitation(input: {
+  invitationId: string;
+  role: $Enums.UserRole;
+  actor: ActorContext;
+  ip: string | null;
+  requestId: string | null;
+}): Promise<ResendInvitationResult> {
+  const rawToken = generateToken(32);
 
-  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-  if (existing) {
-    throw new AppError(409, "EMAIL_ALREADY_EXISTS", "An account with this email address already exists");
-  }
-
-  try {
-    return await prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          role: $Enums.UserRole.DOCTOR,
-          fullName: input.fullName.trim(),
-          email,
-          passwordHash: null,
-          emailVerifiedAt: null,
-        },
-      });
-
-      await tx.doctorProfile.create({
-        data: { userId: user.id, verificationStatus: S.INVITED },
-      });
-
-      const rawToken = generateToken(32);
-      await tx.authToken.create({
-        data: {
-          userId: user.id,
-          purpose: $Enums.AuthTokenPurpose.ACCOUNT_CLAIM,
-          tokenHash: hashToken(rawToken),
-          expiresAt: getAccountClaimExpiry(),
-          consumedAt: null,
-          ip: input.ip ?? null,
-        },
-      });
-
-      await writeAudit(tx, {
-        action: "DOCTOR_INVITED",
-        targetType: "doctor",
-        targetId: user.id,
-        actor: input.actor,
-        after: { email, fullName: user.fullName, verificationStatus: S.INVITED },
-        ip: input.ip ?? null,
-        requestId: input.requestId ?? null,
-      });
-
-      await writeDoctorHistory(tx, {
-        doctorId: user.id,
-        eventType: "INVITED",
-        actor: input.actor,
-        metadata: { email },
-        ip: input.ip ?? null,
-        requestId: input.requestId ?? null,
-      });
-
-      const notification = await queueNotification(tx, {
-        type: $Enums.NotificationType.ACCOUNT_INVITATION,
-        recipient: email,
-      });
-
-      return { userId: user.id, rawToken, notificationId: notification.id };
+  return prisma.$transaction(async (tx) => {
+    const current = await tx.pendingInvitation.findUnique({
+      where: { id: input.invitationId },
+      select: INVITATION_SELECT,
     });
-  } catch (err) {
-    // Two invites to one address racing past the pre-check: the unique index
-    // answers, and it must answer in the plan's vocabulary, not Prisma's.
-    if (isUniqueConstraintViolation(err)) {
-      throw new AppError(409, "EMAIL_ALREADY_EXISTS", "An account with this email address already exists");
+    if (!current || current.role !== input.role) {
+      throw new AppError(404, "INVITATION_NOT_FOUND", "Invitation not found");
     }
-    throw err;
-  }
+
+    const claimed = await tx.pendingInvitation.updateMany({
+      where: { id: input.invitationId, consumedAt: null, revokedAt: null },
+      data: {
+        tokenHash: hashToken(rawToken),
+        expiresAt: getAccountClaimExpiry(),
+        ip: input.ip,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new AppError(409, "INVITATION_NOT_PENDING", "This invitation is no longer pending");
+    }
+
+    await writeAudit(tx, {
+      action: "INVITATION_RESENT",
+      targetType: "pending_invitation",
+      targetId: input.invitationId,
+      actor: input.actor,
+      after: { email: current.email, role: current.role },
+      ip: input.ip,
+      requestId: input.requestId,
+    });
+
+    const notification = await queueNotification(tx, {
+      type: $Enums.NotificationType.ACCOUNT_INVITATION,
+      recipient: current.email,
+    });
+
+    return {
+      invitation: { ...toInvitationDto(current), status: "PENDING" as const },
+      rawToken,
+      notificationId: notification.id,
+    };
+  });
 }
 
-/**
- * §5.1 — ADMIN invites STAFF. Identical provisioning minus the profile and
- * the doctor timeline: STAFF has no profile table by design (§24), and the
- * `STAFF_INVITED` audit row is the whole record of who was added.
- *
- * Never STAFF-invites-STAFF: §5.1/§4 — STAFF cannot create other staff
- * members. That limit lives on the route (`requireRole(ADMIN)`); this service
- * trusts it the same way inviteDoctor trusts its own route gate, because the
- * matrix does not model User creation (there is no "state" to violate — the
- * row does not exist yet).
- */
-export async function inviteStaff(input: InviteInput): Promise<InviteResult> {
-  const email = input.email.trim().toLowerCase();
-
-  const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-  if (existing) {
-    throw new AppError(409, "EMAIL_ALREADY_EXISTS", "An account with this email address already exists");
-  }
-
-  try {
-    return await prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          role: $Enums.UserRole.STAFF,
-          fullName: input.fullName.trim(),
-          email,
-          passwordHash: null,
-          emailVerifiedAt: null,
-        },
-      });
-
-      const rawToken = generateToken(32);
-      await tx.authToken.create({
-        data: {
-          userId: user.id,
-          purpose: $Enums.AuthTokenPurpose.ACCOUNT_CLAIM,
-          tokenHash: hashToken(rawToken),
-          expiresAt: getAccountClaimExpiry(),
-          consumedAt: null,
-          ip: input.ip ?? null,
-        },
-      });
-
-      await writeAudit(tx, {
-        action: "STAFF_INVITED",
-        targetType: "user",
-        targetId: user.id,
-        actor: input.actor,
-        after: { email, fullName: user.fullName, role: $Enums.UserRole.STAFF },
-        ip: input.ip ?? null,
-        requestId: input.requestId ?? null,
-      });
-
-      const notification = await queueNotification(tx, {
-        type: $Enums.NotificationType.ACCOUNT_INVITATION,
-        recipient: email,
-      });
-
-      return { userId: user.id, rawToken, notificationId: notification.id };
+/** Revoke a pending invitation. Audited; a claimed token can never be revoked. */
+export async function revokeInvitation(input: {
+  invitationId: string;
+  role: $Enums.UserRole;
+  actor: ActorContext;
+  reason?: string | null;
+  ip: string | null;
+  requestId: string | null;
+}): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const current = await tx.pendingInvitation.findUnique({
+      where: { id: input.invitationId },
+      select: { role: true, email: true, consumedAt: true, revokedAt: true },
     });
-  } catch (err) {
-    if (isUniqueConstraintViolation(err)) {
-      throw new AppError(409, "EMAIL_ALREADY_EXISTS", "An account with this email address already exists");
+    if (!current || current.role !== input.role) {
+      throw new AppError(404, "INVITATION_NOT_FOUND", "Invitation not found");
     }
-    throw err;
-  }
+
+    const claimed = await tx.pendingInvitation.updateMany({
+      where: { id: input.invitationId, consumedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (claimed.count !== 1) {
+      throw new AppError(409, "INVITATION_NOT_PENDING", "This invitation is no longer pending");
+    }
+
+    await writeAudit(tx, {
+      action: "INVITATION_REVOKED",
+      targetType: "pending_invitation",
+      targetId: input.invitationId,
+      actor: input.actor,
+      before: { email: current.email, role: current.role },
+      reason: input.reason ?? null,
+      ip: input.ip,
+      requestId: input.requestId,
+    });
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -376,6 +472,30 @@ export async function listDoctors(): Promise<ReturnType<typeof toDoctorDto>[]> {
     orderBy: { createdAt: "desc" },
   });
   return users.map(toDoctorDto);
+}
+
+export interface StaffAccountDto {
+  readonly id: string;
+  readonly fullName: string;
+  readonly email: string | null;
+  readonly isDeactivated: boolean;
+  readonly createdAt: string;
+}
+
+/** Accepted STAFF accounts for the admin Staff tab. */
+export async function listStaffAccounts(): Promise<StaffAccountDto[]> {
+  const users = await prisma.user.findMany({
+    where: { role: $Enums.UserRole.STAFF },
+    select: { id: true, fullName: true, email: true, isDeactivated: true, createdAt: true },
+    orderBy: { createdAt: "desc" },
+  });
+  return users.map((user) => ({
+    id: user.id,
+    fullName: user.fullName,
+    email: user.email,
+    isDeactivated: user.isDeactivated,
+    createdAt: user.createdAt.toISOString(),
+  }));
 }
 
 /**

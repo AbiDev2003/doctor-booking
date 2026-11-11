@@ -6,6 +6,7 @@ import type { AdminPayment } from "@/lib/api"
 import { formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
 import { formatPaise } from "@/lib/money"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
+import { OutstandingPanel } from "@/components/payments/outstanding-panel"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -14,12 +15,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 const SELECT_CLASS =
   "h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
-type Tab = "payments" | "refunds"
+type Tab = "payments" | "refunds" | "outstanding"
 
 /** §29's money ledger (Day 33): every payment, every refund, retry visible. */
 export default function Payments() {
   const [searchParams] = useSearchParams()
-  const [tab, setTab] = useState<Tab>(searchParams.get("tab") === "refunds" ? "refunds" : "payments")
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = searchParams.get("tab")
+    return requested === "refunds" || requested === "outstanding" ? requested : "payments"
+  })
   const [paymentStatus, setPaymentStatus] = useState<AdminPayment["status"] | "">("")
   const [refundStatus, setRefundStatus] = useState<"PENDING" | "SUCCESS" | "FAILED">("FAILED")
 
@@ -43,6 +47,9 @@ export default function Payments() {
         </Button>
         <Button variant={tab === "refunds" ? "default" : "outline"} size="sm" onClick={() => setTab("refunds")}>
           Refunds
+        </Button>
+        <Button variant={tab === "outstanding" ? "default" : "outline"} size="sm" onClick={() => setTab("outstanding")}>
+          Outstanding
         </Button>
       </div>
 
@@ -133,6 +140,8 @@ export default function Payments() {
       {tab === "refunds" && (
         <RefundsPanel status={refundStatus} onStatusChange={setRefundStatus} />
       )}
+
+      {tab === "outstanding" && <OutstandingPanel scope="admin" />}
     </div>
   )
 }

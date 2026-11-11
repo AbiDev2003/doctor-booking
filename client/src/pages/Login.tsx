@@ -7,6 +7,7 @@ import { loginSchema, type LoginInputShape } from "@shared/auth";
 import { PasswordInput } from "../components/password-input";
 import { apiLogin } from "../lib/api";
 import { applyApiErrors } from "../lib/formErrors";
+import { ROLE_HOMES } from "../lib/roleHome";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -34,14 +35,7 @@ export default function Login() {
       // Honour a returnTo from a booking redirect, but only a relative path —
       // an absolute or protocol-relative URL would be an open redirect.
       const returnTo = searchParams.get("returnTo");
-      const fallback =
-        session.role === "PATIENT"
-          ? "/patient"
-          : session.role === "DOCTOR"
-            ? "/doctor"
-            : session.role === "ADMIN"
-              ? "/admin"
-              : "/staff";
+      const fallback = ROLE_HOMES[session.role];
       const target = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : fallback;
       navigate(target);
     } catch (err) {

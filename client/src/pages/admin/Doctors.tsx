@@ -5,8 +5,11 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { inviteDoctorSchema, type InviteDoctorInputShape } from "@shared/doctors"
 import {
   apiArchiveDoctor,
+  apiDoctorInvitations,
   apiInviteDoctor,
   apiRejectDoctor,
+  apiResendDoctorInvitation,
+  apiRevokeDoctorInvitation,
   apiStaffDoctors,
   apiSuspendDoctor,
   apiUnarchiveDoctor,
@@ -17,6 +20,7 @@ import {
 import type { DoctorDetail } from "@/lib/api"
 import { applyApiErrors } from "@/lib/formErrors"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
+import { PendingInvitationsCard } from "@/components/staff/pending-invitations"
 import { ReasonDialog } from "@/components/staff/reason-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -61,8 +65,13 @@ const REASON_COPY: Record<ReasonAction, { title: string; description: string; co
 /**
  * §29's doctor roster (Day 33). The lifecycle actions reuse the Day 16/27
  * endpoints; this page only adds the admin-shaped overview and the invite form.
+ *
+ * `mode="staff"` reuses the same roster and invitation machinery for the front
+ * desk, but hides the credential decisions: staff may invite, suspend and
+ * archive a doctor, never verify, reject, unsuspend or restore one.
  */
-export default function Doctors() {
+export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }) {
+  const isAdmin = mode === "admin"
   const queryClient = useQueryClient()
   const [reasonAction, setReasonAction] = useState<{ action: ReasonAction; doctor: DoctorDetail } | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -73,8 +82,14 @@ export default function Doctors() {
     queryFn: ({ signal }) => apiStaffDoctors(signal),
   })
 
+  const invitations = useQuery({
+    queryKey: ["doctor-invitations"],
+    queryFn: ({ signal }) => apiDoctorInvitations(signal).then((result) => result.invitations),
+  })
+
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["staff", "doctors"] })
+    void queryClient.invalidateQueries({ queryKey: ["doctor-invitations"] })
     void queryClient.invalidateQueries({ queryKey: ["admin"] })
     void queryClient.invalidateQueries({ queryKey: ["public", "doctors"] })
   }
@@ -128,7 +143,9 @@ export default function Doctors() {
         <div>
           <h1 className="text-2xl font-semibold">Doctors</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Verify credentials, suspend access and keep the public roster honest.
+            {isAdmin
+              ? "Verify credentials, suspend access and keep the public roster honest."
+              : "Invite doctors, suspend or archive access. Credential verification stays with an admin."}
           </p>
         </div>
         <Button onClick={() => setInviteOpen(true)}>Invite doctor</Button>
@@ -190,7 +207,7 @@ export default function Doctors() {
                       <td className="py-3 pr-3">{doctor.isBookable ? "Yes" : "No"}</td>
                       <td className="py-3">
                         <div className="flex flex-wrap gap-2">
-                          {doctor.verificationStatus === "PENDING_VERIFICATION" && (
+                          {isAdmin && doctor.verificationStatus === "PENDING_VERIFICATION" && (
                             <>
                               <Button size="sm" disabled={verify.isPending} onClick={() => verify.mutate(doctor.id)}>
                                 Verify
@@ -213,12 +230,12 @@ export default function Doctors() {
                               Suspend
                             </Button>
                           )}
-                          {doctor.suspendedAt !== null && (
+                          {isAdmin && doctor.suspendedAt !== null && (
                             <Button size="sm" disabled={unsuspend.isPending} onClick={() => unsuspend.mutate(doctor.id)}>
                               Unsuspend
                             </Button>
                           )}
-                          {doctor.verificationStatus === "ARCHIVED" ? (
+                          {isAdmin && doctor.verificationStatus === "ARCHIVED" ? (
                             <Button
                               size="sm"
                               variant="outline"
@@ -227,13 +244,15 @@ export default function Doctors() {
                               Restore
                             </Button>
                           ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setReasonAction({ action: "archive", doctor })}
-                            >
-                              Archive
-                            </Button>
+                            doctor.verificationStatus !== "ARCHIVED" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setReasonAction({ action: "archive", doctor })}
+                              >
+                                Archive
+                              </Button>
+                            )
                           )}
                         </div>
                       </td>
@@ -245,6 +264,23 @@ export default function Doctors() {
           )}
         </CardContent>
       </Card>
+
+      <PendingInvitationsCard
+        title="Pending doctor invitations"
+        description={
+          isAdmin
+            ? "Unclaimed invitations are not accounts yet. Resending replaces the old link and restarts the one-hour clock."
+            : "Unclaimed invitations are not accounts yet. You can resend or revoke any invitation on this list."
+        }
+        invitations={invitations.data}
+        isLoading={invitations.isPending}
+        isError={invitations.isError}
+        errorMessage={invitations.error instanceof ApiError ? invitations.error.message : undefined}
+        onRetry={() => void invitations.refetch()}
+        onResend={apiResendDoctorInvitation}
+        onRevoke={apiRevokeDoctorInvitation}
+        onChanged={refresh}
+      />
 
       {reasonAction !== null && (
         <ReasonDialog

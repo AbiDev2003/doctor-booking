@@ -13,6 +13,7 @@ import {
   collectOfflinePaymentSchema,
   completeHandBackSchema,
   createPaymentOrderSchema,
+  outstandingPaymentsQuerySchema,
   refundIdParamSchema,
   verifyPaymentSchema,
   voidOfflinePaymentSchema,
@@ -20,6 +21,7 @@ import {
 import { createPaymentOrder } from "../services/payments/paymentOrder.service.js";
 import { convertPayment } from "../services/payments/paymentConvert.service.js";
 import { collectOfflinePayment, voidOfflinePayment } from "../services/payments/offlinePayment.service.js";
+import { listOutstandingPayments } from "../services/payments/outstandingPayments.service.js";
 import { listPatientPayments } from "../services/payments/patientPayments.service.js";
 import {
   completeDeskHandBack,
@@ -125,6 +127,16 @@ paymentsRouter.post("/offline/void", staffOnly, async (req, res, next) => {
       ...requestMeta(req, res),
     });
     res.json({ message: "Unpaid pay-at-clinic payment voided.", payment });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** GET /outstanding — unpaid receivables, overdue first (ADMIN + STAFF). */
+paymentsRouter.get("/outstanding", staffOnly, async (req, res, next) => {
+  try {
+    const query = outstandingPaymentsQuerySchema.parse(req.query);
+    res.json(await listOutstandingPayments({ limit: query.limit }));
   } catch (err) {
     next(err);
   }

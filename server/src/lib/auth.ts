@@ -72,26 +72,19 @@ export function looksLikeOtp(rawToken: string): boolean {
 }
 
 /**
- * §6.2's configurable expiry ("default: 15 minutes, configurable"), read from
- * `PASSWORD_RESET_TTL` — see config.ts for why one knob also covers §6.1's
- * email-change token.
- *
- * Millisecond arithmetic rather than the `setMinutes` used by the Day 7
- * verification expiry above: `setMinutes` and friends go through a local
- * `Date`, which is correct for minute offsets but reads oddly next to the
- * duration strings this repo already parses — and this value IS a parsed
- * duration string.
+ * §6.2's expiry. A LINK lives `PASSWORD_RESET_TTL` (1h); a 6-digit OTP lives
+ * `PASSWORD_RESET_OTP_TTL` (60s) because its search space is tiny. Callers that
+ * mint a link (including §6.1's email-change token) omit the argument.
  */
-export function getPasswordResetExpiry(): Date {
-  return new Date(Date.now() + durationToMs(config.PASSWORD_RESET_TTL));
+export function getPasswordResetExpiry(method: "LINK" | "OTP" = "LINK"): Date {
+  return new Date(
+    Date.now() + durationToMs(method === "OTP" ? config.PASSWORD_RESET_OTP_TTL : config.PASSWORD_RESET_TTL),
+  );
 }
 
 /**
- * §5.1's invite-claim expiry — its own knob (`ACCOUNT_CLAIM_TTL`, 24h default)
- * for the reason documented in config.ts: an invitation is not an emergency,
- * and borrowing PASSWORD_RESET_TTL's 15 minutes would resend invites all day.
- * Same `durationToMs` parser as every other duration in this codebase, so the
- * format is owned by one module.
+ * §5.1's invite-claim expiry — its own knob (`ACCOUNT_CLAIM_TTL`, 1h default).
+ * Same `durationToMs` parser as every other duration in this codebase.
  */
 export function getAccountClaimExpiry(): Date {
   return new Date(Date.now() + durationToMs(config.ACCOUNT_CLAIM_TTL));

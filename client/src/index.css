@@ -140,6 +140,15 @@ button:disabled {
   color: #2563eb;
 }
 
+/* /profile has no shell around it; this is its one way back to the role's
+   dashboard (client/src/lib/roleHome.ts decides the destination). */
+.back-link {
+  display: inline-block;
+  margin-bottom: 0.75rem;
+  color: #2563eb;
+  font-size: 0.875rem;
+}
+
 /* --- Day 11: account surface ------------------------------------ */
 
 .banner {

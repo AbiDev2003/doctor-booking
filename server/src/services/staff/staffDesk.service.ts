@@ -3,6 +3,7 @@ import type { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../lib/prisma.js";
 import { localDateTimeToUtc, utcToLocalDateTime, normalizePhoneToE164, DEFAULT_COUNTRY_CALLING_CODE } from "../../lib/time.js";
 import { getClinicSettings } from "../clinic.service.js";
+import { findPatientIds } from "../patients/patientSearch.service.js";
 import type {
   DeskAppointmentActions,
   DeskAppointmentEntry,
@@ -10,7 +11,11 @@ import type {
   DeskPaymentSummary,
   DeskQueueDto,
   DeskSlotQueue,
+  PatientSlotViewDto,
   PatientSummaryDto,
+  SlotViewAppointmentDto,
+  SlotViewDoctorDto,
+  SlotViewSlotDto,
   VisitHistoryDto,
 } from "../../schemas/staff.js";
 
@@ -275,6 +280,112 @@ export async function listDeskQueue(date?: string): Promise<DeskQueueDto> {
   }));
 
   return { date: day, slots: slotQueues };
+}
+
+/**
+ * GET /patients/slot-view — the day grouped doctor → slot → patients.
+ *
+ * No search: every slot of the day, including empty ones, so the desk can see
+ * capacity. With a search: only the slots that contain a matching patient, so
+ * the answer to "where is this patient today?" is the whole screen. Search is
+ * the same phone-prefix / fuzzy-name lookup the admin directory uses.
+ */
+export async function listPatientSlotView(input: {
+  readonly date?: string | undefined;
+  readonly search?: string | undefined;
+  readonly limit: number;
+}): Promise<PatientSlotViewDto> {
+  const clinic = await getClinicSettings();
+  const day = input.date ?? utcToLocalDateTime(new Date(), clinic.timezone).date;
+  const range = clinicDateRange(day, clinic.timezone);
+  const search = input.search?.trim() ?? "";
+  const searching = search !== "";
+
+  const matchIds = searching ? await findPatientIds(search, input.limit) : null;
+  if (matchIds !== null && matchIds.length === 0) {
+    return { date: day, doctors: [], totalAppointments: 0 };
+  }
+
+  const [slots, rows] = await Promise.all([
+    prisma.slot.findMany({
+      where: { startAt: { gte: range.start, lt: range.endExclusive } },
+      select: {
+        id: true,
+        doctorId: true,
+        startTime: true,
+        endTime: true,
+        startAt: true,
+        endAt: true,
+        maxPatients: true,
+        bookedCount: true,
+        isDisabled: true,
+        doctor: { select: { fullName: true } },
+      },
+      orderBy: [{ startAt: "asc" }, { doctor: { fullName: "asc" } }],
+    }),
+    prisma.appointment.findMany({
+      where: {
+        slot: { startAt: { gte: range.start, lt: range.endExclusive } },
+        status: { not: $Enums.AppointmentStatus.PENDING },
+        ...(matchIds !== null && { patientId: { in: matchIds } }),
+      },
+      select: APPOINTMENT_SELECT,
+      orderBy: [{ slot: { startAt: "asc" } }, { bookingTime: "asc" }],
+      take: input.limit,
+    }),
+  ]);
+
+  const appointmentsBySlot = new Map<string, SlotViewAppointmentDto[]>();
+  for (const row of rows) {
+    const list = appointmentsBySlot.get(row.slotId) ?? [];
+    list.push({
+      id: row.id,
+      patientId: row.patientId,
+      patientName: row.patient.fullName,
+      phone: row.patient.patientProfile?.phone ?? "",
+      email: row.patient.email,
+      isProvisional: row.patient.patientProfile?.isProvisional ?? false,
+      status: row.status,
+      bookingTime: row.bookingTime.toISOString(),
+      feeAmount: row.feeAmount,
+      payment: paymentSummary(row),
+    });
+    appointmentsBySlot.set(row.slotId, list);
+  }
+
+  const byDoctor = new Map<string, { doctorId: string; doctorName: string; slots: SlotViewSlotDto[] }>();
+  let totalAppointments = 0;
+
+  for (const slot of slots) {
+    const appointments = appointmentsBySlot.get(slot.id) ?? [];
+    if (searching && appointments.length === 0) continue;
+    totalAppointments += appointments.length;
+
+    const slotDto: SlotViewSlotDto = {
+      slotId: slot.id,
+      startTime: hhmm(slot.startTime),
+      endTime: hhmm(slot.endTime),
+      startAt: slot.startAt.toISOString(),
+      endAt: slot.endAt.toISOString(),
+      maxPatients: slot.maxPatients,
+      bookedCount: slot.bookedCount,
+      isDisabled: slot.isDisabled,
+      appointments,
+    };
+
+    const doctor = byDoctor.get(slot.doctorId) ?? {
+      doctorId: slot.doctorId,
+      doctorName: slot.doctor.fullName,
+      slots: [],
+    };
+    doctor.slots.push(slotDto);
+    byDoctor.set(slot.doctorId, doctor);
+  }
+
+  const doctors: SlotViewDoctorDto[] = [...byDoctor.values()].sort((a, b) =>
+    a.doctorName.localeCompare(b.doctorName),
+  );
+  return { date: day, doctors, totalAppointments };
 }
 
 function toPatientSummary(row: {

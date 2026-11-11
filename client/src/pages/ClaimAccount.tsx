@@ -15,7 +15,7 @@ import {
  * their first password. Deliberately a page of its own, not a reuse of
  * /reset-password (decision D1): the two flows share a token mechanic but
  * not a story. A reset says "you forgot"; this says "you were invited" —
- * and the token behind it has its own purpose and a 24-hour lifetime
+ * and the token behind it has its own purpose and a one-hour lifetime
  * (decision D3), so collapsing them would make one page's copy a lie about
  * the other flow's expiry.
  *
@@ -123,7 +123,7 @@ export default function ClaimAccount() {
         </button>
       </form>
 
-      <p className="hint">Invitation links expire after 24 hours and work only once.</p>
+      <p className="hint">Invitation links expire after 1 hour and work only once.</p>
     </main>
   );
 }

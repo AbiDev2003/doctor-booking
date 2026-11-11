@@ -20,6 +20,7 @@ import {
   type SessionUser,
 } from "../lib/api";
 import { applyApiErrors } from "../lib/formErrors";
+import { ROLE_HOMES, ROLE_HOME_LABELS } from "../lib/roleHome";
 import { PasswordInput } from "../components/password-input";
 
 /**
@@ -76,6 +77,12 @@ export default function Profile() {
 
   return (
     <main className="card">
+      {/* `/profile` is a standalone page with no shell around it, so this is its
+          only way back. The destination follows the role table in
+          `lib/roleHome.ts` — an admin returns to /admin, not to the staff desk. */}
+      <Link className="back-link" to={ROLE_HOMES[user.role]}>
+        ← Back to {ROLE_HOME_LABELS[user.role]}
+      </Link>
       <h1>Your profile</h1>
 
       <dl className="identity">

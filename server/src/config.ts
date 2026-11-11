@@ -48,24 +48,16 @@ const envSchema = z.object({
   ACCESS_TOKEN_TTL: z
     .string()
     .regex(DURATION_PATTERN, DURATION_MESSAGE),
-  // §6.2: the password-reset link / OTP expiry — "short (default: 15 minutes,
-  // configurable)". One knob for both methods, because link and OTP are one
-  // AuthToken row with one expiresAt: two knobs would let an operator believe
-  // the two expire differently when the column can only hold one value. It also
-  // sets §6.1's EMAIL_CHANGE token expiry, deliberately — plan.md §6.2 calls
-  // AuthToken "the single mechanic ... one issue/verify/expiry/rate-limit path,
-  // not four", and a purpose-by-purpose expiry matrix nothing reads is how four
-  // paths quietly reappear.
-  PASSWORD_RESET_TTL: duration("15m"),
-  // §5.1 invite claim — a SEPARATE knob from PASSWORD_RESET_TTL, and the
-  // reason is human, not technical: a reset is "I am locked out right now"
-  // (minutes), an invitation is "your account is waiting whenever you get to
-  // it" (a day). Borrowing the 15m reset TTL would mean every doctor who does
-  // not click within a quarter of an hour needs a resent invite, and the two
-  // values can never be kept equal by hand because they should not be equal.
-  // The token mechanics (single-use, hashed, rate-limited) are identical; only
-  // the lifetime differs.
-  ACCOUNT_CLAIM_TTL: duration("24h"),
+  // §6.2: recovery lifetimes. The LINK lives for an hour; a 6-digit OTP is much
+  // weaker (a million guesses) and lives 60 seconds, with the resend endpoint
+  // invalidating the previous artifact and restarting the countdown.
+  PASSWORD_RESET_TTL: duration("1h"),
+  PASSWORD_RESET_OTP_TTL: duration("60s"),
+  // §5.1 invite claim — its own knob because the artifact is a LINK and links
+  // are deliberately longer-lived than reset codes. An invitation may sit unread
+  // for a while; an hour is the approved outer bound, and the resend action
+  // invalidates the previous link before minting a new one.
+  ACCOUNT_CLAIM_TTL: duration("1h"),
   // §6.3 rate limiting. Every value is optional and defaults to the number the
   // plan fixes, so an unset variable means "the spec'd policy" rather than "no
   // policy" — production runs on defaults and .env is purely an override, which

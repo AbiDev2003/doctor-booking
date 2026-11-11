@@ -65,7 +65,7 @@ export default function Audit() {
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">Action</span>
-              <Input value={action} onChange={(event) => setAction(event.target.value)} placeholder="doctor.verify" />
+              <Input value={action} onChange={(event) => setAction(event.target.value)} placeholder="DOCTOR_VERIFIED" />
             </label>
             <Button type="submit" variant="outline">
               Apply

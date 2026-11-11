@@ -8,6 +8,7 @@ import type { DeskHandBack, VisitHistory } from "@/lib/api"
 import { formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
 import { formatPaise } from "@/lib/money"
 import { AppointmentActions } from "@/components/staff/appointment-actions"
+import { OutstandingPanel } from "@/components/payments/outstanding-panel"
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -45,6 +46,7 @@ const HAND_BACK_LABELS: Record<DeskHandBack["kind"], string> = {
  */
 export default function Payments() {
   const queryClient = useQueryClient()
+  const [tab, setTab] = useState<"refunds" | "outstanding">("refunds")
   const [handBack, setHandBack] = useState<DeskHandBack | null>(null)
 
   const handBacks = useQuery({
@@ -61,7 +63,18 @@ export default function Payments() {
         </p>
       </div>
 
-      <Card>
+      <div className="flex flex-wrap gap-2">
+        <Button variant={tab === "refunds" ? "default" : "outline"} size="sm" onClick={() => setTab("refunds")}>
+          Refunds
+        </Button>
+        <Button variant={tab === "outstanding" ? "default" : "outline"} size="sm" onClick={() => setTab("outstanding")}>
+          Outstanding
+        </Button>
+      </div>
+
+      {tab === "refunds" && (
+        <>
+          <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <HandCoins className="size-4" /> Desk hand-backs due
@@ -109,7 +122,11 @@ export default function Payments() {
         </CardContent>
       </Card>
 
-      <OutstandingLookup />
+          <OutstandingLookup />
+        </>
+      )}
+
+      {tab === "outstanding" && <OutstandingPanel scope="staff" />}
 
       {handBack !== null && (
         <HandBackDialog
