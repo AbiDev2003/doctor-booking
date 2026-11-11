@@ -471,3 +471,50 @@ button:disabled {
   color: #fff;
   cursor: not-allowed;
 }
+
+/* --- Shared password input with show/hide eye toggle ---------------- */
+
+/* The wrapper hugs the input; the eye button sits inside its right edge.
+   width:100% restores the stretch the input lost when it stopped being a
+   direct child of the column-flex form (block-flow inputs keep their
+   intrinsic ~20ch width). */
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  width: 100%;
+  /* Room for the eye so typed characters never run underneath it. */
+  padding-right: 2.5rem;
+}
+
+/* Undoes every rule the global `button` above would put on this one: no blue
+   slab, no top margin, no submit-sized padding — just an icon in the field. */
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 0.25rem;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin: 0;
+  padding: 0.375rem;
+  background: transparent;
+  color: #475569;
+  font-weight: 400;
+  border-radius: 0.25rem;
+}
+
+.password-toggle:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.password-toggle:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}

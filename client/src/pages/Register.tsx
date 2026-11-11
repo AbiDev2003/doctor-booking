@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { registerSchema, type RegisterInput } from "@shared/auth";
+import { PasswordInput } from "../components/password-input";
 import { apiRegister } from "../lib/api";
 import { applyApiErrors } from "../lib/formErrors";
 
@@ -97,9 +98,8 @@ export default function Register() {
         )}
 
         <label htmlFor="password">Password</label>
-        <input
+        <PasswordInput
           id="password"
-          type="password"
           autoComplete="new-password"
           aria-invalid={errors.password !== undefined}
           aria-describedby={errors.password !== undefined ? "password-error" : undefined}

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { PasswordInput } from "../components/password-input";
 import { apiResetPassword } from "../lib/api";
 import { applyApiErrors } from "../lib/formErrors";
 import {
@@ -76,9 +77,8 @@ export default function ResetPassword() {
 
       <form onSubmit={onSubmit} noValidate>
         <label htmlFor="password">New password</label>
-        <input
+        <PasswordInput
           id="password"
-          type="password"
           autoComplete="new-password"
           aria-invalid={errors.password !== undefined}
           aria-describedby={errors.password !== undefined ? "password-error" : undefined}
@@ -91,9 +91,8 @@ export default function ResetPassword() {
         )}
 
         <label htmlFor="confirm">Confirm new password</label>
-        <input
+        <PasswordInput
           id="confirm"
-          type="password"
           autoComplete="new-password"
           aria-invalid={errors.confirm !== undefined}
           aria-describedby={errors.confirm !== undefined ? "confirm-error" : undefined}

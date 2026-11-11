@@ -20,6 +20,7 @@ import {
   type SessionUser,
 } from "../lib/api";
 import { applyApiErrors } from "../lib/formErrors";
+import { PasswordInput } from "../components/password-input";
 
 /**
  * §6.1 account surface: identity + sign out for everyone, the three mutating
@@ -254,9 +255,8 @@ function ChangePhone({ onPhoneChanged }: { onPhoneChanged: (phone: string) => vo
         )}
 
         <label htmlFor="currentPassword">Current password</label>
-        <input
+        <PasswordInput
           id="currentPassword"
-          type="password"
           autoComplete="current-password"
           aria-invalid={errors.password !== undefined}
           aria-describedby={errors.password !== undefined ? "currentPassword-error" : undefined}
@@ -336,9 +336,8 @@ function DeleteAccount({ onDeleted }: { onDeleted: () => void }) {
 
       <form onSubmit={onSubmit} noValidate>
         <label htmlFor="deletePassword">Current password</label>
-        <input
+        <PasswordInput
           id="deletePassword"
-          type="password"
           autoComplete="current-password"
           aria-invalid={errors.password !== undefined}
           aria-describedby={errors.password !== undefined ? "deletePassword-error" : undefined}
