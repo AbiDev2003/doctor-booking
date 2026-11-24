@@ -994,11 +994,30 @@ Not a phase you defer — this is where you prove the hard rules. Mirror `plan.m
   `npm --prefix server run test:integration` suite all pass: **8 files, 35 tests green**
   (20 new Day 37 tests).
 
-### Day 38 — Security + review sweep
+### Day 38 — Security + review sweep (completed)
 
 - Review against §33's list: payment enum discipline (`SUCCESS` only on `Refund`),
   audit append-only, ownership on every route, error handling, logging, DB constraints.
-  Walk the §38 completion criteria end-to-end.
+  Walked the §38 completion criteria end-to-end.
+- Proved the invariants against the real database/HTTP where the earlier days only had
+  source-level evidence: `payment_status` has no `SUCCESS` (while `refund_status` does),
+  audit rows have no HTTP write path, protected router mounts reject anonymous callers,
+  public/health reads stay open, admin-only reads stay away from patients, and request IDs
+  appear in 400/401/404/422 envelopes. Day 37's five constraint tests remain the DB proof.
+- Found and fixed two review bugs, both with regression tests:
+  1. `/api/v1/health`'s 503 database-down response now carries `requestId`, matching every
+     other error path and §19/§38's request-ID contract.
+  2. The Razorpay webhook is registered before the payments router's session gate, so a
+     real webhook reaches signature validation instead of being rejected with 401. The
+     browser checkout/verify flow and all authenticated payment routes are unaffected.
+- README now documents seeding/reset/constraint assertions, the isolated integration run,
+  `pg_dump`/`pg_restore`, Pino/request IDs, security middleware, and production Resend
+  setup; stale Phase 7 wording and duplicate "Run both" lines are gone.
+- Test TypeScript check, ESLint, client/server typecheck, server unit tests, and the
+  official clean `npm --prefix server run test:integration` runner all pass: **9 files,
+  43 tests green** (8 new Day 38 tests). The runner reset and remigrated the isolated
+  `doctor_booking_test` database before Vitest. Seven files changed: two production,
+  three test, two docs.
 - **Phase 9 / MVP complete.** 🎉
 
 ---

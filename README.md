@@ -44,8 +44,13 @@ To look at the data, `npm run db:studio` opens Prisma Studio in a browser. It wo
 the repo root and from `server/`. To apply schema changes to the database,
 `npm run db:migrate`.
 
-The database starts out nearly empty — Day 3 only creates a throwaway `Placeholder`
-table. The real tables arrive with the Day 4 schema.
+From `server/`, `npm run db:seed` loads the clinic defaults and initial accounts described
+in `server/prisma/seed.ts`. `npm run db:reset` is destructive: it re-runs every migration
+and re-seeds. `npm run db:assert` checks the hand-written DB constraints and enum
+discipline against the current database.
+
+The full schema now arrives through Prisma migrations; the old Day 3 placeholder table is
+long gone.
 
 ## Appointment lifecycle
 
@@ -189,7 +194,10 @@ sequenceDiagram
 - Claiming an invitation sets the first password and marks the email verified. It
   does not create a session; the user signs in normally afterward.
 - Development builds log verification, invitation and reset links to the server
-  log. Transactional email is a Phase 7 job.
+  log. Production uses Resend and refuses to boot without `RESEND_API_KEY`; see
+  `server/.env.example` for `EMAIL_FROM`, `EMAIL_FROM_NAME` and `EMAIL_REPLY_TO`.
+  A Resend sandbox sender can only deliver to the address on the Resend account,
+  so real patients need a verified domain.
 
 ## Payments
 
@@ -331,7 +339,7 @@ Code map: `paymentOrder.service.ts` (hold + order), `paymentConvert.service.ts`
 (verify/webhook conversion), `offlinePayment.service.ts` (desk collect/void) and
 `refund.service.ts` (worker, hand-backs, retry) under `server/src/services/`.
 
-## Notifications & Jobs (Phase 7)
+## Notifications & Jobs
 
 - **Queue in-transaction**: `queueNotification(client, input)` writes a `PENDING` `Notification` inside the caller's transaction so intent commits with the state change.
 - **Dispatch post-commit**: `dispatchNotification(notificationId, content)` reads the row and calls the mailer. `dispatchNotificationInBackground()` uses `setImmediate()` for fire-and-forget delivery (never blocks HTTP/jobs).
@@ -425,14 +433,42 @@ sequenceDiagram
 
 ## Checks
 
-Run both before every commit:
-
-Run both before every commit:
+From the repo root, `npm run lint` and `npm run typecheck` cover both client and server.
+From `server/`, also run:
 
 ```bash
-npm run lint
-npm run typecheck
+npm run typecheck:tests
+npm test
+npm run db:assert
 ```
+
+The database-backed suite is destructive to its own isolated database. From `server/`,
+unset any inherited `DATABASE_URL`/`TEST_DATABASE_URL`, confirm `TEST_DATABASE_URL` ends
+in `_test`, then run `npm run test:integration`. It resets and re-migrates that test
+database before running Vitest; never point it at data you want to keep.
+
+## Operations
+
+### Backups
+
+Use PostgreSQL's custom format so a restore can be selective:
+
+```bash
+pg_dump --format=custom --file=doctor_booking.backup "$DATABASE_URL"
+pg_restore --clean --if-exists --dbname="$DATABASE_URL" doctor_booking.backup
+```
+
+Run these from `server/` with `DATABASE_URL` loaded from `.env`. Restoring over a live
+database destroys current data; take a fresh dump first.
+
+### Logging and security middleware
+
+Pino logs one line per request with a sanitized URL; credential query parameters and
+headers are redacted. A client-supplied `x-request-id` is validated and echoed in the
+header and every error body, or generated when absent. The server disables
+`x-powered-by`, trusts one proxy hop for rate-limit IPs, restricts CORS to `CLIENT_URL`,
+caps JSON bodies at 1 MB, re-reads account status on every authenticated request, and
+verifies the Razorpay webhook HMAC over raw bytes before conversion.
 
 
 ## Docs
