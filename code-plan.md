@@ -970,11 +970,29 @@ Not a phase you defer — this is where you prove the hard rules. Mirror `plan.m
   `doctor_booking_test` database, and fixtures generate unique phone numbers so parallel
   Vitest workers and reruns cannot collide.
 
-### Day 37 — Business-rule + concurrency tests
+### Day 37 — Business-rule + concurrency tests (completed)
 
 - Booking/overbooking races, same-slot duplicates, cutoff boundaries, reschedule fee delta,
   the §13 matrix (all illegal transitions), the three DB constraints, and **every** step-5
   rejection → no appointment + auto-refund.
+- Implemented in four integration files:
+  1. Concurrent last-seat allocation, concurrent same-slot attempts by one patient, and the
+     active-seat cap including live seat holds.
+  2. Patient/staff cancellation cutoffs and waivers, the ARRIVED/NO_SHOW clock walls, every
+     illegal §13 pair with allowed-target reporting, route-level role gating, and a
+     concurrent-transition race.
+  3. The three partial unique indexes (active appointment, live seat hold, reminder) plus
+     the slot-capacity and positive-amount CHECK constraints, including their release paths.
+  4. All §14 reschedule fee-delta branches, converted-order replay idempotency, and every
+     step-5 conversion rejection asserting no appointment and an executed refund.
+- Step-5 tests call the conversion service directly because HTTP verification requires a
+  real gateway signature; refund success is forced through gateway injection and notifications
+  are mocked. No production behaviour was changed.
+- Integration setup clears `auth_attempts` per test file so the shared §6.3 per-IP login cap
+  cannot exhaust the budget before later files run; the production limiter stays intact.
+- Test TypeScript check, ESLint, server unit tests, and the clean database-backed
+  `npm --prefix server run test:integration` suite all pass: **8 files, 35 tests green**
+  (20 new Day 37 tests).
 
 ### Day 38 — Security + review sweep
 
