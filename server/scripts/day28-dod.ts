@@ -4,13 +4,13 @@ import { $Enums, PrismaClient } from "../src/generated/prisma/client.js";
 import { utcToLocalDateTime } from "../src/lib/time.js";
 import { bookAppointment } from "../src/services/appointments/booking.service.js";
 import { cancelAppointment, rejectAppointment } from "../src/services/appointments/appointmentTransition.service.js";
-import { rescheduleAppointment } from "../src/services/reschedule.service.js";
-import { collectOfflinePayment } from "../src/services/offlinePayment.service.js";
-import { convertPayment } from "../src/services/paymentConvert.service.js";
-import { completeDeskHandBack } from "../src/services/refund.service.js";
-import { applyUnavailabilityCascade, autoCancelAfterSlotEnd } from "../src/services/appointmentCascade.service.js";
+import { rescheduleAppointment } from "../src/services/appointments/reschedule.service.js";
+import { collectOfflinePayment } from "../src/services/payments/offlinePayment.service.js";
+import { convertPayment } from "../src/services/payments/paymentConvert.service.js";
+import { completeDeskHandBack } from "../src/services/payments/refund.service.js";
+import { applyUnavailabilityCascade, autoCancelAfterSlotEnd } from "../src/services/appointments/appointmentCascade.service.js";
 import { getClinicSettings } from "../src/services/clinic.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -40,18 +40,18 @@ interface PatientFixture extends ActorContext {
 async function removeFixtures(state: RunState) {
   if (state.userIds.length === 0 && state.slotIds.length === 0) return;
   const appointments = await prisma.appointment.findMany({ where: { patientId: { in: state.patientIds } }, select: { id: true } });
-  const appointmentIds = appointments.map((r: any) => r.id);
+  const appointmentIds = appointments.map((r) => r.id);
   const payments = await prisma.payment.findMany({ where: { patientId: { in: state.patientIds } }, select: { id: true } });
-  const paymentIds = payments.map((r: any) => r.id);
+  const paymentIds = payments.map((r) => r.id);
   const refunds = await prisma.refund.findMany({ where: { paymentId: { in: paymentIds } }, select: { id: true } });
-  const refundIds = refunds.map((r: any) => r.id);
+  const refundIds = refunds.map((r) => r.id);
   const targetIds = [...appointmentIds, ...paymentIds, ...refundIds];
   await prisma.notification.deleteMany({ where: { recipient: { startsWith: FIXTURE_EMAIL_PREFIX } } });
   await prisma.appointmentHistory.deleteMany({ where: { appointmentId: { in: appointmentIds } } });
   await prisma.refund.deleteMany({ where: { id: { in: refundIds } } });
   await prisma.seatHold.deleteMany({ where: { patientId: { in: state.patientIds } } });
   await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
-  await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: state.userIds } }, { targetId: { in: targetIds } }] } as any });
+  await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: state.userIds } }, { targetId: { in: targetIds } }] } });
   if (appointmentIds.length > 0) {
     await prisma.appointment.updateMany({ where: { id: { in: appointmentIds } }, data: { doctorUnavailabilityId: null } });
   }
@@ -66,11 +66,11 @@ async function removeFixtures(state: RunState) {
 async function purgeStaleFixtures() {
   const staleUsers = await prisma.user.findMany({ where: { email: { startsWith: FIXTURE_EMAIL_PREFIX } }, select: { id: true, role: true } });
   if (staleUsers.length === 0) return 0;
-  const userIds = staleUsers.map((r: any) => r.id);
-  const doctorIds = staleUsers.filter((r: any) => r.role === $Enums.UserRole.DOCTOR).map((r: any) => r.id);
-  const patientIds = staleUsers.filter((r: any) => r.role === $Enums.UserRole.PATIENT).map((r: any) => r.id);
+  const userIds = staleUsers.map((r) => r.id);
+  const doctorIds = staleUsers.filter((r) => r.role === $Enums.UserRole.DOCTOR).map((r) => r.id);
+  const patientIds = staleUsers.filter((r) => r.role === $Enums.UserRole.PATIENT).map((r) => r.id);
   const staleSlots = await prisma.slot.findMany({ where: { doctorId: { in: doctorIds } }, select: { id: true } });
-  await removeFixtures({ userIds, patientIds, doctorIds, slotIds: staleSlots.map((r: any) => r.id) });
+  await removeFixtures({ userIds, patientIds, doctorIds, slotIds: staleSlots.map((r) => r.id) });
   return staleUsers.length;
 }
 
@@ -78,7 +78,7 @@ function timeValue(hhmm: string) {
   const [h, m] = hhmm.split(":").map(Number);
   return new Date(Date.UTC(1970, 0, 1, h, m, 0));
 }
-async function countNotification(recipient: string, type: any) {
+async function countNotification(recipient: string, type: $Enums.NotificationType) {
   return prisma.notification.count({ where: { recipient, type } });
 }
 
@@ -93,11 +93,11 @@ async function main() {
   try {
     const doctor = await prisma.user.create({
       data: {
-        role: "DOCTOR" as any,
+        role: $Enums.UserRole.DOCTOR,
         fullName: "Day28 DoD doctor",
         email: FIXTURE_EMAIL_PREFIX + "doctor-" + suffix + "@example.test",
         emailVerifiedAt: new Date(),
-        doctorProfile: { create: { verificationStatus: "VERIFIED" as any, consultationFee: 50000 } },
+        doctorProfile: { create: { verificationStatus: $Enums.DoctorVerificationStatus.VERIFIED, consultationFee: 50000 } },
       },
       select: { id: true },
     });
@@ -131,7 +131,7 @@ async function main() {
       const phone = "+919" + String(process.pid).padStart(5, "0") + String(Date.now()).slice(-5) + label.length;
       const user = await prisma.user.create({
         data: {
-          role: "PATIENT" as any,
+          role: $Enums.UserRole.PATIENT,
           fullName: "Day28 " + label,
           email,
           emailVerifiedAt: new Date(),
@@ -198,9 +198,9 @@ async function main() {
     if (!slotFRow) fail("missing slot F");
     const disruption = await prisma.doctorUnavailability.create({
       data: { doctorId: doctor.id, createdById: doctor.id, startAt: new Date(slotFRow.startAt.getTime() - 60000), endAt: new Date(slotFRow.endAt.getTime() + 60000), reason: "Day28 DoD unavailability" },
-      select: { id: true },
+      select: { id: true, startAt: true, endAt: true },
     });
-    await applyUnavailabilityCascade(prisma, { doctorId: doctor.id, window: { startAt: disruption.startAt, endAt: disruption.endAt }, disruptionId: disruption.id, reason: "Day28 DoD unavailability", actor: staffActor, ip: "203.0.113.28", requestId: "day28-dod-f-cascade" } as any);
+    await applyUnavailabilityCascade(prisma, { doctorId: doctor.id, window: { startAt: disruption.startAt, endAt: disruption.endAt }, disruptionId: disruption.id, reason: "Day28 DoD unavailability", actor: staffActor, ip: "203.0.113.28", requestId: "day28-dod-f-cascade" });
     expect((await countNotification(pF.email, $Enums.NotificationType.DOCTOR_UNAVAILABLE)) === 1, "F");
     console.log("F. Doctor unavailability -> DOCTOR_UNAVAILABLE queued.");
 

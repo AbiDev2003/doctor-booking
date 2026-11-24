@@ -25,9 +25,9 @@ import { PrismaClient } from "../src/generated/prisma/client.js";
 import { enumerateDates, weekdayOfDate } from "../src/lib/slotPlan.js";
 import { utcToLocalDateTime } from "../src/lib/time.js";
 import { AppError } from "../src/lib/appError.js";
-import { listDoctorAvailability } from "../src/services/availability.service.js";
+import { listDoctorAvailability } from "../src/services/slots/availability.service.js";
 import { bookAppointment } from "../src/services/appointments/booking.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

@@ -22,7 +22,7 @@ import "dotenv/config";
 
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
-import { materializeSlots } from "../src/services/slotGeneration.service.js";
+import { materializeSlots } from "../src/services/slots/slotGeneration.service.js";
 import { enumerateDates, weekdayOfDate } from "../src/lib/slotPlan.js";
 
 const connectionString = process.env.DATABASE_URL;

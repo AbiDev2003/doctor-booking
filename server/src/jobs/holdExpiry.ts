@@ -1,7 +1,6 @@
 import { $Enums } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
 import { logger } from "../lib/logger.js";
-import { AppError } from "../lib/appError.js";
 import { writeAudit } from "../services/audit.service.js";
 
 export async function expireStaleHolds(now: Date): Promise<number> {
@@ -64,7 +63,7 @@ export async function expireStaleHolds(now: Date): Promise<number> {
                 after: { status: $Enums.PaymentStatus.VOIDED, reason: "HOLD_EXPIRED" },
                 reason: "Seat hold expired",
               });
-            } catch (e) {
+            } catch {
               // ignore audit failures
             }
           }

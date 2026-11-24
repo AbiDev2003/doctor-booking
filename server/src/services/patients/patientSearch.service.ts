@@ -22,7 +22,7 @@ export function normalizeNameSearch(value: string): string {
 }
 
 function isPhoneSearch(value: string): boolean {
-  return /^[+\d][\d\s()\-]*$/.test(value.trim());
+  return /^[+\d][\d\s()-]*$/.test(value.trim());
 }
 
 export async function findPatientIds(search: string, limit: number): Promise<string[]> {

@@ -1,6 +1,5 @@
 import { $Enums } from "../generated/prisma/client.js";
 import { prisma } from "../lib/prisma.js";
-import { AppError } from "../lib/appError.js";
 import { logger } from "../lib/logger.js";
 import { getClinicSettings } from "../services/clinic.service.js";
 import { queueNotification } from "../services/notifications/notification.service.js";

@@ -39,17 +39,17 @@ import type {
 } from "../src/lib/paymentGateway.js";
 import { getClinicSettings } from "../src/services/clinic.service.js";
 import { bookAppointment } from "../src/services/appointments/booking.service.js";
-import { autoCancelAfterSlotEnd } from "../src/services/appointmentCascade.service.js";
-import { cancelAppointment } from "../src/services/appointmentTransition.service.js";
-import { collectOfflinePayment, voidOfflinePayment } from "../src/services/offlinePayment.service.js";
+import { autoCancelAfterSlotEnd } from "../src/services/appointments/appointmentCascade.service.js";
+import { cancelAppointment } from "../src/services/appointments/appointmentTransition.service.js";
+import { collectOfflinePayment, voidOfflinePayment } from "../src/services/payments/offlinePayment.service.js";
 import {
   completeDeskHandBack,
   executeRefund,
   listPendingDeskHandBacks,
   retryFailedRefund,
-} from "../src/services/refund.service.js";
-import { rescheduleAppointment } from "../src/services/reschedule.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+} from "../src/services/payments/refund.service.js";
+import { rescheduleAppointment } from "../src/services/appointments/reschedule.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

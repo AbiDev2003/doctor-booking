@@ -41,8 +41,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { AppError } from "../src/lib/appError.js";
 import { deriveConsultationFee } from "../src/lib/fee.js";
-import { createPaymentOrder } from "../src/services/paymentOrder.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+import { createPaymentOrder } from "../src/services/payments/paymentOrder.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

@@ -45,7 +45,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";
 import { config } from "../src/config.js";
 import { normalizePhoneToE164 } from "../src/lib/time.js";
-import { materializeSlots } from "../src/services/slotGeneration.service.js";
+import { materializeSlots } from "../src/services/slots/slotGeneration.service.js";
 
 // ---------------------------------------------------------------------------
 // Inputs

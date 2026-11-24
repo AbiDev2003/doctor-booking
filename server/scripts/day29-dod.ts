@@ -5,7 +5,7 @@ import { utcToLocalDateTime } from "../src/lib/time.js";
 import { bookAppointment } from "../src/services/appointments/booking.service.js";
 import { getClinicSettings } from "../src/services/clinic.service.js";
 import { sendAppointmentReminders } from "../src/jobs/reminders.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -35,18 +35,18 @@ interface PatientFixture extends ActorContext {
 async function removeFixtures(state: RunState) {
   if (state.userIds.length === 0 && state.slotIds.length === 0) return;
   const appointments = await prisma.appointment.findMany({ where: { patientId: { in: state.patientIds } }, select: { id: true } });
-  const appointmentIds = appointments.map((r: any) => r.id);
+  const appointmentIds = appointments.map((r) => r.id);
   const payments = await prisma.payment.findMany({ where: { patientId: { in: state.patientIds } }, select: { id: true } });
-  const paymentIds = payments.map((r: any) => r.id);
+  const paymentIds = payments.map((r) => r.id);
   const refunds = await prisma.refund.findMany({ where: { paymentId: { in: paymentIds } }, select: { id: true } });
-  const refundIds = refunds.map((r: any) => r.id);
+  const refundIds = refunds.map((r) => r.id);
   const targetIds = [...appointmentIds, ...paymentIds, ...refundIds];
   await prisma.notification.deleteMany({ where: { recipient: { startsWith: FIXTURE_EMAIL_PREFIX } } });
   await prisma.appointmentHistory.deleteMany({ where: { appointmentId: { in: appointmentIds } } });
   await prisma.refund.deleteMany({ where: { id: { in: refundIds } } });
   await prisma.seatHold.deleteMany({ where: { patientId: { in: state.patientIds } } });
   await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
-  await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: state.userIds } }, { targetId: { in: targetIds } }] } as any });
+  await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: state.userIds } }, { targetId: { in: targetIds } }] } });
   await prisma.doctorUnavailability.deleteMany({ where: { doctorId: { in: state.doctorIds } } });
   if (appointmentIds.length > 0) {
     await prisma.appointment.updateMany({ where: { id: { in: appointmentIds } }, data: { doctorUnavailabilityId: null } });
@@ -61,11 +61,11 @@ async function removeFixtures(state: RunState) {
 async function purgeStaleFixtures() {
   const staleUsers = await prisma.user.findMany({ where: { email: { startsWith: FIXTURE_EMAIL_PREFIX } }, select: { id: true, role: true } });
   if (staleUsers.length === 0) return 0;
-  const userIds = staleUsers.map((r: any) => r.id);
-  const doctorIds = staleUsers.filter((r: any) => r.role === $Enums.UserRole.DOCTOR).map((r: any) => r.id);
-  const patientIds = staleUsers.filter((r: any) => r.role === $Enums.UserRole.PATIENT).map((r: any) => r.id);
+  const userIds = staleUsers.map((r) => r.id);
+  const doctorIds = staleUsers.filter((r) => r.role === $Enums.UserRole.DOCTOR).map((r) => r.id);
+  const patientIds = staleUsers.filter((r) => r.role === $Enums.UserRole.PATIENT).map((r) => r.id);
   const staleSlots = await prisma.slot.findMany({ where: { doctorId: { in: doctorIds } }, select: { id: true } });
-  await removeFixtures({ userIds, patientIds, doctorIds, slotIds: staleSlots.map((r: any) => r.id) });
+  await removeFixtures({ userIds, patientIds, doctorIds, slotIds: staleSlots.map((r) => r.id) });
   return staleUsers.length;
 }
 
@@ -85,11 +85,11 @@ async function main() {
   try {
     const doctor = await prisma.user.create({
       data: {
-        role: "DOCTOR" as any,
+        role: $Enums.UserRole.DOCTOR,
         fullName: "Day29 DoD doctor",
         email: FIXTURE_EMAIL_PREFIX + "doctor-" + suffix + "@example.test",
         emailVerifiedAt: new Date(),
-        doctorProfile: { create: { verificationStatus: "VERIFIED" as any, consultationFee: 50000 } },
+        doctorProfile: { create: { verificationStatus: $Enums.DoctorVerificationStatus.VERIFIED, consultationFee: 50000 } },
       },
       select: { id: true },
     });
@@ -101,7 +101,7 @@ async function main() {
       const phone = "+919" + String(process.pid).padStart(5, "0") + String(Date.now()).slice(-5) + label.length;
       const user = await prisma.user.create({
         data: {
-          role: "PATIENT" as any,
+          role: $Enums.UserRole.PATIENT,
           fullName: "Day29 " + label,
           email,
           emailVerifiedAt: new Date(),

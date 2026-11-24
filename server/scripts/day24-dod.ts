@@ -58,10 +58,10 @@ import { AppError } from "../src/lib/appError.js";
 import { deriveConsultationFee } from "../src/lib/fee.js";
 import { utcToLocalDateTime } from "../src/lib/time.js";
 import { computePaymentSignature } from "../src/lib/paymentSignature.js";
-import { createPaymentOrder } from "../src/services/paymentOrder.service.js";
-import { convertPayment } from "../src/services/paymentConvert.service.js";
+import { createPaymentOrder } from "../src/services/payments/paymentOrder.service.js";
+import { convertPayment } from "../src/services/payments/paymentConvert.service.js";
 import { getClinicSettings } from "../src/services/clinic.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

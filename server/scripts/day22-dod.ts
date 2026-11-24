@@ -39,8 +39,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { $Enums, PrismaClient } from "../src/generated/prisma/client.js";
 import { AppError } from "../src/lib/appError.js";
 import { addCalendarDays, localDateTimeToUtc, utcToLocalDateTime } from "../src/lib/time.js";
-import { rescheduleAppointment } from "../src/services/reschedule.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+import { rescheduleAppointment } from "../src/services/appointments/reschedule.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

@@ -40,14 +40,15 @@ import {
   passwordResetEmail,
 } from "../src/lib/emailTemplates.js";
 import {
+  claimAccount,
   registerPatient,
   forgotPassword,
   resetPassword,
   revokeUserSessions,
 } from "../src/services/auth/auth.service.js";
 import { changeEmail, deleteAccount } from "../src/services/account.service.js";
-import { inviteDoctor } from "../src/services/doctor.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+import { inviteDoctor } from "../src/services/doctors/doctor.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 import { dispatchNotification, queueNotification } from "../src/services/notifications/notification.service.js";
 
 const connectionString = process.env.DATABASE_URL;
@@ -336,7 +337,6 @@ async function main(): Promise<void> {
       ip: FIXTURE_IP,
       requestId: "day27-dod",
     });
-    state.userIds.push(invite.userId);
     state.notificationIds.push(invite.notificationId);
 
     const inviteMailer = new FakeMailer();
@@ -354,6 +354,17 @@ async function main(): Promise<void> {
     expect(inviteMailer.messages[0]?.text.includes(invite.rawToken) === true, "invitation lost the claim token");
     expect(inviteMailer.messages[0]?.subject.toLowerCase().includes("invited") === true, "invitation subject is wrong");
     console.log("F. Doctor invitation queues and sends the claim link.");
+
+    // The invitation only creates a PendingInvitation; claiming it is what
+    // materialises the doctor User (and DoctorProfile) that section H needs.
+    const claimed = await claimAccount({
+      token: invite.rawToken,
+      password: NEW_PASSWORD,
+      ip: FIXTURE_IP,
+      requestId: "day27-dod",
+    });
+    const doctorUserId = claimed.userId;
+    state.userIds.push(doctorUserId);
 
     /* G. Deletion snapshots the address BEFORE anonymisation. */
     const deleted = await deleteAccount({
@@ -386,7 +397,7 @@ async function main(): Promise<void> {
         const rawToken = generateToken();
         return prisma.refreshToken.create({
           data: {
-            userId: invite.userId,
+            userId: doctorUserId,
             tokenHash: hashToken(rawToken),
             expiresAt: new Date(Date.now() + 60_000),
             ip: FIXTURE_IP,
@@ -400,7 +411,7 @@ async function main(): Promise<void> {
     const securityReason = "Day 27 DoD session revocation";
     const revoked = await revokeUserSessions({
       actor: { id: registered.userId, role: $Enums.UserRole.ADMIN, name: "Day 27 DoD Admin" },
-      userId: invite.userId,
+      userId: doctorUserId,
       reason: securityReason,
       ip: FIXTURE_IP,
       requestId: "day27-dod",
@@ -416,12 +427,12 @@ async function main(): Promise<void> {
     expect(securityRow?.status === $Enums.NotificationStatus.PENDING, "security notice should start PENDING");
 
     const liveSessions = await prisma.refreshToken.count({
-      where: { userId: invite.userId, revokedAt: null },
+      where: { userId: doctorUserId, revokedAt: null },
     });
     expect(liveSessions === 0, "admin revocation left a live refresh token");
 
     const revocationAudit = await prisma.auditLog.findFirst({
-      where: { action: "USER_SESSIONS_REVOKED", targetId: invite.userId, reason: securityReason },
+      where: { action: "USER_SESSIONS_REVOKED", targetId: doctorUserId, reason: securityReason },
       select: { actorName: true, actorRole: true, before: true, after: true },
     });
     expect(revocationAudit?.actorName === "Day 27 DoD Admin", "revocation audit lost the actor name snapshot");
@@ -443,7 +454,7 @@ async function main(): Promise<void> {
 
     const revokedAgain = await revokeUserSessions({
       actor: { id: registered.userId, role: $Enums.UserRole.ADMIN, name: "Day 27 DoD Admin" },
-      userId: invite.userId,
+      userId: doctorUserId,
       reason: "Repeated Day 27 DoD session revocation",
       ip: FIXTURE_IP,
       requestId: "day27-dod",

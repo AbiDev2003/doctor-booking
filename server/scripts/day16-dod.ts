@@ -37,7 +37,7 @@ import {
   createSlot,
   setSlotDisabled,
   updateSlot,
-} from "../src/services/slot.service.js";
+} from "../src/services/slots/slot.service.js";
 import type { Prisma } from "../src/generated/prisma/client.js";
 
 const connectionString = process.env.DATABASE_URL;

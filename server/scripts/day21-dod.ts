@@ -39,15 +39,15 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { $Enums, PrismaClient } from "../src/generated/prisma/client.js";
 import { AppError } from "../src/lib/appError.js";
-import { autoCancelAfterSlotEnd } from "../src/services/appointmentCascade.service.js";
+import { autoCancelAfterSlotEnd } from "../src/services/appointments/appointmentCascade.service.js";
 import {
   arriveAppointment,
   cancelAppointment,
   completeAppointment,
   markNoShow,
   rejectAppointment,
-} from "../src/services/appointmentTransition.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+} from "../src/services/appointments/appointmentTransition.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

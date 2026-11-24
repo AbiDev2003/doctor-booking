@@ -36,13 +36,13 @@ import { PrismaClient } from "../src/generated/prisma/client.js";
 import { enumerateDates, weekdayOfDate } from "../src/lib/slotPlan.js";
 import { utcToLocalDateTime } from "../src/lib/time.js";
 import { AppError } from "../src/lib/appError.js";
-import { listDoctorAvailability } from "../src/services/availability.service.js";
-import { autoCancelAfterSlotEnd } from "../src/services/appointmentCascade.service.js";
+import { listDoctorAvailability } from "../src/services/slots/availability.service.js";
+import { autoCancelAfterSlotEnd } from "../src/services/appointments/appointmentCascade.service.js";
 import {
   createDoctorUnavailability,
   removeDoctorUnavailability,
-} from "../src/services/unavailability.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+} from "../src/services/doctors/unavailability.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

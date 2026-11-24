@@ -29,7 +29,7 @@ import { PrismaClient } from "../src/generated/prisma/client.js";
 import { enumerateDates, weekdayOfDate } from "../src/lib/slotPlan.js";
 import { utcToLocalDateTime } from "../src/lib/time.js";
 import { AppError } from "../src/lib/appError.js";
-import { listDoctorAvailability } from "../src/services/availability.service.js";
+import { listDoctorAvailability } from "../src/services/slots/availability.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {

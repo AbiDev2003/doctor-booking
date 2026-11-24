@@ -9,12 +9,12 @@ import type {
   GatewayRefundParams,
   PaymentGateway,
 } from "../src/lib/paymentGateway.js";
-import { convertPayment } from "../src/services/paymentConvert.service.js";
+import { convertPayment } from "../src/services/payments/paymentConvert.service.js";
 import { getClinicSettings } from "../src/services/clinic.service.js";
-import { cancelAppointment, rejectAppointment } from "../src/services/appointmentTransition.service.js";
-import { rescheduleAppointment } from "../src/services/reschedule.service.js";
-import { executePendingRefunds } from "../src/services/refund.service.js";
-import type { ActorContext } from "../src/services/doctor.service.js";
+import { cancelAppointment, rejectAppointment } from "../src/services/appointments/appointmentTransition.service.js";
+import { rescheduleAppointment } from "../src/services/appointments/reschedule.service.js";
+import { executePendingRefunds } from "../src/services/payments/refund.service.js";
+import type { ActorContext } from "../src/services/doctors/doctor.service.js";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
