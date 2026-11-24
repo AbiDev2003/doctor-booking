@@ -65,6 +65,95 @@ import type { ActorContext } from "../services/doctors/doctor.service.js";
  */
 export const paymentsRouter = Router();
 
+/**
+ * POST /webhook — Razorpay reports `order.paid` here (§17 step 5's other
+ * entry point).
+ *
+ * NO `requireAuth`: the caller is a Razorpay server, and its authentication is
+ * `X-Razorpay-Signature` over the RAW body — which is why app.ts mounts
+ * `express.raw` on this path before any JSON parser. The secret is
+ * `RAZORPAY_WEBHOOK_SECRET` (the dashboard's), never the key secret.
+ *
+ * Registered BEFORE the router-wide `requireAuth` below: Razorpay has no
+ * session, so a bearer-token gate here would reject every real webhook before
+ * its signature could be checked.
+ *
+ * Response policy: a signature-valid request is ACKNOWLEDGED with 200 even
+ * when the conversion rejects (expired hold, duplicate, …) — Razorpay retries
+ * non-2xx forever, and retrying an expired hold will never convert it; the
+ * rejection is logged, Day 25 has already turned captured-but-unbooked money
+ * into a queued refund, and the worker kick tries to execute it. A non-AppError
+ * (the database being down) still surfaces as a 500 so the retry DOES make
+ * sense there.
+ */
+paymentsRouter.post("/webhook", async (req, res, next) => {
+  try {
+    const secret = config.RAZORPAY_WEBHOOK_SECRET;
+    if (secret === undefined) {
+      throw new AppError(503, "WEBHOOK_NOT_CONFIGURED", "Webhook verification is not configured.");
+    }
+
+    const rawBody = req.body;
+    if (!Buffer.isBuffer(rawBody)) {
+      // Reached when the content-type was not application/json: nothing
+      // signed a body, because nothing arrived as one.
+      throw new AppError(400, "WEBHOOK_BODY_INVALID", "Webhook body must be the signed JSON payload.");
+    }
+
+    const signature = req.get("x-razorpay-signature") ?? "";
+    if (!verifyWebhookSignature({ secret, rawBody, signature })) {
+      throw new AppError(403, "WEBHOOK_SIGNATURE_INVALID", "Webhook signature mismatch.");
+    }
+
+    let event: { event?: unknown; payload?: { payment?: { entity?: { order_id?: unknown; id?: unknown } } } };
+    try {
+      event = JSON.parse(rawBody.toString("utf8")) as typeof event;
+    } catch {
+      logger.warn("razorpay webhook arrived with an unparsable body");
+      res.json({ status: "ignored" });
+      return;
+    }
+
+    if (event.event !== "order.paid") {
+      // Acknowledge events we do not act on so Razorpay stops redelivering them.
+      res.json({ status: "ignored" });
+      return;
+    }
+
+    const entity = event.payload?.payment?.entity;
+    const orderId = typeof entity?.order_id === "string" ? entity.order_id : null;
+    const paymentId = typeof entity?.id === "string" ? entity.id : null;
+    if (orderId === null || paymentId === null) {
+      logger.warn({ event: event.event }, "order.paid webhook without order/payment ids");
+      res.json({ status: "ignored" });
+      return;
+    }
+
+    try {
+      await convertPayment({
+        orderId,
+        gatewayPaymentId: paymentId,
+        actor: { name: "system" },
+        ...requestMeta(req, res),
+      });
+      kickRefundWorker();
+      res.json({ status: "processed" });
+    } catch (err) {
+      if (err instanceof AppError) {
+        // Signature-valid but not convertible: 200 ends the retry loop; the
+        // log carries the reason and the settlement has queued any refund.
+        logger.warn({ code: err.code, orderId, paymentId }, "webhook conversion rejected");
+        kickRefundWorker();
+        res.json({ status: "rejected", code: err.code });
+        return;
+      }
+      throw err;
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
 paymentsRouter.use(requireAuth);
 
 const patientOnly = requireRole($Enums.UserRole.PATIENT);
@@ -232,91 +321,6 @@ paymentsRouter.post("/verify", patientOnly, async (req, res, next) => {
     res.json({ message: "Payment verified.", appointment });
   } catch (err) {
     kickRefundWorker();
-    next(err);
-  }
-});
-
-/**
- * POST /webhook — Razorpay reports `order.paid` here (§17 step 5's other
- * entry point).
- *
- * NO `requireAuth`: the caller is a Razorpay server, and its authentication is
- * `X-Razorpay-Signature` over the RAW body — which is why app.ts mounts
- * `express.raw` on this path before any JSON parser. The secret is
- * `RAZORPAY_WEBHOOK_SECRET` (the dashboard's), never the key secret.
- *
- * Response policy: a signature-valid request is ACKNOWLEDGED with 200 even
- * when the conversion rejects (expired hold, duplicate, …) — Razorpay retries
- * non-2xx forever, and retrying an expired hold will never convert it; the
- * rejection is logged, Day 25 has already turned captured-but-unbooked money
- * into a queued refund, and the worker kick tries to execute it. A non-AppError
- * (the database being down) still surfaces as a 500 so the retry DOES make
- * sense there.
- */
-paymentsRouter.post("/webhook", async (req, res, next) => {
-  try {
-    const secret = config.RAZORPAY_WEBHOOK_SECRET;
-    if (secret === undefined) {
-      throw new AppError(503, "WEBHOOK_NOT_CONFIGURED", "Webhook verification is not configured.");
-    }
-
-    const rawBody = req.body;
-    if (!Buffer.isBuffer(rawBody)) {
-      // Reached when the content-type was not application/json: nothing
-      // signed a body, because nothing arrived as one.
-      throw new AppError(400, "WEBHOOK_BODY_INVALID", "Webhook body must be the signed JSON payload.");
-    }
-
-    const signature = req.get("x-razorpay-signature") ?? "";
-    if (!verifyWebhookSignature({ secret, rawBody, signature })) {
-      throw new AppError(403, "WEBHOOK_SIGNATURE_INVALID", "Webhook signature mismatch.");
-    }
-
-    let event: { event?: unknown; payload?: { payment?: { entity?: { order_id?: unknown; id?: unknown } } } };
-    try {
-      event = JSON.parse(rawBody.toString("utf8")) as typeof event;
-    } catch {
-      logger.warn("razorpay webhook arrived with an unparsable body");
-      res.json({ status: "ignored" });
-      return;
-    }
-
-    if (event.event !== "order.paid") {
-      // Acknowledge events we do not act on so Razorpay stops redelivering them.
-      res.json({ status: "ignored" });
-      return;
-    }
-
-    const entity = event.payload?.payment?.entity;
-    const orderId = typeof entity?.order_id === "string" ? entity.order_id : null;
-    const paymentId = typeof entity?.id === "string" ? entity.id : null;
-    if (orderId === null || paymentId === null) {
-      logger.warn({ event: event.event }, "order.paid webhook without order/payment ids");
-      res.json({ status: "ignored" });
-      return;
-    }
-
-    try {
-      await convertPayment({
-        orderId,
-        gatewayPaymentId: paymentId,
-        actor: { name: "system" },
-        ...requestMeta(req, res),
-      });
-      kickRefundWorker();
-      res.json({ status: "processed" });
-    } catch (err) {
-      if (err instanceof AppError) {
-        // Signature-valid but not convertible: 200 ends the retry loop; the
-        // log carries the reason and the settlement has queued any refund.
-        logger.warn({ code: err.code, orderId, paymentId }, "webhook conversion rejected");
-        kickRefundWorker();
-        res.json({ status: "rejected", code: err.code });
-        return;
-      }
-      throw err;
-    }
-  } catch (err) {
     next(err);
   }
 });
