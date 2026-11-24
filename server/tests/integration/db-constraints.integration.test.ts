@@ -234,3 +234,27 @@ describe("Day 37 chunk 3: database constraints", () => {
     expect(paid.amountPaise).toBe(1);
   });
 });
+
+describe("§17 payment enum discipline", () => {
+  it("keeps SUCCESS on refund_status only, never on payment_status", async () => {
+    const labels = await prisma.$queryRaw<Array<{ enum_type: string; enumlabel: string }>>`
+      SELECT t.typname AS enum_type, e.enumlabel
+      FROM pg_type AS t
+      JOIN pg_enum AS e ON e.enumtypid = t.oid
+      WHERE t.typnamespace = 'public'::regnamespace
+        AND t.typname IN ('payment_status', 'refund_status')
+      ORDER BY t.typname, e.enumsortorder
+    `;
+
+    const paymentLabels = labels
+      .filter((row) => row.enum_type === "payment_status")
+      .map((row) => row.enumlabel);
+    const refundLabels = labels
+      .filter((row) => row.enum_type === "refund_status")
+      .map((row) => row.enumlabel);
+
+    expect(paymentLabels).toEqual(["PENDING", "PAID", "FAILED", "VOIDED"]);
+    expect(paymentLabels).not.toContain("SUCCESS");
+    expect(refundLabels).toContain("SUCCESS");
+  });
+});
