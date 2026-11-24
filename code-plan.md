@@ -938,12 +938,16 @@ The correctness-critical phase. Slow down here.
 
 Not a phase you defer — this is where you prove the hard rules. Mirror `plan.md` §33.
 
-### Day 35 — Test harness
+### Day 35 — Test harness (completed)
 
-- Vitest + Supertest in `server/`; a test DB helper (fresh migrate per run); arrange
-  factories for clinic/doctor/patient/slot.
+- Vitest + Supertest in `server/`; `npm run test:integration` resets and migrates a
+  dedicated PostgreSQL database whose name ends in `_test`. The runner refuses production
+  mode, missing or non-PostgreSQL URLs, other database names, and a URL matching
+  `DATABASE_URL`.
+- Factories for clinic/doctor/patient/slot, plus a health-endpoint integration smoke test.
+- `TEST_DATABASE_URL` pattern and reset warning documented in `server/.env.example`.
 
-### Day 36 — Auth + authorization tests
+### Day 36 — Auth + authorization tests (completed)
 
 - Lockout, rotation, immediate revocation, email uniqueness across entry points, RBAC +
   ownership per role.
@@ -952,12 +956,19 @@ Not a phase you defer — this is where you prove the hard rules. Mirror `plan.m
   HTTP, and they are what prove the windowed count queries — the part a pure test cannot
   reach.
 
-  (
-  execute in chunks:
-    1. Registration, email uniqueness, and login.
-    2. Lockout behavior and refresh-token rotation/revocation.
-    3. Role-based authorization and resource ownership.
-   )
+  Implemented in three chunks:
+  1. Registration, email uniqueness across registration, invitations/claims, email
+     changes and desk-created patients; login success and generic credential failures.
+  2. Five-failure lockout, successful-login reset of the consecutive-failure run, refresh
+     rotation/reuse rejection, and session revocation plus immediate access-token blocking
+     after doctor suspension.
+  3. Authentication and role gates, doctor profile/schedule ownership, and patient
+     appointment ownership.
+- Test TypeScript check, focused ESLint, existing server unit tests, and the database-backed
+  `npm --prefix server run test:integration` suite all pass: **4 files, 15 tests green**.
+  The test DB uses the same `doctor_booking` role as the app DB against a separate
+  `doctor_booking_test` database, and fixtures generate unique phone numbers so parallel
+  Vitest workers and reruns cannot collide.
 
 ### Day 37 — Business-rule + concurrency tests
 

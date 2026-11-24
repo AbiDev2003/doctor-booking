@@ -1,14 +1,23 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { $Enums } from "../../src/generated/prisma/client.js";
+import { hashPassword } from "../../src/lib/auth.js";
 import { prisma } from "../../src/lib/prisma.js";
 import { localDateTimeToUtc } from "../../src/lib/time.js";
 
 const CLINIC_TIMEZONE = "Asia/Kolkata";
+export const TEST_PASSWORD = "test-password-123";
 let sequence = 0;
 
 function uniqueSuffix(): string {
   sequence += 1;
   return `${Date.now()}-${sequence}-${randomUUID().slice(0, 8)}`;
+}
+
+// Each Vitest worker loads this module separately, so `sequence` is per-worker.
+// Phone numbers are globally unique in the database; derive them from crypto
+// randomness instead so parallel workers (and reruns) cannot collide.
+export function uniquePhone(): string {
+  return `+919${String(randomInt(1_000_000_000)).padStart(9, "0")}`;
 }
 
 function localClock(value: string): Date {
@@ -72,7 +81,7 @@ export function createPatient(overrides: {
       emailVerifiedAt: new Date(),
       patientProfile: {
         create: {
-          phone: overrides.phone ?? `+919${String(sequence).padStart(9, "0")}`,
+          phone: overrides.phone ?? uniquePhone(),
           phoneVerified: false,
           isProvisional: false,
         },
@@ -80,6 +89,69 @@ export function createPatient(overrides: {
     },
     include: { patientProfile: true },
   });
+}
+
+export async function createLoginPatient(overrides: {
+  email?: string;
+  fullName?: string;
+  phone?: string;
+  password?: string;
+} = {}) {
+  const patient = await createPatient(overrides);
+  const password = overrides.password ?? TEST_PASSWORD;
+  const user = await prisma.user.update({
+    where: { id: patient.id },
+    data: { passwordHash: await hashPassword(password) },
+  });
+  return { user, password };
+}
+
+export async function createLoginDoctor(overrides: { email?: string; fullName?: string; password?: string } = {}) {
+  const doctor = await createDoctor(overrides);
+  const password = overrides.password ?? TEST_PASSWORD;
+  const user = await prisma.user.update({
+    where: { id: doctor.id },
+    data: { passwordHash: await hashPassword(password) },
+  });
+  return { user, password };
+}
+
+export async function createAdmin(overrides: {
+  email?: string;
+  fullName?: string;
+  password?: string;
+} = {}) {
+  const suffix = uniqueSuffix();
+  const password = overrides.password ?? TEST_PASSWORD;
+  const user = await prisma.user.create({
+    data: {
+      role: $Enums.UserRole.ADMIN,
+      fullName: overrides.fullName ?? `Test Admin ${suffix}`,
+      email: overrides.email ?? `admin-${suffix}@example.test`,
+      passwordHash: await hashPassword(password),
+      emailVerifiedAt: new Date(),
+    },
+  });
+  return { user, password };
+}
+
+export async function createStaff(overrides: {
+  email?: string;
+  fullName?: string;
+  password?: string;
+} = {}) {
+  const suffix = uniqueSuffix();
+  const password = overrides.password ?? TEST_PASSWORD;
+  const user = await prisma.user.create({
+    data: {
+      role: $Enums.UserRole.STAFF,
+      fullName: overrides.fullName ?? `Test Staff ${suffix}`,
+      email: overrides.email ?? `staff-${suffix}@example.test`,
+      passwordHash: await hashPassword(password),
+      emailVerifiedAt: new Date(),
+    },
+  });
+  return { user, password };
 }
 
 export function createSlot(
