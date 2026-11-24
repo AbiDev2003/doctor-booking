@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../lib/prisma.js";
+import { getRequestId } from "../middleware/requestId.js";
 
 export const healthRouter = Router();
 
@@ -9,6 +10,6 @@ healthRouter.get("/", async (req, res) => {
     res.json({ status: "ok", db: "up" });
   } catch (err) {
     req.log.error({ err }, "health check failed: database unreachable");
-    res.status(503).json({ db: "down" });
+    res.status(503).json({ db: "down", requestId: getRequestId(res) });
   }
 });
