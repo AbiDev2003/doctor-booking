@@ -138,9 +138,11 @@ async function refreshSession(): Promise<boolean> {
 
 async function request<T>(path: string, init?: RequestInit, allowRefresh = true): Promise<T> {
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     ...((init?.headers as Record<string, string> | undefined) ?? {}),
   };
+  if (!(init?.body instanceof FormData) && !("Content-Type" in headers) && !("content-type" in headers)) {
+    headers["Content-Type"] = "application/json";
+  }
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`;
   }
@@ -362,6 +364,7 @@ export interface PublicDoctor {
   specialization: string | null;
   /** Paise, with the Clinic default applied server-side (§3.2). */
   consultationFee: number;
+  profileImageUrl: string | null;
 }
 
 export interface PublicClinicResult {
@@ -420,6 +423,7 @@ export interface DoctorDetail {
   clinicAssociation: string | null;
   specialization: string | null;
   consultationFee: number | null;
+  profileImageUrl: string | null;
   isBookable: boolean;
   createdAt: string;
 }
@@ -448,6 +452,19 @@ export function apiUpdateDoctor(
   >,
 ): Promise<{ verificationStatus: DoctorVerificationStatus }> {
   return request(`/doctors/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function apiUploadDoctorProfileImage(
+  id: string,
+  file: File,
+): Promise<{ message: string; profileImageUrl: string }> {
+  const form = new FormData();
+  form.append("image", file);
+  return request(`/doctors/${encodeURIComponent(id)}/profile-image`, { method: "POST", body: form });
+}
+
+export function apiDeleteDoctorProfileImage(id: string): Promise<{ message: string; profileImageUrl: null }> {
+  return request(`/doctors/${encodeURIComponent(id)}/profile-image`, { method: "DELETE" });
 }
 
 export interface TodayQueueEntry {

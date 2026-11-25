@@ -419,6 +419,7 @@ interface DoctorRow {
     readonly clinicAssociation: string | null;
     readonly specialization: string | null;
     readonly consultationFee: number | null;
+    readonly profileImageUrl: string | null;
   } | null;
 }
 
@@ -450,6 +451,7 @@ function toDoctorDto(row: DoctorRow) {
     clinicAssociation: profile.clinicAssociation,
     specialization: profile.specialization,
     consultationFee: profile.consultationFee,
+    profileImageUrl: profile.profileImageUrl,
     isBookable: isBookable(profile),
     createdAt: row.createdAt,
   };
@@ -869,6 +871,137 @@ export async function updateDoctorProfile(
   });
 
   return { verificationStatus: nextStatus };
+}
+
+export interface SetDoctorProfileImageInput extends RequestMeta {
+  readonly actor: ActorContext;
+  readonly doctorId: string;
+  readonly profileImageUrl: string;
+}
+
+export interface SetDoctorProfileImageResult {
+  readonly profileImageUrl: string;
+  readonly previousProfileImageUrl: string | null;
+}
+
+export async function setDoctorProfileImage(
+  input: SetDoctorProfileImageInput,
+): Promise<SetDoctorProfileImageResult> {
+  const target = await prisma.user.findUnique({
+    where: { id: input.doctorId },
+    select: { role: true, doctorProfile: true },
+  });
+  if (!target || target.role !== $Enums.UserRole.DOCTOR || !target.doctorProfile) {
+    throw new AppError(404, "DOCTOR_NOT_FOUND", "Doctor not found");
+  }
+
+  const profile = target.doctorProfile;
+  assertDoctorAction(profile, "EDIT_PROFILE", input.actor);
+
+  const previousProfileImageUrl = profile.profileImageUrl ?? null;
+  if (previousProfileImageUrl === input.profileImageUrl) {
+    return { profileImageUrl: input.profileImageUrl, previousProfileImageUrl };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.doctorProfile.updateMany({
+      where: {
+        userId: input.doctorId,
+        verificationStatus: { notIn: [S.ARCHIVED, S.REJECTED] },
+      },
+      data: { profileImageUrl: input.profileImageUrl },
+    });
+    if (updated.count !== 1) {
+      const current = await tx.doctorProfile.findUnique({
+        where: { userId: input.doctorId },
+        select: { verificationStatus: true },
+      });
+      if (current?.verificationStatus === S.ARCHIVED) {
+        throw new AppError(409, "DOCTOR_ARCHIVED", "This doctor is archived. Un-archive it first.");
+      }
+      if (current?.verificationStatus === S.REJECTED) {
+        throw new AppError(409, "DOCTOR_REJECTED", "This doctor was rejected. A new invitation is required.");
+      }
+      throw new AppError(404, "DOCTOR_NOT_FOUND", "Doctor not found");
+    }
+
+    await writeAudit(tx, {
+      action: "DOCTOR_PROFILE_IMAGE_UPDATED",
+      targetType: "doctor",
+      targetId: input.doctorId,
+      actor: input.actor,
+      before: { profileImageUrl: previousProfileImageUrl },
+      after: { profileImageUrl: input.profileImageUrl },
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+
+    await writeDoctorHistory(tx, {
+      doctorId: input.doctorId,
+      eventType: "PROFILE_IMAGE_UPDATED",
+      actor: input.actor,
+      metadata: { before: { profileImageUrl: previousProfileImageUrl }, after: { profileImageUrl: input.profileImageUrl } },
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+  });
+
+  return { profileImageUrl: input.profileImageUrl, previousProfileImageUrl };
+}
+
+export async function clearDoctorProfileImage(
+  input: Omit<SetDoctorProfileImageInput, "profileImageUrl">,
+): Promise<{ previousProfileImageUrl: string | null }> {
+  const target = await prisma.user.findUnique({
+    where: { id: input.doctorId },
+    select: { role: true, doctorProfile: true },
+  });
+  if (!target || target.role !== $Enums.UserRole.DOCTOR || !target.doctorProfile) {
+    throw new AppError(404, "DOCTOR_NOT_FOUND", "Doctor not found");
+  }
+
+  const profile = target.doctorProfile;
+  assertDoctorAction(profile, "EDIT_PROFILE", input.actor);
+
+  const previousProfileImageUrl = profile.profileImageUrl ?? null;
+  if (!previousProfileImageUrl) {
+    return { previousProfileImageUrl: null };
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const updated = await tx.doctorProfile.updateMany({
+      where: {
+        userId: input.doctorId,
+        verificationStatus: { notIn: [S.ARCHIVED, S.REJECTED] },
+      },
+      data: { profileImageUrl: null },
+    });
+    if (updated.count !== 1) {
+      throw new AppError(409, "DOCTOR_NOT_FOUND", "Doctor not found");
+    }
+
+    await writeAudit(tx, {
+      action: "DOCTOR_PROFILE_IMAGE_REMOVED",
+      targetType: "doctor",
+      targetId: input.doctorId,
+      actor: input.actor,
+      before: { profileImageUrl: previousProfileImageUrl },
+      after: { profileImageUrl: null },
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+
+    await writeDoctorHistory(tx, {
+      doctorId: input.doctorId,
+      eventType: "PROFILE_IMAGE_REMOVED",
+      actor: input.actor,
+      metadata: { before: { profileImageUrl: previousProfileImageUrl }, after: { profileImageUrl: null } },
+      ip: input.ip ?? null,
+      requestId: input.requestId ?? null,
+    });
+  });
+
+  return { previousProfileImageUrl };
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,7 +1,7 @@
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CalendarDays } from "lucide-react"
+import { CalendarClock, CalendarDays, IndianRupee } from "lucide-react"
 import {
   apiCancelAppointment,
   apiCancellationPreview,
@@ -12,11 +12,10 @@ import type { AppointmentScope, PatientAppointment } from "@/lib/api"
 import { formatPaise } from "@/lib/money"
 import { formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge"
-import { EmptyState, PageError, PageLoading } from "@/components/async-state"
+import { PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Dialog,
@@ -28,13 +27,6 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
-/**
- * §27's appointment list (Day 30): upcoming and past, with the two actions a
- * patient may take — cancel and reschedule. Which action is open is decided by
- * the server (`canCancel`/`canReschedule`) from the same rules the cancel and
- * reschedule services enforce, so the buttons and the transaction cannot
- * disagree about the §8.5 cutoff or the §12 waiver.
- */
 export default function Appointments() {
   const location = useLocation()
   const [cancelId, setCancelId] = useState<string | null>(null)
@@ -43,31 +35,38 @@ export default function Appointments() {
   )
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Your appointments</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Cancel before the clinic cutoff for a full refund. Rescheduling keeps the same doctor.
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Appointments</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Your appointments</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+          View upcoming and past visits. You can cancel before the clinic cutoff or reschedule with the same doctor when available.
         </p>
-      </div>
+      </section>
 
       {notice !== null && (
-        <Alert>
+        <Alert className="border-blue-100 bg-blue-50/60">
           <CalendarDays />
-          <AlertTitle>Done</AlertTitle>
+          <AlertTitle>Update</AlertTitle>
           <AlertDescription>{notice}</AlertDescription>
         </Alert>
       )}
 
-      <Tabs defaultValue="upcoming" onValueChange={() => setNotice(null)}>
-        <TabsList>
-          <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-          <TabsTrigger value="past">Past</TabsTrigger>
-        </TabsList>
-        <TabsContent value="upcoming" className="mt-4">
+      <Tabs defaultValue="upcoming" onValueChange={() => setNotice(null)} className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TabsList className="h-11 rounded-xl bg-slate-100 p-1">
+            <TabsTrigger value="upcoming" className="rounded-lg px-4">Upcoming</TabsTrigger>
+            <TabsTrigger value="past" className="rounded-lg px-4">Past</TabsTrigger>
+          </TabsList>
+          <Button asChild variant="outline" className="bg-white">
+            <Link to="/doctors">Book new appointment</Link>
+          </Button>
+        </div>
+
+        <TabsContent value="upcoming" className="mt-0">
           <AppointmentList scope="upcoming" onCancel={setCancelId} />
         </TabsContent>
-        <TabsContent value="past" className="mt-4">
+        <TabsContent value="past" className="mt-0">
           <AppointmentList scope="past" onCancel={setCancelId} />
         </TabsContent>
       </Tabs>
@@ -109,25 +108,29 @@ function AppointmentList({
 
   if (data.length === 0) {
     return (
-      <EmptyState
-        title={scope === "upcoming" ? "No upcoming appointments" : "No past appointments yet"}
-        description={
-          scope === "upcoming"
+      <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+        <div className="mx-auto inline-flex size-14 items-center justify-center rounded-2xl bg-blue-50 text-primary">
+          <CalendarDays className="size-6" aria-hidden="true" />
+        </div>
+        <p className="mt-4 text-lg font-semibold text-slate-900">
+          {scope === "upcoming" ? "No upcoming appointments" : "No past appointments yet"}
+        </p>
+        <p className="mt-2 text-sm text-slate-600">
+          {scope === "upcoming"
             ? "Book a consultation with a verified doctor."
-            : "Your completed and cancelled visits will appear here."
-        }
-      >
+            : "Your completed and cancelled visits will appear here."}
+        </p>
         {scope === "upcoming" && (
-          <Button asChild size="sm">
+          <Button asChild className="mt-5">
             <Link to="/doctors">Find a doctor</Link>
           </Button>
         )}
-      </EmptyState>
+      </div>
     )
   }
 
   return (
-    <ul className="space-y-3">
+    <ul className="space-y-4">
       {data.map((appointment) => (
         <li key={appointment.id}>
           <AppointmentCard appointment={appointment} onCancel={onCancel} />
@@ -147,46 +150,60 @@ function AppointmentCard({
   const showActions = appointment.canCancel || appointment.canReschedule
 
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="font-semibold">{appointment.doctorName}</h2>
-            <AppointmentStatusBadge status={appointment.status} />
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {formatSlotDate(appointment.slotDate)} · {formatTimeRange(appointment.startTime, appointment.endTime)}
-          </p>
-          <p className="text-sm">{formatPaise(appointment.feeAmount, "INR")}</p>
-          {appointment.clinicCaused && (
-            <p className="text-sm text-muted-foreground">
-              The clinic changed this booking — you can cancel any time before it starts.
-            </p>
-          )}
-          {!appointment.canCancel && appointment.cancelBlockedReason !== null && appointment.status === "CONFIRMED" && (
-            <p className="text-sm text-muted-foreground">{appointment.cancelBlockedReason}</p>
-          )}
-        </div>
+    <Card className="rounded-3xl border-slate-200 shadow-sm">
+      <CardContent className="p-5 sm:p-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold text-slate-950">{appointment.doctorName}</h2>
+              <AppointmentStatusBadge status={appointment.status} />
+            </div>
 
-        {showActions && (
-          <>
-            <Separator className="sm:hidden" />
-            <div className="flex flex-wrap gap-2">
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <Meta icon={<CalendarDays className="size-4" />} label="Date" value={formatSlotDate(appointment.slotDate)} />
+              <Meta icon={<CalendarClock className="size-4" />} label="Time" value={formatTimeRange(appointment.startTime, appointment.endTime)} />
+              <Meta icon={<IndianRupee className="size-4" />} label="Fee" value={formatPaise(appointment.feeAmount, "INR")} />
+            </div>
+
+            {appointment.clinicCaused && (
+              <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-100">
+                The clinic changed this booking — you can cancel any time before it starts.
+              </p>
+            )}
+            {!appointment.canCancel && appointment.cancelBlockedReason !== null && appointment.status === "CONFIRMED" && (
+              <p className="mt-4 text-sm text-slate-500">{appointment.cancelBlockedReason}</p>
+            )}
+          </div>
+
+          {showActions && (
+            <div className="flex flex-wrap gap-2 lg:justify-end">
               {appointment.canReschedule && (
-                <Button asChild variant="outline" size="sm">
+                <Button asChild variant="outline" className="bg-white">
                   <Link to={`/patient/appointments/${appointment.id}/reschedule`}>Reschedule</Link>
                 </Button>
               )}
               {appointment.canCancel && (
-                <Button variant="outline" size="sm" onClick={() => onCancel(appointment.id)}>
+                <Button variant="outline" className="border-red-200 bg-white text-red-700 hover:bg-red-50 hover:text-red-800" onClick={() => onCancel(appointment.id)}>
                   Cancel
                 </Button>
               )}
             </div>
-          </>
-        )}
+          )}
+        </div>
       </CardContent>
     </Card>
+  )
+}
+
+function Meta({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-slate-50 px-4 py-3">
+      <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+        <span className="text-primary">{icon}</span>
+        {label}
+      </div>
+      <p className="mt-1 text-sm font-medium text-slate-900">{value}</p>
+    </div>
   )
 }
 
@@ -221,7 +238,7 @@ function CancelDialog({
 
   return (
     <Dialog open={appointmentId !== null} onOpenChange={(open) => (!open ? onClose() : undefined)}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Cancel this appointment?</DialogTitle>
           <DialogDescription>This cannot be undone. You can book another slot afterwards.</DialogDescription>
@@ -243,7 +260,7 @@ function CancelDialog({
         )}
 
         {preview.data !== undefined && (
-          <div className="space-y-2 text-sm">
+          <div className="space-y-3 text-sm">
             {!preview.data.canCancel && preview.data.cancelBlockedReason !== null && (
               <Alert variant="destructive">
                 <AlertTitle>Cancellation is closed</AlertTitle>
@@ -252,11 +269,11 @@ function CancelDialog({
             )}
 
             {preview.data.canCancel && (
-              <>
+              <div className="rounded-2xl bg-slate-50 p-4 text-slate-700">
                 {preview.data.refundAmountPaise > 0 ? (
                   <p>
                     You will be refunded{" "}
-                    <strong>{formatPaise(preview.data.refundAmountPaise, "INR")}</strong>
+                    <strong className="text-slate-950">{formatPaise(preview.data.refundAmountPaise, "INR")}</strong>
                     {preview.data.refundSettlement === "desk"
                       ? " at the clinic desk (cash or UPI)."
                       : " automatically to your original payment method."}
@@ -266,7 +283,7 @@ function CancelDialog({
                 ) : (
                   <p>This booking has no refundable payment.</p>
                 )}
-              </>
+              </div>
             )}
 
             {cancelError !== undefined && <p className="text-destructive">{cancelError}</p>}

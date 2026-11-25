@@ -7,22 +7,14 @@ import { formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
 import { formatPaise } from "@/lib/money"
 import { AppointmentActions } from "@/components/staff/appointment-actions"
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge"
-import { EmptyState, PageError, PageLoading } from "@/components/async-state"
+import { PageError, PageLoading } from "@/components/async-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 
-/**
- * §29's front-desk day view (Day 32): every doctor's slots, the live queue in
- * each, and the attendance/payment actions the server says are open.
- *
- * A date picker is included even though the tab is "Today": the clinic day is
- * the server's timezone, and the desk often plans tomorrow while the counter is
- * quiet. Omitting the date asks the server for its own today.
- */
 export default function Today() {
   const [pickedDate, setPickedDate] = useState<string | null>(null)
 
@@ -54,39 +46,43 @@ export default function Today() {
   )
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Front desk</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {data.date} — {appointments} booking{appointments === 1 ? "" : "s"} across {data.slots.length} slot
-            {data.slots.length === 1 ? "" : "s"} · {arrived} checked in · {unpaid} with money outstanding.
-          </p>
-        </div>
-        <div className="flex items-end gap-2">
-          <div className="space-y-1">
-            <Label htmlFor="desk-date">Clinic date</Label>
-            <Input
-              id="desk-date"
-              type="date"
-              className="h-9"
-              value={pickedDate ?? data.date}
-              onChange={(event) => setPickedDate(event.target.value === "" ? null : event.target.value)}
-            />
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Front desk</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Today’s desk</h1>
+            <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+              {formatSlotDate(data.date)} — {appointments} booking{appointments === 1 ? "" : "s"} across {data.slots.length} slot
+              {data.slots.length === 1 ? "" : "s"}, {arrived} checked in, {unpaid} with money outstanding.
+            </p>
           </div>
-          <Button variant="outline" onClick={() => setPickedDate(null)} disabled={pickedDate === null}>
-            Today
-          </Button>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="space-y-2">
+              <Label htmlFor="desk-date" className="text-slate-700">Clinic date</Label>
+              <Input
+                id="desk-date"
+                type="date"
+                className="h-10 w-auto bg-white"
+                value={pickedDate ?? data.date}
+                onChange={(event) => setPickedDate(event.target.value === "" ? null : event.target.value)}
+              />
+            </div>
+            <Button variant="outline" className="bg-white" onClick={() => setPickedDate(null)} disabled={pickedDate === null}>
+              Today
+            </Button>
+          </div>
         </div>
-      </div>
+      </section>
 
       {data.slots.length === 0 ? (
-        <EmptyState
-          title="No slots on this date"
-          description="The weekly template produced no windows, or they are all outside the booking horizon."
-        >
-          <CalendarDays className="size-4" />
-        </EmptyState>
+        <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-6 py-14 text-center">
+          <div className="mx-auto inline-flex size-14 items-center justify-center rounded-2xl bg-blue-50 text-primary">
+            <CalendarDays className="size-6" aria-hidden="true" />
+          </div>
+          <p className="mt-4 text-lg font-semibold text-slate-900">No slots on this date</p>
+          <p className="mt-2 text-sm text-slate-600">The weekly template produced no windows, or they are outside the booking horizon.</p>
+        </div>
       ) : (
         <div className="space-y-4">
           {data.slots.map((slot) => (
@@ -102,55 +98,57 @@ function SlotCard({ slot }: { slot: DeskSlotQueue }) {
   const seats = `${slot.bookedCount}/${slot.maxPatients}`
 
   return (
-    <Card>
-      <CardHeader className="gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="flex flex-wrap items-center gap-2">
-            {slot.doctorName}
-            <span className="text-sm font-normal text-muted-foreground">
+    <Card className="rounded-3xl border-slate-200 shadow-sm">
+      <CardHeader className="gap-3 pb-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="text-xl text-slate-950">{slot.doctorName}</CardTitle>
+            <CardDescription className="mt-1">
               {formatSlotDate(slot.slotDate)} · {formatTimeRange(slot.startTime, slot.endTime)}
-            </span>
-          </CardTitle>
+            </CardDescription>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             {slot.isDisabled && <Badge variant="destructive">Disabled</Badge>}
-            <Badge variant={slot.bookedCount >= slot.maxPatients ? "secondary" : "outline"}>
-              <Users className="size-3" /> {seats} seats
+            <Badge variant={slot.bookedCount >= slot.maxPatients ? "secondary" : "outline"} className="gap-1">
+              <Users className="size-3" aria-hidden="true" /> {seats} seats
             </Badge>
           </div>
         </div>
       </CardHeader>
       <CardContent>
         {slot.appointments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No bookings in this window.</p>
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 px-4 py-6 text-center text-sm text-slate-500">
+            No bookings in this window.
+          </div>
         ) : (
           <ol className="space-y-3">
             {slot.appointments.map((appointment, index) => (
               <li key={appointment.id}>
                 {index > 0 && <Separator className="mb-3" />}
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="space-y-1">
+                <div className="flex flex-col gap-4 rounded-2xl bg-slate-50/50 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{appointment.patient.fullName}</span>
+                      <span className="font-medium text-slate-950">{appointment.patient.fullName}</span>
                       <AppointmentStatusBadge status={appointment.status} />
                       {appointment.patient.isProvisional && <Badge variant="outline">Walk-in</Badge>}
                     </div>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="text-sm text-slate-600">
                       {appointment.patient.phone}
                       {appointment.patient.email !== null ? ` · ${appointment.patient.email}` : ""}
                     </p>
-                    <p className="text-sm">
+                    <p className="text-sm text-slate-700">
                       Fee {formatPaise(appointment.feeAmount, "INR")} ·{" "}
                       {appointment.payment.status === "PENDING" ? (
-                        <span className="text-destructive">
+                        <span className="font-medium text-destructive">
                           {formatPaise(appointment.payment.outstandingPaise, "INR")} outstanding
                         </span>
                       ) : appointment.payment.status === "PAID" ? (
-                        <span>
+                        <span className="text-slate-700">
                           {formatPaise(appointment.payment.paidPaise, "INR")} paid
                           {appointment.payment.method !== null ? ` (${appointment.payment.method})` : ""}
                         </span>
                       ) : (
-                        <span className="text-muted-foreground">Nothing to collect</span>
+                        <span className="text-slate-500">Nothing to collect</span>
                       )}
                     </p>
                   </div>

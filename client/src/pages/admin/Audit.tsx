@@ -5,10 +5,10 @@ import { formatSlotDate } from "@/lib/clinicDate"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
-/** §20's audit browser (Day 33): cursor-paged, filterable, ADMIN-only. */
 export default function Audit() {
   const [targetType, setTargetType] = useState("")
   const [targetId, setTargetId] = useState("")
@@ -35,42 +35,42 @@ export default function Audit() {
   const entries = audit.data?.pages.flatMap((page) => page.entries) ?? []
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Audit</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Every reason-bearing action, newest first. Filter by target to reconstruct one record's history.
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Audit</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Audit trail</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+          Every reason-bearing action, newest first. Filter by target to reconstruct one record’s history.
         </p>
-      </div>
+      </section>
 
-      <Card>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
         <CardHeader>
-          <CardTitle>Trail</CardTitle>
+          <CardTitle className="text-xl text-slate-950">Trail</CardTitle>
+          <CardDescription>Filter audit entries by target type, target ID, or action.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <form
-            className="flex flex-wrap items-end gap-2"
+            className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_auto_auto] xl:items-end"
             onSubmit={(event) => {
               event.preventDefault()
               setFilters({ targetType: targetType.trim(), targetId: targetId.trim(), action: action.trim() })
             }}
           >
-            <label className="space-y-1 text-sm">
-              <span className="text-muted-foreground">Target type</span>
-              <Input value={targetType} onChange={(event) => setTargetType(event.target.value)} placeholder="doctor" />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-muted-foreground">Target id</span>
-              <Input value={targetId} onChange={(event) => setTargetId(event.target.value)} placeholder="uuid" />
-            </label>
-            <label className="space-y-1 text-sm">
-              <span className="text-muted-foreground">Action</span>
-              <Input value={action} onChange={(event) => setAction(event.target.value)} placeholder="DOCTOR_VERIFIED" />
-            </label>
-            <Button type="submit" variant="outline">
-              Apply
-            </Button>
-            {(filters.targetType !== "" || filters.targetId !== "" || filters.action !== "") && (
+            <div className="space-y-2">
+              <Label htmlFor="audit-target-type">Target type</Label>
+              <Input id="audit-target-type" className="bg-white" value={targetType} onChange={(event) => setTargetType(event.target.value)} placeholder="doctor" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="audit-target-id">Target id</Label>
+              <Input id="audit-target-id" className="bg-white" value={targetId} onChange={(event) => setTargetId(event.target.value)} placeholder="uuid" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="audit-action">Action</Label>
+              <Input id="audit-action" className="bg-white" value={action} onChange={(event) => setAction(event.target.value)} placeholder="DOCTOR_VERIFIED" />
+            </div>
+            <Button type="submit" variant="outline" className="bg-white">Apply</Button>
+            {(filters.targetType !== "" || filters.targetId !== "" || filters.action !== "") ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -83,7 +83,7 @@ export default function Audit() {
               >
                 Clear
               </Button>
-            )}
+            ) : <div className="hidden xl:block" />}
           </form>
 
           {audit.isPending && <PageLoading label="Loading audit trail…" />}
@@ -97,24 +97,21 @@ export default function Audit() {
           {!audit.isPending && entries.length === 0 && <EmptyState title="No audit entries match" />}
 
           {entries.length > 0 && (
-            <ul className="divide-y">
+            <ul className="space-y-3">
               {entries.map((entry) => (
-                <li key={entry.id} className="space-y-1 py-3">
+                <li key={entry.id} className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{entry.action}</span>
-                    <Badge variant="outline">
-                      {entry.targetType} · {entry.targetId.slice(0, 8)}
-                    </Badge>
+                    <span className="font-medium text-slate-950">{entry.action}</span>
+                    <Badge variant="outline">{entry.targetType} · {entry.targetId.slice(0, 8)}</Badge>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    {entry.actorName} ({entry.actorRole ?? "system"}) ·{" "}
-                    {formatSlotDate(entry.createdAt.slice(0, 10))}
+                  <p className="mt-2 text-sm text-slate-600">
+                    {entry.actorName} ({entry.actorRole ?? "system"}) · {formatSlotDate(entry.createdAt.slice(0, 10))}
                     {entry.reason === null ? "" : ` · ${entry.reason}`}
                   </p>
                   {(entry.before !== null || entry.after !== null) && (
-                    <details className="text-xs">
-                      <summary className="cursor-pointer text-muted-foreground">Before / after</summary>
-                      <pre className="mt-2 overflow-x-auto rounded-md bg-muted p-3">
+                    <details className="mt-3 text-xs">
+                      <summary className="cursor-pointer text-slate-500 hover:text-slate-700">Before / after</summary>
+                      <pre className="mt-2 overflow-x-auto rounded-xl bg-white p-3 text-slate-700 ring-1 ring-slate-200">
                         {JSON.stringify({ before: entry.before, after: entry.after }, null, 2)}
                       </pre>
                     </details>
@@ -125,7 +122,7 @@ export default function Audit() {
           )}
 
           {audit.hasNextPage && (
-            <Button variant="outline" disabled={audit.isFetchingNextPage} onClick={() => void audit.fetchNextPage()}>
+            <Button variant="outline" className="bg-white" disabled={audit.isFetchingNextPage} onClick={() => void audit.fetchNextPage()}>
               {audit.isFetchingNextPage ? "Loading…" : "Load more"}
             </Button>
           )}

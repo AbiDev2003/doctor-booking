@@ -1,14 +1,20 @@
-import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { registerSchema, type RegisterInput } from "@shared/auth";
-import { PasswordInput } from "../components/password-input";
-import { apiRegister } from "../lib/api";
-import { applyApiErrors } from "../lib/formErrors";
+import { useState } from "react"
+import { Link } from "react-router-dom"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { registerSchema, type RegisterInput } from "@shared/auth"
+import { PasswordInput } from "../components/password-input"
+import { apiRegister } from "../lib/api"
+import { applyApiErrors } from "../lib/formErrors"
+import { AuthShell } from "@/components/auth/AuthShell"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 export default function Register() {
-  const [done, setDone] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [done, setDone] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
   const {
     register,
     handleSubmit,
@@ -18,109 +24,138 @@ export default function Register() {
   } = useForm<RegisterInput>({
     resolver: zodResolver(registerSchema),
     defaultValues: { fullName: "", email: "", phone: "", password: "" },
-  });
+  })
 
   const onSubmit = handleSubmit(async (values) => {
-    setFormError(null);
+    setFormError(null)
 
     try {
-      await apiRegister(values);
-      setDone(true);
+      await apiRegister(values)
+      setDone(true)
     } catch (err) {
-      // EMAIL/PHONE_ALREADY_EXISTS land on the field that caused them.
-      const message = applyApiErrors(err, setError);
-      setFormError(message ?? null);
+      const message = applyApiErrors(err, setError)
+      setFormError(message ?? null)
     }
-  });
+  })
 
   if (done) {
     return (
-      <main className="card">
-        <h1>Check your email</h1>
-        <p>
-          We sent a verification link to <strong>{getValues("email")}</strong>. Open it to activate your account.
-        </p>
-        <p className="hint">
-          The link expires in 15 minutes. Until you verify, you won&apos;t be able to book an appointment.
-        </p>
-      </main>
-    );
+      <AuthShell
+        title="Check your email"
+        description="We’ve sent you a verification link to activate your account."
+      >
+        <div className="space-y-4">
+          <Alert className="border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
+            <AlertDescription>
+              We sent a verification link to <strong>{getValues("email")}</strong>. Open it to activate your account.
+            </AlertDescription>
+          </Alert>
+          <p className="text-sm leading-6 text-slate-600">
+            The link expires in 15 minutes. Until you verify, you won&apos;t be able to book an appointment.
+          </p>
+          <Button asChild variant="outline" className="bg-white">
+            <Link to="/login">Back to sign in</Link>
+          </Button>
+        </div>
+      </AuthShell>
+    )
   }
 
   return (
-    <main className="card">
-      <h1>Create your account</h1>
+    <AuthShell
+      title="Create your account"
+      description="Register to book appointments and manage your care."
+    >
+      <form onSubmit={onSubmit} noValidate className="space-y-5">
+        <div className="space-y-2">
+          <Label htmlFor="fullName">Full name</Label>
+          <Input
+            id="fullName"
+            autoComplete="name"
+            className="bg-white"
+            aria-invalid={errors.fullName !== undefined}
+            aria-describedby={errors.fullName !== undefined ? "fullName-error" : undefined}
+            {...register("fullName")}
+          />
+          {errors.fullName?.message !== undefined && (
+            <p id="fullName-error" className="text-sm text-destructive" role="alert">
+              {errors.fullName.message}
+            </p>
+          )}
+        </div>
 
-      <form onSubmit={onSubmit} noValidate>
-        <label htmlFor="fullName">Full name</label>
-        <input
-          id="fullName"
-          autoComplete="name"
-          aria-invalid={errors.fullName !== undefined}
-          aria-describedby={errors.fullName !== undefined ? "fullName-error" : undefined}
-          {...register("fullName")}
-        />
-        {errors.fullName?.message !== undefined && (
-          <span id="fullName-error" className="field-error" role="alert">
-            {errors.fullName.message}
-          </span>
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            className="bg-white"
+            aria-invalid={errors.email !== undefined}
+            aria-describedby={errors.email !== undefined ? "email-error" : undefined}
+            {...register("email")}
+          />
+          {errors.email?.message !== undefined && (
+            <p id="email-error" className="text-sm text-destructive" role="alert">
+              {errors.email.message}
+            </p>
+          )}
+        </div>
 
-        <label htmlFor="email">Email</label>
-        <input
-          id="email"
-          type="email"
-          autoComplete="email"
-          aria-invalid={errors.email !== undefined}
-          aria-describedby={errors.email !== undefined ? "email-error" : undefined}
-          {...register("email")}
-        />
-        {errors.email?.message !== undefined && (
-          <span id="email-error" className="field-error" role="alert">
-            {errors.email.message}
-          </span>
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="phone">Phone</Label>
+          <Input
+            id="phone"
+            type="tel"
+            autoComplete="tel"
+            placeholder="9876543210"
+            className="bg-white"
+            aria-invalid={errors.phone !== undefined}
+            aria-describedby={errors.phone !== undefined ? "phone-error" : undefined}
+            {...register("phone")}
+          />
+          {errors.phone?.message !== undefined && (
+            <p id="phone-error" className="text-sm text-destructive" role="alert">
+              {errors.phone.message}
+            </p>
+          )}
+        </div>
 
-        <label htmlFor="phone">Phone</label>
-        <input
-          id="phone"
-          type="tel"
-          autoComplete="tel"
-          placeholder="9876543210"
-          aria-invalid={errors.phone !== undefined}
-          aria-describedby={errors.phone !== undefined ? "phone-error" : undefined}
-          {...register("phone")}
-        />
-        {errors.phone?.message !== undefined && (
-          <span id="phone-error" className="field-error" role="alert">
-            {errors.phone.message}
-          </span>
-        )}
-
-        <label htmlFor="password">Password</label>
-        <PasswordInput
-          id="password"
-          autoComplete="new-password"
-          aria-invalid={errors.password !== undefined}
-          aria-describedby={errors.password !== undefined ? "password-error" : undefined}
-          {...register("password")}
-        />
-        {errors.password?.message !== undefined && (
-          <span id="password-error" className="field-error" role="alert">
-            {errors.password.message}
-          </span>
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="password">Password</Label>
+          <PasswordInput
+            id="password"
+            autoComplete="new-password"
+            className="bg-white"
+            aria-invalid={errors.password !== undefined}
+            aria-describedby={errors.password !== undefined ? "password-error" : undefined}
+            {...register("password")}
+          />
+          {errors.password?.message !== undefined && (
+            <p id="password-error" className="text-sm text-destructive" role="alert">
+              {errors.password.message}
+            </p>
+          )}
+        </div>
 
         {formError !== null && (
-          <p className="form-error" role="alert">
-            {formError}
-          </p>
+          <Alert variant="destructive">
+            <AlertDescription>{formError}</AlertDescription>
+          </Alert>
         )}
 
-        <button type="submit" disabled={isSubmitting}>
+        <Button type="submit" className="w-full" disabled={isSubmitting}>
           {isSubmitting ? "Creating account…" : "Create account"}
-        </button>
+        </Button>
       </form>
-    </main>
-  );
+
+      <p className="mt-6 text-sm text-slate-600">
+        Already have an account?{" "}
+        <Link to="/login" className="font-medium text-primary hover:underline">
+          Sign in
+        </Link>
+        .
+      </p>
+    </AuthShell>
+  )
 }

@@ -68,7 +68,7 @@ const WEEKDAY_LABEL: Record<Weekday, string> = {
 }
 
 const SELECT_CLASS =
-  "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  "h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 function materializedNote(stats: MaterializeStats | null): string {
   if (stats === null) return ""
@@ -159,11 +159,12 @@ export function ScheduleEditor({
   const defaultDate = clinicToday(clinic.data.clinic.timezone)
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">{title}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-      </div>
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Schedule</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{title}</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">{description}</p>
+      </section>
 
       {notice !== null && (
         <Alert>
@@ -173,10 +174,10 @@ export function ScheduleEditor({
         </Alert>
       )}
 
-      <Tabs defaultValue="template">
-        <TabsList>
-          <TabsTrigger value="template">Weekly template</TabsTrigger>
-          <TabsTrigger value="timeoff">Time off</TabsTrigger>
+      <Tabs defaultValue="template" className="space-y-4">
+        <TabsList className="h-11 rounded-xl bg-slate-100 p-1">
+          <TabsTrigger value="template" className="rounded-lg px-4">Weekly template</TabsTrigger>
+          <TabsTrigger value="timeoff" className="rounded-lg px-4">Time off</TabsTrigger>
         </TabsList>
 
         <TabsContent value="template" className="mt-4 space-y-4">
@@ -202,15 +203,15 @@ export function ScheduleEditor({
                 const dayWindows = windows.filter((window) => window.weekday === day)
                 if (dayWindows.length === 0) return null
                 return (
-                  <Card key={day}>
-                    <CardHeader>
-                      <CardTitle>{WEEKDAY_LABEL[day]}</CardTitle>
+                  <Card key={day} className="rounded-3xl border-slate-200 shadow-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-lg text-slate-950">{WEEKDAY_LABEL[day]}</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-2">
                       {dayWindows.map((window) => (
                         <div
                           key={window.id}
-                          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"
+                          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3"
                         >
                           <div>
                             <p className="font-medium">{formatTimeRange(window.startTime, window.endTime)}</p>
@@ -342,7 +343,7 @@ function TimeOffList({
         {rows.map((row) => (
           <li
             key={row.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm"
           >
             <div>
               <p className="font-medium">

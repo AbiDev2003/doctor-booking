@@ -22,9 +22,11 @@ import { patientsRouter } from "./routes/patients.js";
 import { paymentsRouter } from "./routes/payments.js";
 import { auditRouter } from "./routes/audit.js";
 import { adminRouter } from "./routes/admin.js";
+import { ensureUploadDirs, UPLOADS_ROOT } from "./lib/uploads.js";
 
 export function createApp() {
   const app = express();
+  ensureUploadDirs();
 
   app.disable("x-powered-by");
 
@@ -109,6 +111,10 @@ export function createApp() {
   // purpose: it is the one surface with no auth middleware, and listing it
   // here makes that absence a visible exception rather than an accident.
   app.use("/api/v1/public", publicRouter);
+
+  // Local-dev profile image storage (v1). Files are written by doctor profile
+  // image endpoints and served as static assets.
+  app.use("/uploads", express.static(UPLOADS_ROOT));
 
   app.use(notFound);
   app.use(errorHandler);

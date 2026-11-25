@@ -1,19 +1,24 @@
-import { useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { loginSchema, type LoginInputShape } from "@shared/auth";
-import { PasswordInput } from "../components/password-input";
-import { apiLogin } from "../lib/api";
-import { applyApiErrors } from "../lib/formErrors";
-import { ROLE_HOMES } from "../lib/roleHome";
+import { useState } from "react"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
+import { useForm } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { loginSchema, type LoginInputShape } from "@shared/auth"
+import { PasswordInput } from "../components/password-input"
+import { apiLogin } from "../lib/api"
+import { applyApiErrors } from "../lib/formErrors"
+import { ROLE_HOMES } from "../lib/roleHome"
+import { AuthShell } from "@/components/auth/AuthShell"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 export default function Login() {
-  const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  const queryClient = useQueryClient();
-  const [formError, setFormError] = useState<string | null>(null);
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const queryClient = useQueryClient()
+  const [formError, setFormError] = useState<string | null>(null)
   const {
     register,
     handleSubmit,
@@ -22,78 +27,87 @@ export default function Login() {
   } = useForm<LoginInputShape>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
-  });
+  })
 
   const onSubmit = handleSubmit(async (values) => {
-    setFormError(null);
+    setFormError(null)
 
     try {
-      const session = await apiLogin(values);
-      // Refresh the session query BEFORE navigating so the destination's
-      // useSession sees the new sign-in rather than a cached "signed out".
-      await queryClient.invalidateQueries({ queryKey: ["me"] });
-      // Honour a returnTo from a booking redirect, but only a relative path —
-      // an absolute or protocol-relative URL would be an open redirect.
-      const returnTo = searchParams.get("returnTo");
-      const fallback = ROLE_HOMES[session.role];
-      const target = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : fallback;
-      navigate(target);
+      const session = await apiLogin(values)
+      await queryClient.invalidateQueries({ queryKey: ["me"] })
+      const returnTo = searchParams.get("returnTo")
+      const fallback = ROLE_HOMES[session.role]
+      const target = returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") ? returnTo : fallback
+      navigate(target)
     } catch (err) {
-      setFormError(applyApiErrors(err, setError) ?? null);
+      setFormError(applyApiErrors(err, setError) ?? null)
     }
-  });
+  })
 
   return (
-    <main className="card">
-      <h1>Sign in</h1>
+    <AuthShell
+      title="Sign in"
+      description="Access your appointments, payments, and account details."
+    >
+      <form onSubmit={onSubmit} noValidate className="space-y-5">
+        <div className="space-y-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            className="bg-white"
+            aria-invalid={errors.email !== undefined}
+            aria-describedby={errors.email !== undefined ? "email-error" : undefined}
+            {...register("email")}
+          />
+          {errors.email?.message !== undefined && (
+            <p id="email-error" className="text-sm text-destructive" role="alert">
+              {errors.email.message}
+            </p>
+          )}
+        </div>
 
-      <form onSubmit={onSubmit} noValidate>
-        <label htmlFor="email">Email</label>
-        <input
-          id="email"
-          type="email"
-          autoComplete="email"
-          aria-invalid={errors.email !== undefined}
-          aria-describedby={errors.email !== undefined ? "email-error" : undefined}
-          {...register("email")}
-        />
-        {errors.email?.message !== undefined && (
-          <span id="email-error" className="field-error" role="alert">
-            {errors.email.message}
-          </span>
-        )}
-
-        <label htmlFor="password">Password</label>
-        <PasswordInput
-          id="password"
-          autoComplete="current-password"
-          aria-invalid={errors.password !== undefined}
-          aria-describedby={errors.password !== undefined ? "password-error" : undefined}
-          {...register("password")}
-        />
-        {errors.password?.message !== undefined && (
-          <span id="password-error" className="field-error" role="alert">
-            {errors.password.message}
-          </span>
-        )}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="password">Password</Label>
+            <Link to="/forgot-password" className="text-sm font-medium text-primary hover:underline">
+              Forgot password?
+            </Link>
+          </div>
+          <PasswordInput
+            id="password"
+            autoComplete="current-password"
+            className="bg-white"
+            aria-invalid={errors.password !== undefined}
+            aria-describedby={errors.password !== undefined ? "password-error" : undefined}
+            {...register("password")}
+          />
+          {errors.password?.message !== undefined && (
+            <p id="password-error" className="text-sm text-destructive" role="alert">
+              {errors.password.message}
+            </p>
+          )}
+        </div>
 
         {formError !== null && (
-          <p className="form-error" role="alert">
-            {formError}
-          </p>
+          <Alert variant="destructive">
+            <AlertDescription>{formError}</AlertDescription>
+          </Alert>
         )}
 
-        <button type="submit" disabled={isSubmitting}>
+        <Button type="submit" className="w-full" disabled={isSubmitting}>
           {isSubmitting ? "Signing in…" : "Sign in"}
-        </button>
+        </Button>
       </form>
 
-      <p className="hint">
-        <Link to="/forgot-password">Forgot your password?</Link>
+      <p className="mt-6 text-sm text-slate-600">
+        No account yet?{" "}
+        <Link to="/register" className="font-medium text-primary hover:underline">
+          Create one
+        </Link>
+        .
       </p>
-      <p className="hint">
-        No account yet? <Link to="/register">Create one</Link>.
-      </p>
-    </main>
-  );
+    </AuthShell>
+  )
 }

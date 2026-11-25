@@ -17,7 +17,7 @@ import { PendingInvitationsCard } from "@/components/staff/pending-invitations"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -29,12 +29,6 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-/**
- * §29's Staff tab (ADMIN-only). Two lists, one story: accepted STAFF accounts
- * and unclaimed staff invitations. Invitations are not accounts — the `User`
- * row only appears when the recipient uses the one-hour claim link — so they
- * stay in their own table with resend/revoke beside them.
- */
 export default function Staff() {
   const queryClient = useQueryClient()
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -50,27 +44,31 @@ export default function Staff() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Staff</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Front-desk accounts and the invitations still waiting to be claimed.
-          </p>
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Staff</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Staff accounts</h1>
+            <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+              Front-desk accounts and invitations still waiting to be claimed.
+            </p>
+          </div>
+          <Button onClick={() => setInviteOpen(true)}>Invite staff</Button>
         </div>
-        <Button onClick={() => setInviteOpen(true)}>Invite staff</Button>
-      </div>
+      </section>
 
       {notice !== null && (
-        <Alert>
+        <Alert className="rounded-2xl border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
           <AlertTitle>Done</AlertTitle>
           <AlertDescription>{notice}</AlertDescription>
         </Alert>
       )}
 
-      <Card>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
         <CardHeader>
-          <CardTitle>Front-desk accounts</CardTitle>
+          <CardTitle className="text-xl text-slate-950">Front-desk accounts</CardTitle>
+          <CardDescription>Active and deactivated staff accounts.</CardDescription>
         </CardHeader>
         <CardContent>
           {staff.isPending && <PageLoading label="Loading staff…" />}
@@ -86,35 +84,27 @@ export default function Staff() {
           )}
           {staff.data !== undefined && staff.data.staff.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b text-left text-muted-foreground">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead className="border-b border-slate-200 text-left text-slate-500">
                   <tr>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Staff member
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Status
-                    </th>
-                    <th scope="col" className="py-2 font-medium">
-                      Joined
-                    </th>
+                    <th scope="col" className="py-3 pr-3 font-medium">Staff member</th>
+                    <th scope="col" className="py-3 pr-3 font-medium">Status</th>
+                    <th scope="col" className="py-3 font-medium">Joined</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y">
+                <tbody className="divide-y divide-slate-100">
                   {staff.data.staff.map((member) => (
-                    <tr key={member.id}>
+                    <tr key={member.id} className="align-top">
                       <td className="py-3 pr-3">
-                        <p className="font-medium">{member.fullName}</p>
-                        <p className="text-xs text-muted-foreground">{member.email ?? "No email on file"}</p>
+                        <p className="font-medium text-slate-900">{member.fullName}</p>
+                        <p className="text-xs text-slate-500">{member.email ?? "No email on file"}</p>
                       </td>
                       <td className="py-3 pr-3">
                         <Badge variant={member.isDeactivated ? "destructive" : "outline"}>
                           {member.isDeactivated ? "deactivated" : "active"}
                         </Badge>
                       </td>
-                      <td className="py-3 text-muted-foreground">
-                        {formatSlotDate(member.createdAt.slice(0, 10))}
-                      </td>
+                      <td className="py-3 text-slate-600">{formatSlotDate(member.createdAt.slice(0, 10))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -188,13 +178,12 @@ function InviteStaffDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <form onSubmit={submit} className="space-y-4" noValidate>
           <DialogHeader>
             <DialogTitle>Invite front-desk staff</DialogTitle>
             <DialogDescription>
-              Staff can run the desk but cannot reach the admin dashboard. The account is created when they claim the
-              link.
+              Staff can run the desk but cannot reach the admin dashboard. The account is created when they claim the link.
             </DialogDescription>
           </DialogHeader>
 
@@ -202,12 +191,13 @@ function InviteStaffDialog({
             <Label htmlFor="staff-full-name">Full name</Label>
             <Input
               id="staff-full-name"
+              className="bg-white"
               aria-invalid={errors.fullName !== undefined}
               aria-describedby={errors.fullName !== undefined ? "staff-full-name-error" : undefined}
               {...register("fullName")}
             />
             {errors.fullName?.message !== undefined && (
-              <p id="staff-full-name-error" className="text-xs text-destructive" role="alert">
+              <p id="staff-full-name-error" className="text-sm text-destructive" role="alert">
                 {errors.fullName.message}
               </p>
             )}
@@ -217,12 +207,13 @@ function InviteStaffDialog({
             <Input
               id="staff-email"
               type="email"
+              className="bg-white"
               aria-invalid={errors.email !== undefined}
               aria-describedby={errors.email !== undefined ? "staff-email-error" : undefined}
               {...register("email")}
             />
             {errors.email?.message !== undefined && (
-              <p id="staff-email-error" className="text-xs text-destructive" role="alert">
+              <p id="staff-email-error" className="text-sm text-destructive" role="alert">
                 {errors.email.message}
               </p>
             )}
@@ -236,9 +227,7 @@ function InviteStaffDialog({
           )}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={isSubmitting || invite.isPending}>
               {invite.isPending ? "Inviting…" : "Send invite"}
             </Button>

@@ -4,12 +4,8 @@ import { apiAdminOverview, ApiError } from "@/lib/api"
 import { formatPaise } from "@/lib/money"
 import { PageError, PageLoading } from "@/components/async-state"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
-/**
- * §29's admin landing page: today at a glance, plus the two failure queues that
- * need a human (failed gateway refunds, failed notifications).
- */
 export default function Overview() {
   const overview = useQuery({ queryKey: ["admin", "overview"], queryFn: ({ signal }) => apiAdminOverview(signal) })
 
@@ -25,6 +21,16 @@ export default function Overview() {
   }
 
   const data = overview.data.overview
+  const statCards = [
+    { label: "Collected today", value: formatPaise(data.money.collectedPaise, data.currency) },
+    { label: "Outstanding today", value: formatPaise(data.money.outstandingPaise, data.currency) },
+    { label: "Patients", value: String(data.patients.total), hint: `${data.patients.provisional} provisional` },
+    {
+      label: "Verified doctors",
+      value: String(data.doctors.verified),
+      hint: `${data.doctors.pendingVerification} pending · ${data.doctors.suspended} suspended`,
+    },
+  ]
   const appointmentRows = [
     ["Confirmed", data.appointments.confirmed],
     ["Arrived", data.appointments.arrived],
@@ -35,50 +41,56 @@ export default function Overview() {
   ] as const
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Overview</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Admin</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Clinic overview</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
           {data.date} · {data.appointments.total} appointment{data.appointments.total === 1 ? "" : "s"} today.
         </p>
+      </section>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {statCards.map((card) => (
+          <Card key={card.label} className="rounded-3xl border-slate-200 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-slate-500">{card.label}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-3xl font-semibold tracking-tight text-slate-950">{card.value}</p>
+              {"hint" in card && card.hint && <p className="mt-1 text-xs text-slate-500">{card.hint}</p>}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="Collected today" value={formatPaise(data.money.collectedPaise, data.currency)} />
-        <Stat label="Outstanding today" value={formatPaise(data.money.outstandingPaise, data.currency)} />
-        <Stat label="Patients" value={String(data.patients.total)} hint={`${data.patients.provisional} provisional`} />
-        <Stat
-          label="Doctors"
-          value={String(data.doctors.verified)}
-          hint={`${data.doctors.pendingVerification} pending · ${data.doctors.suspended} suspended`}
-        />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Today's appointments</CardTitle>
+            <CardTitle className="text-xl text-slate-950">Today&apos;s appointments</CardTitle>
+            <CardDescription>Current-day appointment status breakdown.</CardDescription>
           </CardHeader>
           <CardContent>
-            <dl className="grid grid-cols-2 gap-3 text-sm">
+            <dl className="grid gap-2 sm:grid-cols-2">
               {appointmentRows.map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between gap-2 border-b py-1 last:border-0">
-                  <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="font-medium">{value}</dd>
+                <div key={label} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm">
+                  <dt className="text-slate-600">{label}</dt>
+                  <dd className="font-semibold text-slate-950">{value}</dd>
                 </div>
               ))}
             </dl>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Needs attention</CardTitle>
+            <CardTitle className="text-xl text-slate-950">Needs attention</CardTitle>
+            <CardDescription>Queues that may need admin action.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <QueueRow to="/admin/payments" label="Failed gateway refunds" count={data.refunds.failed} />
+          <CardContent className="space-y-3">
+            <QueueRow to="/admin/payments?tab=refunds" label="Failed gateway refunds" count={data.refunds.failed} />
             <QueueRow to="/admin/payments?tab=refunds" label="Pending refunds" count={data.refunds.pending} />
-            <QueueRow to="/admin/notifications" label="Failed notifications" count={data.notifications.failed} />
+            <QueueRow to="/admin/notifications?status=FAILED" label="Failed notifications" count={data.notifications.failed} />
             <QueueRow to="/admin/notifications" label="Pending notifications" count={data.notifications.pending} />
             <QueueRow to="/admin/doctors" label="Doctors awaiting verification" count={data.doctors.pendingVerification} />
           </CardContent>
@@ -88,22 +100,13 @@ export default function Overview() {
   )
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <p className="text-sm text-muted-foreground">{label}</p>
-        <p className="mt-1 text-2xl font-semibold">{value}</p>
-        {hint !== undefined && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
-      </CardContent>
-    </Card>
-  )
-}
-
 function QueueRow({ to, label, count }: { to: string; label: string; count: number }) {
   return (
-    <Link to={to} className="flex items-center justify-between gap-3 rounded-md px-1 py-1 hover:bg-muted">
-      <span>{label}</span>
+    <Link
+      to={to}
+      className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm hover:bg-slate-100/80"
+    >
+      <span className="font-medium text-slate-900">{label}</span>
       <Badge variant={count > 0 ? "destructive" : "outline"}>{count}</Badge>
     </Link>
   )
