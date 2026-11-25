@@ -7,6 +7,7 @@ import ForgotPassword from "./pages/ForgotPassword.tsx";
 import ResetPassword from "./pages/ResetPassword.tsx";
 import ClaimAccount from "./pages/ClaimAccount.tsx";
 import Profile from "./pages/Profile.tsx";
+import NotFound from "./pages/NotFound.tsx";
 import PublicLayout from "./layouts/PublicLayout.tsx";
 import Home from "./pages/Home.tsx";
 import Doctors from "./pages/Doctors.tsx";
@@ -62,6 +63,7 @@ export default function App() {
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/verify-email-change" element={<VerifyEmailChange />} />
         <Route path="/claim-account" element={<ClaimAccount />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
 
       {/* §28 doctor dashboard (Day 14). */}
@@ -70,6 +72,7 @@ export default function App() {
         <Route path="queue" element={<Queue />} />
         <Route path="profile" element={<ProfileForm />} />
         <Route path="schedule" element={<Schedule />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
 
       {/* §27 patient dashboard (Day 30). */}
@@ -78,6 +81,7 @@ export default function App() {
         <Route path="appointments" element={<Appointments />} />
         <Route path="appointments/:id/reschedule" element={<Reschedule />} />
         <Route path="payments" element={<Payments />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
 
       {/* §16/§29 staff front desk (Day 32). */}
@@ -88,6 +92,7 @@ export default function App() {
         <Route path="payments" element={<StaffPayments />} />
         <Route path="schedule" element={<StaffSchedule />} />
         <Route path="doctors" element={<StaffDoctors />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
 
       {/* §29 admin dashboard (Day 33). STAFF are redirected to the desk. */}
@@ -102,13 +107,11 @@ export default function App() {
         <Route path="notifications" element={<AdminNotifications />} />
         <Route path="audit" element={<AdminAudit />} />
         <Route path="settings" element={<AdminSettings />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
 
       {/* Account flow (shared across roles), standalone. */}
       <Route path="/profile" element={<Profile />} />
-
-      {/* Unknown paths land on the storefront, top of the funnel. */}
-      <Route path="*" element={<Home />} />
     </Routes>
   );
 }
