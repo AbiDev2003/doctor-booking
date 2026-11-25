@@ -18,23 +18,13 @@ import { applyApiErrors } from "@/lib/formErrors"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
 const SELECT_CLASS =
-  "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  "h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
-/**
- * §16/§29's desk booking surface (Day 32): create-or-find a provisional
- * patient by phone, then claim a bookable slot.
- *
- * Available slots come from the same public availability read model patients
- * use, so the desk cannot pick a disabled, started or full window from a stale
- * list — and the service re-checks inside the transaction regardless. The
- * patient's name is only captured on a first visit; an existing phone reuses the
- * row the clinic already has.
- */
 export default function Appointments() {
   const queryClient = useQueryClient()
   const [doctorId, setDoctorId] = useState("")
@@ -119,117 +109,86 @@ export default function Appointments() {
   const slots = availability.data?.availability ?? []
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Walk-in and phone bookings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Search the patient by phone when you book. A new number creates a provisional record that needs no login.
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Appointments</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Walk-in and phone bookings</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+          Find or create a patient by phone, then book an available slot. New numbers create a provisional record that needs no login.
         </p>
-      </div>
+      </section>
 
       {notice !== null && (
-        <Alert>
+        <Alert className="rounded-2xl border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
           <UserPlus className="size-4" />
           <AlertTitle>Booking created</AlertTitle>
           <AlertDescription>
-            {notice}
+            <p>{notice}</p>
             {booked !== null && (
-              <span>
-                {" "}
-                {booked.patient.fullName} · {booked.appointment.doctorName} ·{" "}
-                {formatSlotDate(booked.appointment.slotDate)} ·{" "}
-                {formatTimeRange(booked.appointment.startTime, booked.appointment.endTime)}.
-              </span>
+              <p className="mt-1">
+                {booked.patient.fullName} · {booked.appointment.doctorName} · {formatSlotDate(booked.appointment.slotDate)} · {formatTimeRange(booked.appointment.startTime, booked.appointment.endTime)}.
+              </p>
             )}
             {booked !== null && (
-              <span className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <Button asChild size="sm">
                   <Link to={`/staff/payments?phone=${encodeURIComponent(booked.patient.phone)}`}>
-                    <ReceiptText /> Collect payment
+                    <ReceiptText className="size-4" aria-hidden="true" /> Collect payment
                   </Link>
                 </Button>
-                <Button asChild size="sm" variant="outline">
+                <Button asChild size="sm" variant="outline" className="bg-white">
                   <Link to={`/staff/patients?phone=${encodeURIComponent(booked.patient.phone)}`}>
-                    <UserPlus /> Patient record
+                    <UserPlus className="size-4" aria-hidden="true" /> Patient record
                   </Link>
                 </Button>
-              </span>
+              </div>
             )}
           </AlertDescription>
         </Alert>
       )}
 
-      <form onSubmit={handleSubmit((values) => {
-        setNotice(null)
-        setBooked(null)
-        setFormError(null)
-        create.mutate(values)
-      })} className="space-y-4" noValidate>
-        <Card>
+      <form
+        onSubmit={handleSubmit((values) => {
+          setNotice(null)
+          setBooked(null)
+          setFormError(null)
+          create.mutate(values)
+        })}
+        className="space-y-6"
+        noValidate
+      >
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Patient</CardTitle>
+            <CardTitle className="text-xl text-slate-950">Patient details</CardTitle>
+            <CardDescription>Use the patient’s phone number to find or create their record.</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-2">
-              <Label htmlFor="patient-name">Full name</Label>
-              <Input
-                id="patient-name"
-                autoComplete="off"
-                maxLength={200}
-                aria-invalid={errors.patient?.fullName !== undefined}
-                aria-describedby={errors.patient?.fullName !== undefined ? "patient-name-error" : undefined}
-                {...register("patient.fullName")}
-              />
-              {errors.patient?.fullName?.message !== undefined && (
-                <p id="patient-name-error" className="text-xs text-destructive" role="alert">
-                  {errors.patient.fullName.message}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="patient-phone">Phone</Label>
-              <Input
-                id="patient-phone"
-                autoComplete="off"
-                inputMode="tel"
-                placeholder="98765 43210"
-                aria-invalid={errors.patient?.phone !== undefined}
-                aria-describedby={errors.patient?.phone !== undefined ? "patient-phone-error" : undefined}
-                {...register("patient.phone")}
-              />
-              {errors.patient?.phone?.message !== undefined && (
-                <p id="patient-phone-error" className="text-xs text-destructive" role="alert">
-                  {errors.patient.phone.message}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="patient-email">Email (optional)</Label>
+          <CardContent className="grid gap-4 sm:grid-cols-3">
+            <Field label="Full name" htmlFor="patient-name" error={errors.patient?.fullName?.message}>
+              <Input id="patient-name" className="bg-white" autoComplete="off" maxLength={200} aria-invalid={errors.patient?.fullName !== undefined} {...register("patient.fullName")} />
+            </Field>
+            <Field label="Phone" htmlFor="patient-phone" error={errors.patient?.phone?.message}>
+              <Input id="patient-phone" className="bg-white" autoComplete="off" inputMode="tel" placeholder="98765 43210" aria-invalid={errors.patient?.phone !== undefined} {...register("patient.phone")} />
+            </Field>
+            <Field label="Email (optional)" htmlFor="patient-email" error={errors.patient?.email?.message}>
               <Input
                 id="patient-email"
                 type="email"
+                className="bg-white"
                 autoComplete="off"
                 aria-invalid={errors.patient?.email !== undefined}
-                aria-describedby={errors.patient?.email !== undefined ? "patient-email-error" : undefined}
-                {...register("patient.email", {
-                  setValueAs: (value: string) => (value.trim() === "" ? undefined : value),
-                })}
+                {...register("patient.email", { setValueAs: (value: string) => (value.trim() === "" ? undefined : value) })}
               />
-              {errors.patient?.email?.message !== undefined && (
-                <p id="patient-email-error" className="text-xs text-destructive" role="alert">
-                  {errors.patient.email.message}
-                </p>
-              )}
-            </div>
+            </Field>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Slot</CardTitle>
+            <CardTitle className="text-xl text-slate-950">Appointment slot</CardTitle>
+            <CardDescription>Select a doctor, date, and available time.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
+          <CardContent className="space-y-5">
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="booking-doctor">Doctor</Label>
                 <select
@@ -255,6 +214,7 @@ export default function Appointments() {
                 <Input
                   id="booking-date"
                   type="date"
+                  className="bg-white"
                   value={selectedDate}
                   min={minDate}
                   max={maxDate}
@@ -266,7 +226,7 @@ export default function Appointments() {
               </div>
             </div>
 
-            {availability.isPending && <p className="text-sm text-muted-foreground">Loading slots…</p>}
+            {availability.isPending && <p className="text-sm text-slate-500">Loading slots…</p>}
             {availability.isError && (
               <PageError
                 title="Slots could not be loaded"
@@ -285,22 +245,20 @@ export default function Appointments() {
             )}
 
             {errors.slotId?.message !== undefined && (
-              <p className="text-xs text-destructive" role="alert">
-                {errors.slotId.message}
-              </p>
+              <p className="text-sm text-destructive" role="alert">{errors.slotId.message}</p>
             )}
 
             {slots.length > 0 && (
-              <fieldset className="space-y-2">
-                <legend className="text-sm font-medium">Available times</legend>
+              <fieldset className="space-y-3">
+                <legend className="text-sm font-medium text-slate-900">Available times</legend>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {slots.map((slot) => (
                     <label
                       key={slot.slotId}
                       className={
                         slotId === slot.slotId
-                          ? "flex cursor-pointer items-center justify-between rounded-lg border border-primary bg-accent px-3 py-2 text-sm"
-                          : "flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2 text-sm"
+                          ? "flex cursor-pointer items-center justify-between rounded-2xl border border-blue-200 bg-blue-50/50 px-4 py-3 text-sm ring-1 ring-blue-100"
+                          : "flex cursor-pointer items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm hover:bg-slate-50"
                       }
                     >
                       <span className="flex items-center gap-2">
@@ -311,9 +269,9 @@ export default function Appointments() {
                           checked={slotId === slot.slotId}
                           onChange={() => setValue("slotId", slot.slotId, { shouldValidate: true })}
                         />
-                        {formatTimeRange(slot.startTime, slot.endTime)}
+                        <span className="font-medium text-slate-900">{formatTimeRange(slot.startTime, slot.endTime)}</span>
                       </span>
-                      <span className="text-xs text-muted-foreground">{slot.remaining} left</span>
+                      <span className="text-xs text-slate-500">{slot.remaining} left</span>
                     </label>
                   ))}
                 </div>
@@ -323,14 +281,14 @@ export default function Appointments() {
         </Card>
 
         {formError !== null && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="rounded-2xl">
             <AlertTitle>Could not create the booking</AlertTitle>
             <AlertDescription>{formError}</AlertDescription>
           </Alert>
         )}
 
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
+        <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-5">
+          <p className="text-sm text-slate-600">
             {slotId === "" ? "Choose a slot to continue." : "The fee is resolved by the server when the booking is created."}
           </p>
           <Button type="submit" disabled={isSubmitting || create.isPending}>
@@ -338,6 +296,16 @@ export default function Appointments() {
           </Button>
         </div>
       </form>
+    </div>
+  )
+}
+
+function Field({ label, htmlFor, error, children }: { label: string; htmlFor: string; error?: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={htmlFor}>{label}</Label>
+      {children}
+      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
     </div>
   )
 }

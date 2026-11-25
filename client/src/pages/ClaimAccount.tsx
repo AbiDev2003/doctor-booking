@@ -9,6 +9,10 @@ import {
   passwordConfirmationSchema,
   type PasswordConfirmationValues,
 } from "../lib/passwordForms";
+import { AuthShell } from "@/components/auth/AuthShell";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 
 /**
  * §5.1 claim portal — where an invited doctor, staff member or admin sets
@@ -54,76 +58,97 @@ export default function ClaimAccount() {
 
   if (missingToken) {
     return (
-      <main className="card">
-        <h1>Invitation invalid</h1>
-        <p role="alert">
-          This page is missing its invitation token. Open the link from your email, or ask your
-          administrator to send a new invitation.
-        </p>
-        <Link className="button-link" to="/login">
-          Go to sign in
-        </Link>
-      </main>
+      <AuthShell
+        title="Invitation invalid"
+        description="We couldn't find a valid invitation token in this link."
+      >
+        <div className="space-y-4">
+          <Alert variant="destructive">
+            <AlertDescription role="alert">
+              This page is missing its invitation token. Open the link from your email, or ask your
+              administrator to send a new invitation.
+            </AlertDescription>
+          </Alert>
+          <Button asChild className="w-full sm:w-auto">
+            <Link to="/login">Go to sign in</Link>
+          </Button>
+        </div>
+      </AuthShell>
     );
   }
 
   if (done) {
     return (
-      <main className="card">
-        <h1>Account activated</h1>
-        <p>Your password is set. You can now sign in with your email address.</p>
-        <Link className="button-link" to="/login">
-          Sign in
-        </Link>
-      </main>
+      <AuthShell
+        title="Account activated"
+        description="Your account is ready to use."
+      >
+        <div className="space-y-4">
+          <Alert className="border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
+            <AlertDescription>Your password is set. You can now sign in with your email address.</AlertDescription>
+          </Alert>
+          <Button asChild className="w-full sm:w-auto">
+            <Link to="/login">Sign in</Link>
+          </Button>
+        </div>
+      </AuthShell>
     );
   }
 
   return (
-    <main className="card">
-      <h1>Activate your account</h1>
+    <AuthShell
+      title="Activate your account"
+      description="Set your password to get started with City Care Clinic."
+    >
+      <form onSubmit={onSubmit} noValidate className="space-y-5">
+        <div className="space-y-2">
+          <Label htmlFor="password">Choose a password</Label>
+          <PasswordInput
+            id="password"
+            autoComplete="new-password"
+            className="bg-white"
+            aria-invalid={errors.password !== undefined}
+            aria-describedby={errors.password !== undefined ? "password-error" : undefined}
+            {...register("password")}
+          />
+          {errors.password?.message !== undefined && (
+            <p id="password-error" className="text-sm text-destructive" role="alert">
+              {errors.password.message}
+            </p>
+          )}
+        </div>
 
-      <form onSubmit={onSubmit} noValidate>
-        <label htmlFor="password">Choose a password</label>
-        <PasswordInput
-          id="password"
-          autoComplete="new-password"
-          aria-invalid={errors.password !== undefined}
-          aria-describedby={errors.password !== undefined ? "password-error" : undefined}
-          {...register("password")}
-        />
-        {errors.password?.message !== undefined && (
-          <span id="password-error" className="field-error" role="alert">
-            {errors.password.message}
-          </span>
-        )}
-
-        <label htmlFor="confirm">Confirm password</label>
-        <PasswordInput
-          id="confirm"
-          autoComplete="new-password"
-          aria-invalid={errors.confirm !== undefined}
-          aria-describedby={errors.confirm !== undefined ? "confirm-error" : undefined}
-          {...register("confirm")}
-        />
-        {errors.confirm?.message !== undefined && (
-          <span id="confirm-error" className="field-error" role="alert">
-            {errors.confirm.message}
-          </span>
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="confirm">Confirm password</Label>
+          <PasswordInput
+            id="confirm"
+            autoComplete="new-password"
+            className="bg-white"
+            aria-invalid={errors.confirm !== undefined}
+            aria-describedby={errors.confirm !== undefined ? "confirm-error" : undefined}
+            {...register("confirm")}
+          />
+          {errors.confirm?.message !== undefined && (
+            <p id="confirm-error" className="text-sm text-destructive" role="alert">
+              {errors.confirm.message}
+            </p>
+          )}
+        </div>
 
         {formError !== null && (
-          <p className="form-error" role="alert">
-            {formError}
-          </p>
+          <Alert variant="destructive">
+            <AlertDescription role="alert">{formError}</AlertDescription>
+          </Alert>
         )}
 
-        <button type="submit" disabled={isSubmitting}>
+        <Button type="submit" className="w-full" disabled={isSubmitting}>
           {isSubmitting ? "Activating…" : "Activate account"}
-        </button>
+        </Button>
       </form>
 
-      <p className="hint">Invitation links expire after 1 hour and work only once.</p>
-    </main>
+      <p className="mt-6 text-sm text-slate-600">
+        Invitation links expire after 1 hour and work only once.
+      </p>
+    </AuthShell>
   );
 }

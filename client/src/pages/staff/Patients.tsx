@@ -17,44 +17,31 @@ import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 
 type Tab = "slots" | "lookup"
 
-/**
- * §16's two ways into a patient: the day grouped by doctor → slot → patient
- * (the front desk's default), and the phone-keyed returning-patient lookup.
- *
- * The slot view opens on the clinic's own today and can be searched with the
- * same phone-prefix / fuzzy-name input the admin directory uses. The phone
- * lookup stays exact on the normalised number because its job is one record,
- * not a list.
- */
 export default function Patients() {
   const [params] = useSearchParams()
   const initialPhone = params.get("phone") ?? ""
   const [tab, setTab] = useState<Tab>(() => (params.get("tab") === "lookup" ? "lookup" : "slots"))
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Patients</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          See the day slot by slot, or look up a returning patient by phone. The desk sees the same record the clinic
-          keeps.
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Patients</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Patient records</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+          See the day slot by slot, or look up a returning patient by phone. The desk sees the same record the clinic keeps.
         </p>
-      </div>
+      </section>
 
       <div className="flex flex-wrap gap-2">
-        <Button variant={tab === "slots" ? "default" : "outline"} size="sm" onClick={() => setTab("slots")}>
-          By slot
-        </Button>
-        <Button variant={tab === "lookup" ? "default" : "outline"} size="sm" onClick={() => setTab("lookup")}>
-          Phone lookup
-        </Button>
+        <Button variant={tab === "slots" ? "default" : "outline"} className={tab === "slots" ? "" : "bg-white"} onClick={() => setTab("slots")}>By slot</Button>
+        <Button variant={tab === "lookup" ? "default" : "outline"} className={tab === "lookup" ? "" : "bg-white"} onClick={() => setTab("lookup")}>Phone lookup</Button>
       </div>
 
       {tab === "slots" ? <SlotView /> : <PhoneLookup initialPhone={initialPhone} />}
@@ -70,8 +57,6 @@ function SlotView() {
   const [search, setSearch] = useState("")
   const [submitted, setSubmitted] = useState("")
 
-  // An empty `date` means "follow the clinic's today"; the button and the
-  // picker both write a concrete date once the desk steps away from today.
   const selectedDate = date !== "" ? date : timezone !== undefined ? clinicToday(timezone) : ""
 
   const view = useQuery({
@@ -98,72 +83,34 @@ function SlotView() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-2">
-          <Label htmlFor="slot-date">Clinic date</Label>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              id="slot-date"
-              type="date"
-              className="w-44"
-              value={selectedDate}
-              disabled={selectedDate === ""}
-              onChange={(event) => setDate(event.target.value)}
-            />
-            <Button type="button" variant="outline" size="sm" onClick={today} disabled={selectedDate === ""}>
-              Today
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={selectedDate === ""}
-              onClick={() => setDate(addDays(selectedDate, -1))}
-            >
-              Previous
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              disabled={selectedDate === ""}
-              onClick={() => setDate(addDays(selectedDate, 1))}
-            >
-              Next
-            </Button>
+    <div className="space-y-6">
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
+        <CardContent className="flex flex-col gap-4 p-5 sm:p-6 lg:flex-row lg:items-end">
+          <div className="space-y-2">
+            <Label htmlFor="slot-date">Clinic date</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input id="slot-date" type="date" className="w-44 bg-white" value={selectedDate} disabled={selectedDate === ""} onChange={(event) => setDate(event.target.value)} />
+              <Button type="button" variant="outline" size="sm" className="bg-white" onClick={today} disabled={selectedDate === ""}>Today</Button>
+              <Button type="button" variant="ghost" size="sm" disabled={selectedDate === ""} onClick={() => setDate(addDays(selectedDate, -1))}>Previous</Button>
+              <Button type="button" variant="ghost" size="sm" disabled={selectedDate === ""} onClick={() => setDate(addDays(selectedDate, 1))}>Next</Button>
+            </div>
           </div>
-        </div>
 
-        <form onSubmit={submit} className="flex flex-1 flex-wrap items-end gap-2">
-          <div className="w-full max-w-sm space-y-2">
-            <Label htmlFor="slot-search">Search patient</Label>
-            <Input
-              id="slot-search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Phone or name"
-              autoComplete="off"
-            />
-          </div>
-          <Button type="submit" disabled={view.isFetching}>
-            <Search className="size-4" />
-            {view.isFetching ? "Searching…" : "Search"}
-          </Button>
-          {submitted !== "" && (
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setSearch("")
-                setSubmitted("")
-              }}
-            >
-              Clear
+          <form onSubmit={submit} className="flex flex-1 flex-wrap items-end gap-2">
+            <div className="w-full max-w-sm space-y-2">
+              <Label htmlFor="slot-search">Search patient</Label>
+              <Input id="slot-search" className="bg-white" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Phone or name" autoComplete="off" />
+            </div>
+            <Button type="submit" disabled={view.isFetching}>
+              <Search className="size-4" aria-hidden="true" />
+              {view.isFetching ? "Searching…" : "Search"}
             </Button>
-          )}
-        </form>
-      </div>
+            {submitted !== "" && (
+              <Button type="button" variant="ghost" onClick={() => { setSearch(""); setSubmitted("") }}>Clear</Button>
+            )}
+          </form>
+        </CardContent>
+      </Card>
 
       {view.isPending && <PageLoading label="Loading the day…" />}
       {view.isError && (
@@ -176,36 +123,26 @@ function SlotView() {
 
       {view.data !== undefined && (
         <>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-slate-600">
             {submitted === ""
-              ? `${view.data.totalAppointments} booked appointment${
-                  view.data.totalAppointments === 1 ? "" : "s"
-                } on ${formatSlotDate(view.data.date)}.`
-              : `${view.data.totalAppointments} match${view.data.totalAppointments === 1 ? "" : "es"} for “${submitted}” on ${formatSlotDate(
-                  view.data.date,
-                )}.`}
+              ? `${view.data.totalAppointments} booked appointment${view.data.totalAppointments === 1 ? "" : "s"} on ${formatSlotDate(view.data.date)}.`
+              : `${view.data.totalAppointments} match${view.data.totalAppointments === 1 ? "" : "es"} for “${submitted}” on ${formatSlotDate(view.data.date)}.`}
           </p>
 
           {view.data.doctors.length === 0 && (
             <EmptyState
               title={submitted === "" ? "No slots on this day" : "No matching patients"}
-              description={
-                submitted === ""
-                  ? "No doctor has slots for this clinic date."
-                  : "No patient on this day matches that phone prefix or name."
-              }
+              description={submitted === "" ? "No doctor has slots for this clinic date." : "No patient on this day matches that phone prefix or name."}
             >
               <CalendarDays className="size-4" />
             </EmptyState>
           )}
 
           {view.data.doctors.map((doctor) => (
-            <Card key={doctor.doctorId}>
+            <Card key={doctor.doctorId} className="rounded-3xl border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>{doctor.doctorName}</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  {doctor.slots.length} slot{doctor.slots.length === 1 ? "" : "s"} shown
-                </p>
+                <CardTitle className="text-xl text-slate-950">{doctor.doctorName}</CardTitle>
+                <CardDescription>{doctor.slots.length} slot{doctor.slots.length === 1 ? "" : "s"} shown</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 {doctor.slots.map((slot) => (
@@ -222,21 +159,19 @@ function SlotView() {
 
 function SlotBlock({ slot }: { slot: SlotViewSlot }) {
   return (
-    <div className="rounded-lg border">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
+    <div className="overflow-hidden rounded-2xl border border-slate-200">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50/80 px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium">{formatTimeRange(slot.startTime, slot.endTime)}</span>
-          <Badge variant="outline">
-            {slot.bookedCount}/{slot.maxPatients} booked
-          </Badge>
+          <span className="font-medium text-slate-900">{formatTimeRange(slot.startTime, slot.endTime)}</span>
+          <Badge variant="outline">{slot.bookedCount}/{slot.maxPatients} booked</Badge>
           {slot.isDisabled && <Badge variant="destructive">disabled</Badge>}
         </div>
       </div>
 
       {slot.appointments.length === 0 ? (
-        <p className="px-3 py-3 text-sm text-muted-foreground">No bookings in this slot.</p>
+        <p className="px-4 py-4 text-sm text-slate-500">No bookings in this slot.</p>
       ) : (
-        <ul className="divide-y">
+        <ul className="divide-y divide-slate-100">
           {slot.appointments.map((appointment) => (
             <SlotAppointmentRow key={appointment.id} appointment={appointment} />
           ))}
@@ -248,18 +183,18 @@ function SlotBlock({ slot }: { slot: SlotViewSlot }) {
 
 function SlotAppointmentRow({ appointment }: { appointment: SlotViewAppointment }) {
   return (
-    <li className="flex flex-wrap items-start justify-between gap-3 px-3 py-3">
+    <li className="flex flex-wrap items-start justify-between gap-3 px-4 py-4">
       <div className="space-y-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium">{appointment.patientName}</span>
+          <span className="font-medium text-slate-900">{appointment.patientName}</span>
           <AppointmentStatusBadge status={appointment.status} />
           {appointment.isProvisional && <Badge variant="outline">walk-in</Badge>}
         </div>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-slate-600">
           {appointment.phone}
           {appointment.email !== null ? ` · ${appointment.email}` : ""}
         </p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-slate-500">
           Fee {formatPaise(appointment.feeAmount, "INR")}
           {appointment.payment.outstandingPaise > 0
             ? ` · ${formatPaise(appointment.payment.outstandingPaise, "INR")} outstanding`
@@ -299,32 +234,27 @@ function PhoneLookup({ initialPhone }: { initialPhone: string }) {
 
   return (
     <div className="space-y-6">
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
-        <div className="w-full max-w-sm space-y-2">
-          <Label htmlFor="lookup-phone">Phone</Label>
-          <Input
-            id="lookup-phone"
-            value={phone}
-            onChange={(event) => setPhone(event.target.value)}
-            inputMode="tel"
-            placeholder="98765 43210"
-            autoComplete="off"
-          />
-        </div>
-        <Button type="submit" disabled={phone.trim() === "" || search.isPending}>
-          <Search className="size-4" />
-          {search.isPending ? "Searching…" : "Search"}
-        </Button>
-      </form>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
+        <CardContent className="p-5 sm:p-6">
+          <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
+            <div className="w-full max-w-sm space-y-2">
+              <Label htmlFor="lookup-phone">Phone</Label>
+              <Input id="lookup-phone" className="bg-white" value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="tel" placeholder="98765 43210" autoComplete="off" />
+            </div>
+            <Button type="submit" disabled={phone.trim() === "" || search.isPending}>
+              <Search className="size-4" aria-hidden="true" />
+              {search.isPending ? "Searching…" : "Search"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
       {search.isPending && search.data === undefined && <PageLoading label="Looking up the patient…" />}
 
       {search.error !== null && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="rounded-2xl">
           <AlertTitle>Lookup failed</AlertTitle>
-          <AlertDescription>
-            {search.error instanceof ApiError ? search.error.message : "Try again in a moment."}
-          </AlertDescription>
+          <AlertDescription>{search.error instanceof ApiError ? search.error.message : "Try again in a moment."}</AlertDescription>
         </Alert>
       )}
 
@@ -338,11 +268,17 @@ function PhoneLookup({ initialPhone }: { initialPhone: string }) {
       )}
 
       {history !== undefined && history.found && history.patient !== null && (
-        <div className="space-y-4">
-          <Card>
+        <div className="space-y-6">
+          <Card className="rounded-3xl border-slate-200 shadow-sm">
             <CardHeader>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle>{history.patient.fullName}</CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-xl text-slate-950">{history.patient.fullName}</CardTitle>
+                  <CardDescription>
+                    {history.patient.phone}
+                    {history.patient.email !== null ? ` · ${history.patient.email}` : ""} · On file since {formatSlotDate(history.patient.createdAt.slice(0, 10))}
+                  </CardDescription>
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {history.returning && <Badge>Returning patient</Badge>}
                   {history.patient.isProvisional && <Badge variant="outline">Walk-in record</Badge>}
@@ -350,12 +286,7 @@ function PhoneLookup({ initialPhone }: { initialPhone: string }) {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                {history.patient.phone}
-                {history.patient.email !== null ? ` · ${history.patient.email}` : ""} · On file since{" "}
-                {formatSlotDate(history.patient.createdAt.slice(0, 10))}
-              </p>
+            <CardContent className="space-y-5">
               <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <Stat label="Completed" value={history.completedCount} />
                 <Stat label="No-shows" value={history.noShowCount} />
@@ -364,12 +295,10 @@ function PhoneLookup({ initialPhone }: { initialPhone: string }) {
               </dl>
               {history.doctorsSeen.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-sm font-medium">Doctors seen</p>
+                  <p className="text-sm font-medium text-slate-900">Doctors seen</p>
                   <div className="flex flex-wrap gap-2">
                     {history.doctorsSeen.map((doctor) => (
-                      <Badge key={doctor} variant="secondary">
-                        {doctor}
-                      </Badge>
+                      <Badge key={doctor} variant="secondary">{doctor}</Badge>
                     ))}
                   </div>
                 </div>
@@ -385,30 +314,29 @@ function PhoneLookup({ initialPhone }: { initialPhone: string }) {
             />
           )}
 
-          <Card>
+          <Card className="rounded-3xl border-slate-200 shadow-sm">
             <CardHeader>
-              <CardTitle>Upcoming bookings</CardTitle>
+              <CardTitle className="text-xl text-slate-950">Upcoming bookings</CardTitle>
             </CardHeader>
             <CardContent>
               {history.upcomingAppointments.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No upcoming bookings for this patient.</p>
+                <p className="text-sm text-slate-600">No upcoming bookings for this patient.</p>
               ) : (
                 <ol className="space-y-3">
                   {history.upcomingAppointments.map((appointment, index) => (
                     <li key={appointment.id}>
                       {index > 0 && <Separator className="mb-3" />}
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="space-y-1">
+                      <div className="flex flex-col gap-3 rounded-2xl bg-slate-50/50 p-4 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="space-y-1.5">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium">{appointment.doctorName}</span>
+                            <span className="font-medium text-slate-950">{appointment.doctorName}</span>
                             <AppointmentStatusBadge status={appointment.status} />
                           </div>
-                          <p className="text-sm text-muted-foreground">
-                            {formatSlotDate(appointment.slotDate)} ·{" "}
-                            {formatTimeRange(appointment.startTime, appointment.endTime)}
+                          <p className="text-sm text-slate-600">
+                            {formatSlotDate(appointment.slotDate)} · {formatTimeRange(appointment.startTime, appointment.endTime)}
                           </p>
                           {appointment.payment.outstandingPaise > 0 && (
-                            <p className="text-sm text-destructive">
+                            <p className="text-sm font-medium text-destructive">
                               Payment outstanding: {formatPaise(appointment.payment.outstandingPaise, "INR")}
                             </p>
                           )}
@@ -459,14 +387,12 @@ function AttachEmailCard({ patient, onAttached }: { patient: DeskPatient; onAtta
   })
 
   return (
-    <Card>
+    <Card className="rounded-3xl border-slate-200 shadow-sm">
       <CardHeader>
-        <CardTitle>Email on the walk-in record</CardTitle>
+        <CardTitle className="text-xl text-slate-950">Email on the walk-in record</CardTitle>
+        <CardDescription>Attaching an address does not create a login. It gives the patient a contact on file and a future claim path.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-sm text-muted-foreground">
-          Attaching an address does not create a login. It gives the patient a contact on file and a future claim path.
-        </p>
         <form
           className="flex flex-col gap-2 sm:flex-row sm:items-end"
           onSubmit={handleSubmit((values) => {
@@ -481,22 +407,21 @@ function AttachEmailCard({ patient, onAttached }: { patient: DeskPatient; onAtta
             <Input
               id="attach-email"
               type="email"
+              className="bg-white"
               autoComplete="off"
               aria-invalid={errors.email !== undefined}
               aria-describedby={errors.email !== undefined ? "attach-email-error" : undefined}
               {...register("email")}
             />
             {errors.email?.message !== undefined && (
-              <p id="attach-email-error" className="text-xs text-destructive" role="alert">
-                {errors.email.message}
-              </p>
+              <p id="attach-email-error" className="text-sm text-destructive" role="alert">{errors.email.message}</p>
             )}
           </div>
           <Button type="submit" disabled={isSubmitting || attach.isPending}>
             {attach.isPending ? "Attaching…" : patient.email === null ? "Attach email" : "Update email"}
           </Button>
         </form>
-        {notice !== null && <p className="text-sm text-muted-foreground">{notice}</p>}
+        {notice !== null && <p className="text-sm text-green-700">{notice}</p>}
         {formError !== null && (
           <Alert variant="destructive">
             <AlertTitle>Could not attach the email</AlertTitle>
@@ -510,9 +435,9 @@ function AttachEmailCard({ patient, onAttached }: { patient: DeskPatient; onAtta
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-lg border px-3 py-2">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="text-lg font-semibold">{value}</dd>
+    <div className="rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3">
+      <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</dt>
+      <dd className="mt-1 text-2xl font-semibold text-slate-950">{value}</dd>
     </div>
   )
 }

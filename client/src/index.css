@@ -56,48 +56,67 @@
   --ring: #2563eb;
 }
 
-:root {
-  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
-  line-height: 1.5;
-}
+@layer base {
+  :root {
+    font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.5;
+  }
 
-body {
-  margin: 0;
+  body {
+    margin: 0;
+  }
+
+  h1 {
+    font-size: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+  }
+
+  label:not([data-slot="label"]) {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+
+  input:not([data-slot="input"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+    padding: 0.5rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.375rem;
+    font: inherit;
+    margin-bottom: 0.25rem;
+  }
+
+  input:not([data-slot="input"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 1px;
+  }
+
+  button:not([data-slot="button"]) {
+    margin-top: 1rem;
+    padding: 0.625rem;
+    border: 0;
+    border-radius: 0.375rem;
+    background: #2563eb;
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  button:not([data-slot="button"]):disabled {
+    background: #94a3b8;
+    cursor: not-allowed;
+  }
 }
 
 .card {
   max-width: 26rem;
   margin: 4rem auto;
   padding: 0 1.5rem;
-}
-
-h1 {
-  font-size: 1.5rem;
-  margin-bottom: 1.5rem;
-}
-
-form {
-  display: flex;
-  flex-direction: column;
-}
-
-label {
-  font-size: 0.875rem;
-  font-weight: 600;
-  margin-bottom: 0.25rem;
-}
-
-input {
-  padding: 0.5rem;
-  border: 1px solid #cbd5e1;
-  border-radius: 0.375rem;
-  font: inherit;
-  margin-bottom: 0.25rem;
-}
-
-input:focus-visible {
-  outline: 2px solid #2563eb;
-  outline-offset: 1px;
 }
 
 .field-error {
@@ -115,23 +134,6 @@ input:focus-visible {
 .hint {
   color: #475569;
   font-size: 0.875rem;
-}
-
-button {
-  margin-top: 1rem;
-  padding: 0.625rem;
-  border: 0;
-  border-radius: 0.375rem;
-  background: #2563eb;
-  color: #fff;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-button:disabled {
-  background: #94a3b8;
-  cursor: not-allowed;
 }
 
 .button-link {

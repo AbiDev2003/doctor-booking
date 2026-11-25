@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { inviteDoctorSchema, type InviteDoctorInputShape } from "@shared/doctors"
+import { DoctorAvatar } from "@/components/doctor-avatar"
+import { DoctorProfileDialog } from "@/components/staff/doctor-profile-dialog"
 import {
   apiArchiveDoctor,
   apiDoctorInvitations,
@@ -76,6 +78,7 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
   const [reasonAction, setReasonAction] = useState<{ action: ReasonAction; doctor: DoctorDetail } | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [editDoctorId, setEditDoctorId] = useState<string | null>(null)
 
   const doctors = useQuery({
     queryKey: ["staff", "doctors"],
@@ -86,6 +89,8 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
     queryKey: ["doctor-invitations"],
     queryFn: ({ signal }) => apiDoctorInvitations(signal).then((result) => result.invitations),
   })
+
+  const editDoctor = editDoctorId ? doctors.data?.doctors.find((d) => d.id === editDoctorId) ?? null : null
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["staff", "doctors"] })
@@ -138,35 +143,38 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
           : undefined
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Doctors</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {isAdmin
-              ? "Verify credentials, suspend access and keep the public roster honest."
-              : "Invite doctors, suspend or archive access. Credential verification stays with an admin."}
-          </p>
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Doctors</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Doctor roster</h1>
+            <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+              {isAdmin
+                ? "Verify credentials, suspend access, and keep the public roster honest."
+                : "Invite doctors, suspend or archive access. Credential verification stays with an admin."}
+            </p>
+          </div>
+          <Button onClick={() => setInviteOpen(true)}>Invite doctor</Button>
         </div>
-        <Button onClick={() => setInviteOpen(true)}>Invite doctor</Button>
-      </div>
+      </section>
 
       {notice !== null && (
-        <Alert>
+        <Alert className="rounded-2xl border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
           <AlertTitle>Done</AlertTitle>
           <AlertDescription>{notice}</AlertDescription>
         </Alert>
       )}
       {actionError !== undefined && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="rounded-2xl">
           <AlertTitle>Action failed</AlertTitle>
           <AlertDescription>{actionError}</AlertDescription>
         </Alert>
       )}
 
-      <Card>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
         <CardHeader>
-          <CardTitle>Roster</CardTitle>
+          <CardTitle className="text-xl text-slate-950">Roster</CardTitle>
         </CardHeader>
         <CardContent>
           {doctors.isPending && <PageLoading label="Loading doctors…" />}
@@ -183,23 +191,28 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
           {doctors.data !== undefined && doctors.data.doctors.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="border-b text-left text-muted-foreground">
+                <thead className="border-b border-slate-200 text-left text-slate-500">
                   <tr>
-                    <th scope="col" className="py-2 pr-3 font-medium">Doctor</th>
-                    <th scope="col" className="py-2 pr-3 font-medium">Status</th>
-                    <th scope="col" className="py-2 pr-3 font-medium">Bookable</th>
-                    <th scope="col" className="py-2 font-medium">Actions</th>
+                    <th scope="col" className="py-3 pr-3 font-medium">Doctor</th>
+                    <th scope="col" className="py-3 pr-3 font-medium">Status</th>
+                    <th scope="col" className="py-3 pr-3 font-medium">Bookable</th>
+                    <th scope="col" className="py-3 font-medium">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y">
+                <tbody className="divide-y divide-slate-100">
                   {doctors.data.doctors.map((doctor) => (
                     <tr key={doctor.id}>
                       <td className="py-3 pr-3">
-                        <p className="font-medium">{doctor.fullName}</p>
-                        <p className="text-xs text-muted-foreground">{doctor.email}</p>
-                        {doctor.suspendReason !== null && (
-                          <p className="text-xs text-muted-foreground">Suspended: {doctor.suspendReason}</p>
-                        )}
+                        <div className="flex items-center gap-3">
+                          <DoctorAvatar src={doctor.profileImageUrl} name={doctor.fullName} className="size-10 text-xs" />
+                          <div className="min-w-0">
+                            <p className="font-medium">{doctor.fullName}</p>
+                            <p className="text-xs text-muted-foreground">{doctor.email}</p>
+                            {doctor.suspendReason !== null && (
+                              <p className="text-xs text-muted-foreground">Suspended: {doctor.suspendReason}</p>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="py-3 pr-3">
                         <StatusBadge doctor={doctor} />
@@ -207,6 +220,11 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
                       <td className="py-3 pr-3">{doctor.isBookable ? "Yes" : "No"}</td>
                       <td className="py-3">
                         <div className="flex flex-wrap gap-2">
+                          {doctor.verificationStatus !== "ARCHIVED" && doctor.verificationStatus !== "REJECTED" && (
+                            <Button size="sm" variant="outline" onClick={() => setEditDoctorId(doctor.id)}>
+                              Edit profile
+                            </Button>
+                          )}
                           {isAdmin && doctor.verificationStatus === "PENDING_VERIFICATION" && (
                             <>
                               <Button size="sm" disabled={verify.isPending} onClick={() => verify.mutate(doctor.id)}>
@@ -310,6 +328,14 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
           setNotice(message)
           setInviteOpen(false)
           refresh()
+        }}
+      />
+
+      <DoctorProfileDialog
+        doctor={editDoctor}
+        open={editDoctorId !== null}
+        onOpenChange={(open) => {
+          if (!open) setEditDoctorId(null)
         }}
       />
     </div>

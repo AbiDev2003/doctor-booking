@@ -9,8 +9,9 @@ import { applyApiErrors } from "@/lib/formErrors"
 import { PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 const FIELDS = [
   { key: "bookingHorizonDays", label: "Booking horizon (days)", min: 1, max: 365 },
@@ -21,7 +22,6 @@ const FIELDS = [
   { key: "maxActiveBookingsPerPatient", label: "Max active bookings / patient", min: 1, max: 100 },
 ] as const
 
-/** §29's settings tab (Day 33): the six scheduling tunables. */
 export default function Settings() {
   const queryClient = useQueryClient()
   const [notice, setNotice] = useState<string | null>(null)
@@ -83,67 +83,72 @@ export default function Settings() {
   })
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Scheduling tunables apply clinic-wide. Name, timezone, currency and default fee are seed-owned.
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Settings</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Clinic settings</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+          Scheduling tunables apply clinic-wide. Name, timezone, currency, and default fee are seed-owned.
         </p>
-      </div>
+      </section>
 
       {notice !== null && (
-        <Alert>
+        <Alert className="rounded-2xl border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
           <AlertTitle>Done</AlertTitle>
           <AlertDescription>{notice}</AlertDescription>
         </Alert>
       )}
       {formError !== null && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="rounded-2xl">
           <AlertTitle>Could not save settings</AlertTitle>
           <AlertDescription>{formError}</AlertDescription>
         </Alert>
       )}
 
-      <Card>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
         <CardHeader>
-          <CardTitle>Clinic</CardTitle>
+          <CardTitle className="text-xl text-slate-950">Clinic</CardTitle>
+          <CardDescription>Read-only clinic identity values.</CardDescription>
         </CardHeader>
         <CardContent>
-          <dl className="grid gap-3 text-sm sm:grid-cols-2">
-            <div>
-              <dt className="text-muted-foreground">Name</dt>
-              <dd className="font-medium">{current.name}</dd>
+          <dl className="grid gap-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3">
+              <dt className="text-slate-500">Name</dt>
+              <dd className="mt-1 font-medium text-slate-950">{current.name}</dd>
             </div>
-            <div>
-              <dt className="text-muted-foreground">Timezone</dt>
-              <dd className="font-medium">{current.timezone}</dd>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3">
+              <dt className="text-slate-500">Timezone</dt>
+              <dd className="mt-1 font-medium text-slate-950">{current.timezone}</dd>
             </div>
-            <div>
-              <dt className="text-muted-foreground">Currency</dt>
-              <dd className="font-medium">{current.currency}</dd>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3">
+              <dt className="text-slate-500">Currency</dt>
+              <dd className="mt-1 font-medium text-slate-950">{current.currency}</dd>
             </div>
-            <div>
-              <dt className="text-muted-foreground">Default consultation fee</dt>
-              <dd className="font-medium">{current.defaultConsultationFee}</dd>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/50 px-4 py-3">
+              <dt className="text-slate-500">Default consultation fee</dt>
+              <dd className="mt-1 font-medium text-slate-950">{current.defaultConsultationFee}</dd>
             </div>
           </dl>
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
         <CardHeader>
-          <CardTitle>Scheduling tunables</CardTitle>
+          <CardTitle className="text-xl text-slate-950">Scheduling tunables</CardTitle>
+          <CardDescription>Leave a field blank to keep its current value.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form className="space-y-4" onSubmit={submit}>
-            <div className="grid gap-4 sm:grid-cols-2">
+          <form className="space-y-5" onSubmit={submit}>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {FIELDS.map((field) => (
-                <label key={field.key} className="space-y-1 text-sm">
-                  <span className="text-muted-foreground">{field.label}</span>
+                <div key={field.key} className="space-y-2">
+                  <Label htmlFor={field.key}>{field.label}</Label>
                   <Input
+                    id={field.key}
                     type="number"
                     min={field.min}
                     max={field.max}
+                    className="bg-white"
                     placeholder={String(current[field.key])}
                     aria-invalid={errors[field.key] !== undefined}
                     aria-describedby={errors[field.key] !== undefined ? `${field.key}-error` : undefined}
@@ -152,11 +157,11 @@ export default function Settings() {
                     })}
                   />
                   {errors[field.key]?.message !== undefined && (
-                    <p id={`${field.key}-error`} className="text-xs text-destructive" role="alert">
+                    <p id={`${field.key}-error`} className="text-sm text-destructive" role="alert">
                       {errors[field.key]?.message}
                     </p>
                   )}
-                </label>
+                </div>
               ))}
             </div>
             {errors.root?.message !== undefined && (
@@ -164,11 +169,11 @@ export default function Settings() {
                 {errors.root.message}
               </p>
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button type="submit" disabled={isSubmitting || save.isPending}>
                 {save.isPending ? "Saving…" : "Save changes"}
               </Button>
-              <Button type="button" variant="ghost" onClick={() => reset({})}>
+              <Button type="button" variant="outline" className="bg-white" onClick={() => reset({})}>
                 Reset
               </Button>
             </div>
@@ -178,4 +183,3 @@ export default function Settings() {
     </div>
   )
 }
-

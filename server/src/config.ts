@@ -98,7 +98,7 @@ const envSchema = z.object({
       .min(1)
       .max(100)
       .refine((name) => !/[<>\r\n]/.test(name), "must not contain angle brackets or line breaks")
-      .default("Doctor Booking"),
+      .default("City Care Clinic"),
   ),
   EMAIL_REPLY_TO: z.preprocess(blankAsUndefined, z.email().optional()),
   RAZORPAY_KEY_ID: optionalSecret,

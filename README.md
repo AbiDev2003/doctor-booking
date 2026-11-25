@@ -1,4 +1,4 @@
-# Doctor Booking
+# City Care Clinic
 
 Clinic appointment booking system. React + TypeScript client, Express + TypeScript server, PostgreSQL + Prisma.
 

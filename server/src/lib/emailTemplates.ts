@@ -8,7 +8,7 @@ import type { EmailContent } from "./mailer.js";
  * template runtime would be more moving parts than the whole set of emails.
  */
 
-const DEFAULT_BRAND = "Doctor Booking";
+const DEFAULT_BRAND = "City Care Clinic";
 
 function escapeHtml(value: string): string {
   return value

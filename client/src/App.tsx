@@ -50,11 +50,18 @@ import AdminSettings from "./pages/admin/Settings.tsx";
 export default function App() {
   return (
     <Routes>
-      {/* §26 public storefront (Day 13). */}
+      {/* §26 public storefront + auth flows (shared public chrome). */}
       <Route element={<PublicLayout />}>
         <Route path="/" element={<Home />} />
         <Route path="/doctors" element={<Doctors />} />
         <Route path="/doctors/:id" element={<DoctorProfile />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/verify-email" element={<VerifyEmail />} />
+        <Route path="/verify-email-change" element={<VerifyEmailChange />} />
+        <Route path="/claim-account" element={<ClaimAccount />} />
       </Route>
 
       {/* §28 doctor dashboard (Day 14). */}
@@ -97,14 +104,7 @@ export default function App() {
         <Route path="settings" element={<AdminSettings />} />
       </Route>
 
-      {/* Auth + account flows (Days 7–12), standalone. */}
-      <Route path="/register" element={<Register />} />
-      <Route path="/verify-email" element={<VerifyEmail />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/verify-email-change" element={<VerifyEmailChange />} />
-      <Route path="/claim-account" element={<ClaimAccount />} />
+      {/* Account flow (shared across roles), standalone. */}
       <Route path="/profile" element={<Profile />} />
 
       {/* Unknown paths land on the storefront, top of the funnel. */}

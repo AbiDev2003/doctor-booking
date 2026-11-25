@@ -37,6 +37,7 @@ interface PublicDoctorRow {
     clinicAssociation: string | null;
     specialization: string | null;
     consultationFee: number | null;
+    profileImageUrl: string | null;
   } | null;
 }
 
@@ -49,6 +50,7 @@ export interface PublicDoctor {
   readonly specialization: string | null;
   /** Paise, with the Clinic default applied where the doctor has no fee (§3.2). */
   readonly consultationFee: number;
+  readonly profileImageUrl: string | null;
 }
 
 function toPublicDoctorDto(row: PublicDoctorRow, defaultFee: number): PublicDoctor {
@@ -66,6 +68,7 @@ function toPublicDoctorDto(row: PublicDoctorRow, defaultFee: number): PublicDoct
     clinicAssociation: profile.clinicAssociation,
     specialization: profile.specialization,
     consultationFee: profile.consultationFee ?? defaultFee,
+    profileImageUrl: profile.profileImageUrl ?? null,
   };
 }
 

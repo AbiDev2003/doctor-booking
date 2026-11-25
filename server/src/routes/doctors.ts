@@ -28,6 +28,8 @@ import {
   getDoctor,
   getTodayQueue,
   updateDoctorProfile,
+  setDoctorProfileImage,
+  clearDoctorProfileImage,
   verifyDoctor,
   rejectDoctor,
   suspendDoctor,
@@ -35,6 +37,7 @@ import {
   archiveDoctor,
   unarchiveDoctor,
 } from "../services/doctors/doctor.service.js";
+import { uploadDoctorProfileImage, deleteLocalProfileImage, profileImagePublicUrl } from "../lib/uploads.js";
 import { getClinicSettings } from "../services/clinic.service.js";
 import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
 import { durationLabel } from "../lib/duration.js";
@@ -308,6 +311,81 @@ doctorsRouter.patch("/:id", selfOrStaff, async (req, res, next) => {
       message: "Profile updated.",
       verificationStatus: result.verificationStatus,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+doctorsRouter.post(
+  "/:id/profile-image",
+  selfOrStaff,
+  (req, res, next) => {
+    try {
+      const id = doctorIdOf(req);
+      requireSelfOrRole(req, id, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
+      next();
+    } catch (err) {
+      next(err);
+    }
+  },
+  (req, res, next) => {
+    uploadDoctorProfileImage(req, res, (err: unknown) => {
+      if (err) {
+        next(err);
+        return;
+      }
+      next();
+    });
+  },
+  async (req, res, next) => {
+    const file = req.file;
+    const rawId = req.params.id;
+    const routeId = typeof rawId === "string" ? rawId : Array.isArray(rawId) ? rawId[0] : "";
+    try {
+      const id = doctorIdOf(req);
+      requireSelfOrRole(req, id, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
+      if (!file) {
+        throw new AppError(400, "IMAGE_REQUIRED", "A profile image file is required.");
+      }
+
+      const profileImageUrl = profileImagePublicUrl(id, file.filename);
+      const result = await setDoctorProfileImage({
+        actor: actorOf(req),
+        doctorId: id,
+        profileImageUrl,
+        ...requestMeta(req, res),
+      });
+
+      if (result.previousProfileImageUrl && result.previousProfileImageUrl !== profileImageUrl) {
+        deleteLocalProfileImage(result.previousProfileImageUrl);
+      }
+
+      res.status(200).json({
+        message: "Profile image updated.",
+        profileImageUrl: result.profileImageUrl,
+      });
+    } catch (err) {
+      if (file && routeId) {
+        deleteLocalProfileImage(profileImagePublicUrl(routeId, file.filename));
+      }
+      next(err);
+    }
+  },
+);
+
+doctorsRouter.delete("/:id/profile-image", selfOrStaff, async (req, res, next) => {
+  try {
+    const id = doctorIdOf(req);
+    requireSelfOrRole(req, id, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
+    const result = await clearDoctorProfileImage({
+      actor: actorOf(req),
+      doctorId: id,
+      ...requestMeta(req, res),
+    });
+    if (result.previousProfileImageUrl) {
+      deleteLocalProfileImage(result.previousProfileImageUrl);
+    }
+    res.status(200).json({ message: "Profile image removed.", profileImageUrl: null });
   } catch (err) {
     next(err);
   }

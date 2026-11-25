@@ -12,4 +12,10 @@ export default defineConfig({
       '@shared': fileURLToPath(new URL('../server/src/shared/validation', import.meta.url)),
     },
   },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3000',
+      '/uploads': 'http://localhost:3000',
+    },
+  },
 })

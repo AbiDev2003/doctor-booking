@@ -21,7 +21,7 @@ import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -35,20 +35,12 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 
 const SELECT_CLASS =
-  "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+  "h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 type ReasonTarget =
   | { kind: "disable" | "enable"; slot: Slot }
   | { kind: "remove-unavailability"; entry: DoctorUnavailability }
 
-/**
- * §8.4's day-slot surface (Day 32): list a doctor-day's dated slots, create one
- * manually, edit its capacity, and split it out of availability with a reason.
- *
- * Weekly templates are deliberately absent — they stay on the doctor dashboard
- * (Day 31) and are not a desk tool. Doctor create/suspend/archive is also absent;
- * the staff roster is read-only here until Day 33.
- */
 export default function Schedule() {
   return <SchedulePanel />
 }
@@ -147,24 +139,20 @@ export function SchedulePanel({ initialDoctorId = "" }: { initialDoctorId?: stri
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Day schedule</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Schedule</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Day schedule</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
           Manage one doctor-day at a time. Every change carries a reason and an audit entry.
         </p>
-      </div>
+      </section>
 
-      <Card>
-        <CardContent className="grid gap-3 pt-6 sm:grid-cols-2">
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
+        <CardContent className="grid gap-4 p-5 sm:grid-cols-2 sm:p-6">
           <div className="space-y-2">
             <Label htmlFor="schedule-doctor">Doctor</Label>
-            <select
-              id="schedule-doctor"
-              className={SELECT_CLASS}
-              value={selectedDoctorId}
-              onChange={(event) => setDoctorId(event.target.value)}
-            >
+            <select id="schedule-doctor" className={SELECT_CLASS} value={selectedDoctorId} onChange={(event) => setDoctorId(event.target.value)}>
               {doctorOptions.length === 0 && <option value="">No verified doctors available</option>}
               {doctorOptions.map((doctor) => (
                 <option key={doctor.id} value={doctor.id}>
@@ -176,30 +164,26 @@ export function SchedulePanel({ initialDoctorId = "" }: { initialDoctorId?: stri
           </div>
           <div className="space-y-2">
             <Label htmlFor="schedule-date">Date</Label>
-            <Input
-              id="schedule-date"
-              type="date"
-              value={selectedDate}
-              onChange={(event) => setDate(event.target.value)}
-            />
+            <Input id="schedule-date" type="date" className="bg-white" value={selectedDate} onChange={(event) => setDate(event.target.value)} />
           </div>
         </CardContent>
       </Card>
 
       {notice !== null && (
-        <Alert>
+        <Alert className="rounded-2xl border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
           <AlertTitle>Schedule updated</AlertTitle>
           <AlertDescription>{notice}</AlertDescription>
         </Alert>
       )}
 
-      <Card>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="size-4" /> Slots on {formatSlotDate(selectedDate)}
+          <CardTitle className="flex items-center gap-2 text-xl text-slate-950">
+            <Clock className="size-5 text-primary" aria-hidden="true" /> Slots on {formatSlotDate(selectedDate)}
           </CardTitle>
+          <CardDescription>Create, edit, disable, or enable dated slots for the selected doctor.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5">
           {slots.isPending && selectedDoctorId !== "" && <PageLoading label="Loading slots…" />}
           {slots.isError && (
             <PageError
@@ -209,47 +193,36 @@ export function SchedulePanel({ initialDoctorId = "" }: { initialDoctorId?: stri
             />
           )}
           {slots.data !== undefined && slotRows.length === 0 && (
-            <EmptyState
-              title="No slots on this date"
-              description="Create one manually below, or adjust the weekly template on the doctor dashboard."
-            >
+            <EmptyState title="No slots on this date" description="Create one manually below, or adjust the weekly template on the doctor dashboard.">
               <Clock className="size-4" />
             </EmptyState>
           )}
 
           {slotRows.length > 0 && (
-            <ul className="divide-y">
+            <ul className="space-y-3">
               {slotRows.map((slot) => (
-                <li key={slot.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                  <div className="space-y-1">
+                <li key={slot.id} className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">
-                        {formatTimeRange(slot.startTime, slot.endTime)}
-                      </span>
-                      <Badge variant={slot.isDisabled ? "destructive" : "outline"}>
-                        {slot.isDisabled ? "Disabled" : "Bookable"}
-                      </Badge>
-                      <span className="text-sm text-muted-foreground">
-                        {slot.bookedCount}/{slot.maxPatients} booked
-                        {slot.heldCount > 0 ? ` · ${slot.heldCount} held` : ""}
+                      <span className="font-medium text-slate-950">{formatTimeRange(slot.startTime, slot.endTime)}</span>
+                      <Badge variant={slot.isDisabled ? "destructive" : "outline"}>{slot.isDisabled ? "Disabled" : "Bookable"}</Badge>
+                      <span className="text-sm text-slate-600">
+                        {slot.bookedCount}/{slot.maxPatients} booked{slot.heldCount > 0 ? ` · ${slot.heldCount} held` : ""}
                       </span>
                     </div>
                     {slot.isDisabled && slot.disabledReason !== null && (
-                      <p className="text-sm text-muted-foreground">{slot.disabledReason}</p>
+                      <p className="text-sm text-slate-500">{slot.disabledReason}</p>
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setEditSlot(slot)}>
-                      Edit capacity
-                    </Button>
+                    <Button size="sm" variant="outline" className="bg-white" onClick={() => setEditSlot(slot)}>Edit capacity</Button>
                     <Button
                       size="sm"
-                      variant={slot.isDisabled ? "secondary" : "outline"}
-                      onClick={() =>
-                        setReasonTarget({ kind: slot.isDisabled ? "enable" : "disable", slot })
-                      }
+                      variant="outline"
+                      className={slot.isDisabled ? "bg-white" : "border-red-200 bg-white text-red-700 hover:bg-red-50 hover:text-red-800"}
+                      onClick={() => setReasonTarget({ kind: slot.isDisabled ? "enable" : "disable", slot })}
                     >
-                      {slot.isDisabled ? <Power className="size-4" /> : <PowerOff className="size-4" />}
+                      {slot.isDisabled ? <Power className="size-4" aria-hidden="true" /> : <PowerOff className="size-4" aria-hidden="true" />}
                       {slot.isDisabled ? "Enable" : "Disable"}
                     </Button>
                   </div>
@@ -258,50 +231,27 @@ export function SchedulePanel({ initialDoctorId = "" }: { initialDoctorId?: stri
             </ul>
           )}
 
-          <form onSubmit={submitCreate} className="space-y-3 rounded-lg border p-4">
-            <p className="flex items-center gap-2 text-sm font-medium">
-              <Plus className="size-4" /> Add a slot
+          <form onSubmit={submitCreate} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+            <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <Plus className="size-4 text-primary" aria-hidden="true" /> Add a slot
             </p>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-2">
                 <Label htmlFor="slot-start">Start</Label>
-                <Input
-                  id="slot-start"
-                  type="time"
-                  value={startTime}
-                  onChange={(event) => setStartTime(event.target.value)}
-                />
+                <Input id="slot-start" type="time" className="bg-white" value={startTime} onChange={(event) => setStartTime(event.target.value)} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="slot-end">End</Label>
-                <Input
-                  id="slot-end"
-                  type="time"
-                  value={endTime}
-                  onChange={(event) => setEndTime(event.target.value)}
-                />
+                <Input id="slot-end" type="time" className="bg-white" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="slot-capacity">Seats</Label>
-                <Input
-                  id="slot-capacity"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  value={maxPatients}
-                  onChange={(event) => setMaxPatients(event.target.value)}
-                />
+                <Input id="slot-capacity" type="number" min="1" max="1000" className="bg-white" value={maxPatients} onChange={(event) => setMaxPatients(event.target.value)} />
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="slot-reason">Reason (optional on create)</Label>
-              <Textarea
-                id="slot-reason"
-                rows={2}
-                maxLength={1000}
-                value={createReason}
-                onChange={(event) => setCreateReason(event.target.value)}
-              />
+              <Textarea id="slot-reason" rows={2} maxLength={1000} className="bg-white" value={createReason} onChange={(event) => setCreateReason(event.target.value)} />
             </div>
             {createError !== undefined && (
               <Alert variant="destructive">
@@ -311,14 +261,7 @@ export function SchedulePanel({ initialDoctorId = "" }: { initialDoctorId?: stri
             )}
             <Button
               type="submit"
-              disabled={
-                create.isPending ||
-                selectedDoctorId === "" ||
-                startTime === "" ||
-                endTime === "" ||
-                !Number.isInteger(Number(maxPatients)) ||
-                Number(maxPatients) < 1
-              }
+              disabled={create.isPending || selectedDoctorId === "" || startTime === "" || endTime === "" || !Number.isInteger(Number(maxPatients)) || Number(maxPatients) < 1}
             >
               {create.isPending ? "Creating…" : "Create slot"}
             </Button>
@@ -407,50 +350,32 @@ function EditSlotDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Edit slot capacity</DialogTitle>
           <DialogDescription>
-            {formatSlotDate(slot.slotDate)} · {formatTimeRange(slot.startTime, slot.endTime)}. Capacity cannot fall
-            below the seats already booked or held.
+            {formatSlotDate(slot.slotDate)} · {formatTimeRange(slot.startTime, slot.endTime)}. Capacity cannot fall below the seats already booked or held.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2">
           <Label htmlFor="edit-capacity">Seats</Label>
-          <Input
-            id="edit-capacity"
-            type="number"
-            min="1"
-            max="1000"
-            value={capacity}
-            onChange={(event) => setCapacity(event.target.value)}
-          />
+          <Input id="edit-capacity" type="number" min="1" max="1000" className="bg-white" value={capacity} onChange={(event) => setCapacity(event.target.value)} />
         </div>
         <div className="space-y-2">
           <Label htmlFor="edit-reason">Reason</Label>
-          <Textarea
-            id="edit-reason"
-            rows={2}
-            maxLength={1000}
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-          />
+          <Textarea id="edit-reason" rows={2} maxLength={1000} className="bg-white" value={reason} onChange={(event) => setReason(event.target.value)} />
         </div>
 
         {update.error !== null && (
           <Alert variant="destructive">
             <AlertTitle>Could not update the slot</AlertTitle>
-            <AlertDescription>
-              {update.error instanceof ApiError ? update.error.message : "Try again."}
-            </AlertDescription>
+            <AlertDescription>{update.error instanceof ApiError ? update.error.message : "Try again."}</AlertDescription>
           </Alert>
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={update.isPending}>
-            Close
-          </Button>
+          <Button variant="outline" onClick={onClose} disabled={update.isPending}>Close</Button>
           <Button onClick={() => update.mutate()} disabled={update.isPending || invalid}>
             {update.isPending ? "Saving…" : "Save capacity"}
           </Button>
@@ -500,17 +425,17 @@ function UnavailabilityCard({
     },
   })
 
-  const invalid =
-    doctorId === "" || date === "" || startTime === "" || endTime === "" || reason.trim() === ""
+  const invalid = doctorId === "" || date === "" || startTime === "" || endTime === "" || reason.trim() === ""
 
   return (
-    <Card>
+    <Card className="rounded-3xl border-slate-200 shadow-sm">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <CalendarOff className="size-4" /> Unavailability
+        <CardTitle className="flex items-center gap-2 text-xl text-slate-950">
+          <CalendarOff className="size-5 text-primary" aria-hidden="true" /> Unavailability
         </CardTitle>
+        <CardDescription>Mark disruption windows and review existing unavailability for the selected doctor.</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-5">
         {isPending && doctorId !== "" && <PageLoading label="Loading disruptions…" />}
         {isError && (
           <PageError
@@ -520,19 +445,17 @@ function UnavailabilityCard({
           />
         )}
         {rows.length === 0 && !isPending && (
-          <p className="text-sm text-muted-foreground">No disruption windows for this doctor.</p>
+          <p className="text-sm text-slate-600">No disruption windows for this doctor.</p>
         )}
         {rows.length > 0 && (
-          <ul className="divide-y">
+          <ul className="space-y-3">
             {rows.map((entry) => (
-              <li key={entry.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+              <li key={entry.id} className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50/50 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="space-y-1">
-                  <p className="font-medium">
-                    {formatSlotDate(entry.date)} · {formatTimeRange(entry.startTime, entry.endTime)}
-                  </p>
-                  <p className="text-sm text-muted-foreground">{entry.reason}</p>
+                  <p className="font-medium text-slate-950">{formatSlotDate(entry.date)} · {formatTimeRange(entry.startTime, entry.endTime)}</p>
+                  <p className="text-sm text-slate-600">{entry.reason}</p>
                 </div>
-                <Button size="sm" variant="outline" onClick={() => onRemove(entry)}>
+                <Button size="sm" variant="outline" className="border-red-200 bg-white text-red-700 hover:bg-red-50 hover:text-red-800" onClick={() => onRemove(entry)}>
                   Remove
                 </Button>
               </li>
@@ -546,52 +469,31 @@ function UnavailabilityCard({
             setNotice(null)
             create.mutate()
           }}
-          className="space-y-3 rounded-lg border p-4"
+          className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-5"
         >
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <Plus className="size-4" /> Add unavailability
+          <p className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Plus className="size-4 text-primary" aria-hidden="true" /> Add unavailability
           </p>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="unavailable-date">Date</Label>
-              <Input
-                id="unavailable-date"
-                type="date"
-                value={date}
-                onChange={(event) => setDate(event.target.value)}
-              />
+              <Input id="unavailable-date" type="date" className="bg-white" value={date} onChange={(event) => setDate(event.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="unavailable-start">Start</Label>
-              <Input
-                id="unavailable-start"
-                type="time"
-                value={startTime}
-                onChange={(event) => setStartTime(event.target.value)}
-              />
+              <Input id="unavailable-start" type="time" className="bg-white" value={startTime} onChange={(event) => setStartTime(event.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="unavailable-end">End</Label>
-              <Input
-                id="unavailable-end"
-                type="time"
-                value={endTime}
-                onChange={(event) => setEndTime(event.target.value)}
-              />
+              <Input id="unavailable-end" type="time" className="bg-white" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
             </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="unavailable-reason">Reason</Label>
-            <Textarea
-              id="unavailable-reason"
-              rows={2}
-              maxLength={1000}
-              value={reason}
-              onChange={(event) => setReason(event.target.value)}
-            />
+            <Textarea id="unavailable-reason" rows={2} maxLength={1000} className="bg-white" value={reason} onChange={(event) => setReason(event.target.value)} />
           </div>
           {notice !== null && (
-            <Alert>
+            <Alert className="rounded-2xl border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
               <AlertTitle>Unavailability recorded</AlertTitle>
               <AlertDescription>{notice}</AlertDescription>
             </Alert>
@@ -599,9 +501,7 @@ function UnavailabilityCard({
           {create.error !== null && (
             <Alert variant="destructive">
               <AlertTitle>Could not record unavailability</AlertTitle>
-              <AlertDescription>
-                {create.error instanceof ApiError ? create.error.message : "Try again."}
-              </AlertDescription>
+              <AlertDescription>{create.error instanceof ApiError ? create.error.message : "Try again."}</AlertDescription>
             </Alert>
           )}
           <Button type="submit" disabled={create.isPending || invalid}>

@@ -6,4 +6,5 @@ dist/
 *.local.sql
 *.log
 server/src/generated/
+server/uploads/
 .DS_Store

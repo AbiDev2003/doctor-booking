@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiVerifyEmail, ApiError } from "../lib/api";
+import { AuthShell } from "@/components/auth/AuthShell";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 type Outcome = { ok: true } | { ok: false; message: string };
 
@@ -36,46 +39,60 @@ export default function VerifyEmail() {
 
   if (missingToken) {
     return (
-      <main className="card">
-        <h1>Verification failed</h1>
-        <p role="alert">This link is missing its verification token.</p>
-        <ExpiryNote />
-      </main>
+      <AuthShell
+        title="Verification failed"
+        description="We couldn't verify this email link."
+      >
+        <div className="space-y-4">
+          <Alert variant="destructive">
+            <AlertDescription role="alert">This link is missing its verification token.</AlertDescription>
+          </Alert>
+          <ExpiryNote />
+        </div>
+      </AuthShell>
     );
   }
 
   if (outcome === null) {
     return (
-      <main className="card">
-        <h1>Verifying your email…</h1>
-        <p className="hint">One moment.</p>
-      </main>
+      <AuthShell
+        title="Verifying your email…"
+        description="Please wait while we confirm your email address."
+      >
+        <p className="text-sm text-slate-600" role="status">One moment.</p>
+      </AuthShell>
     );
   }
 
   return (
-    <main className="card">
-      <h1>{outcome.ok ? "Email verified" : "Verification failed"}</h1>
+    <AuthShell
+      title={outcome.ok ? "Email verified" : "Verification failed"}
+      description={outcome.ok ? "Your account is ready." : "We couldn't verify this email link."}
+    >
       {outcome.ok ? (
-        <>
-          <p>Your email is verified. You can now book appointments.</p>
-          <Link className="button-link" to="/register">
-            Back to registration
-          </Link>
-        </>
+        <div className="space-y-4">
+          <Alert className="border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
+            <AlertDescription>Your email is verified. You can now book appointments.</AlertDescription>
+          </Alert>
+          <Button asChild className="w-full sm:w-auto">
+            <Link to="/register">Back to registration</Link>
+          </Button>
+        </div>
       ) : (
-        <>
-          <p role="alert">{outcome.message}</p>
+        <div className="space-y-4">
+          <Alert variant="destructive">
+            <AlertDescription role="alert">{outcome.message}</AlertDescription>
+          </Alert>
           <ExpiryNote />
-        </>
+        </div>
       )}
-    </main>
+    </AuthShell>
   );
 }
 
 function ExpiryNote() {
   return (
-    <p className="hint">
+    <p className="text-sm leading-6 text-slate-600">
       Verification links expire after 15 minutes and can only be used once. If yours has expired you will need a new
       link.
     </p>

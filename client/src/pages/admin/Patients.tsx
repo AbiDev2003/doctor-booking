@@ -6,10 +6,10 @@ import { formatSlotDate } from "@/lib/clinicDate"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
-/** §29's patient directory (Day 33). */
 export default function Patients() {
   const [search, setSearch] = useState("")
   const [submitted, setSubmitted] = useState("")
@@ -20,53 +20,51 @@ export default function Patients() {
   })
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Patients</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Every account, including provisional patients created by front-desk bookings.
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Patients</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Patient directory</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+          Browse patient records and search by phone prefix or name.
         </p>
-      </div>
+      </section>
 
-      <Card>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
         <CardHeader>
-          <CardTitle>Directory</CardTitle>
+          <CardTitle className="text-xl text-slate-950">Directory</CardTitle>
+          <CardDescription>Search across registered and provisional patient records.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <form
-            className="flex flex-wrap gap-2"
+            className="flex flex-col gap-3 sm:flex-row sm:items-end"
             onSubmit={(event) => {
               event.preventDefault()
               setSubmitted(search.trim())
             }}
           >
-            <Input
-              aria-label="Search patients"
-              placeholder="Name, email or 2+ phone digits"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              className="max-w-sm"
-            />
-            <Button type="submit" variant="outline">
-              <Search className="size-4" /> Search
-            </Button>
-            {submitted !== "" && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setSearch("")
-                  setSubmitted("")
-                }}
-              >
-                Clear
+            <div className="w-full max-w-sm space-y-2">
+              <Label htmlFor="patient-search">Search</Label>
+              <Input
+                id="patient-search"
+                className="bg-white"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Phone prefix or name"
+                autoComplete="off"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button type="submit">
+                <Search className="size-4" aria-hidden="true" />
+                Search
               </Button>
-            )}
+              {submitted !== "" && (
+                <Button type="button" variant="ghost" onClick={() => { setSearch(""); setSubmitted("") }}>
+                  Clear
+                </Button>
+              )}
+            </div>
           </form>
-          <p className="text-xs text-muted-foreground">
-            Phone search matches any number containing those digits (at least 2). Name search tolerates small
-            misspellings. Up to 100 matches are shown — press Enter or Search.
-          </p>
 
           {patients.isPending && <PageLoading label="Loading patients…" />}
           {patients.isError && (
@@ -77,47 +75,35 @@ export default function Patients() {
             />
           )}
           {patients.data?.patients.length === 0 && (
-            <EmptyState title="No patients found" description="Try a different name, email or phone number." />
+            <EmptyState title="No patients found" description={submitted === "" ? "No patient records yet." : "Try another phone prefix or name."} />
           )}
           {patients.data !== undefined && patients.data.patients.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b text-left text-muted-foreground">
+              <table className="w-full min-w-[760px] text-sm">
+                <thead className="border-b border-slate-200 text-left text-slate-500">
                   <tr>
-                    <th scope="col" className="py-2 pr-3 font-medium">Patient</th>
-                    <th scope="col" className="py-2 pr-3 font-medium">Contact</th>
-                    <th scope="col" className="py-2 pr-3 font-medium">Visits</th>
-                    <th scope="col" className="py-2 pr-3 font-medium">Last visit</th>
-                    <th scope="col" className="py-2 font-medium">Flags</th>
+                    <th scope="col" className="py-3 pr-3 font-medium">Patient</th>
+                    <th scope="col" className="py-3 pr-3 font-medium">Contact</th>
+                    <th scope="col" className="py-3 pr-3 font-medium">Record</th>
+                    <th scope="col" className="py-3 font-medium">Created</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y">
+                <tbody className="divide-y divide-slate-100">
                   {patients.data.patients.map((patient) => (
-                    <tr key={patient.id}>
-                      <td className="py-3 pr-3">
-                        <p className="font-medium">{patient.fullName}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Joined {formatSlotDate(patient.createdAt.slice(0, 10))}
-                        </p>
+                    <tr key={patient.id} className="align-top">
+                      <td className="py-3 pr-3 font-medium text-slate-900">{patient.fullName}</td>
+                      <td className="py-3 pr-3 text-slate-600">
+                        <div>{patient.phone}</div>
+                        <div className="text-xs text-slate-500">{patient.email ?? "No email"}</div>
                       </td>
                       <td className="py-3 pr-3">
-                        <p>{patient.phone}</p>
-                        {patient.email !== null && <p className="text-xs text-muted-foreground">{patient.email}</p>}
-                      </td>
-                      <td className="py-3 pr-3">
-                        {patient.completedCount} completed · {patient.noShowCount} no-show ·{" "}
-                        {patient.upcomingCount} upcoming
-                      </td>
-                      <td className="py-3 pr-3">
-                        {patient.lastVisitDate === null ? "—" : formatSlotDate(patient.lastVisitDate)}
-                      </td>
-                      <td className="py-3">
-                        <div className="flex flex-wrap gap-1">
-                          {patient.isProvisional && <Badge variant="outline">Provisional</Badge>}
+                        <div className="flex flex-wrap gap-1.5">
+                          {patient.isProvisional && <Badge variant="outline">Walk-in</Badge>}
                           {patient.isDeactivated && <Badge variant="destructive">Deactivated</Badge>}
-                          {patient.returning && <Badge variant="secondary">Returning</Badge>}
+                          {!patient.isProvisional && !patient.isDeactivated && <Badge variant="secondary">Registered</Badge>}
                         </div>
                       </td>
+                      <td className="py-3 text-slate-600">{formatSlotDate(patient.createdAt.slice(0, 10))}</td>
                     </tr>
                   ))}
                 </tbody>

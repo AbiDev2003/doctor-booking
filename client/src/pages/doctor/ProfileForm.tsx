@@ -1,28 +1,27 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { UseFormRegisterReturn } from "react-hook-form"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CheckCircle2 } from "lucide-react"
+import { CheckCircle2, ImagePlus, Trash2, UserRound } from "lucide-react"
 import { doctorProfileSchema, type DoctorProfileInputShape } from "@shared/doctors"
 import { useSession } from "../../hooks/useSession"
-import { apiGetDoctor, apiUpdateDoctor, ApiError } from "../../lib/api"
+import {
+  apiDeleteDoctorProfileImage,
+  apiGetDoctor,
+  apiUpdateDoctor,
+  apiUploadDoctorProfileImage,
+  ApiError,
+} from "../../lib/api"
 import { applyApiErrors } from "../../lib/formErrors"
 import { PageError, PageLoading } from "@/components/async-state"
+import { DoctorAvatar } from "@/components/doctor-avatar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-/**
- * §5.2's self-edit (Day 31): the descriptive fields plus the credentials the
- * clinic verifies. The server owns the rules — a credential edit forces
- * PENDING_VERIFICATION (hidden from the public list until re-verified), a
- * descriptive-only edit changes nothing, and the fee is absent here because a
- * doctor may not set their own price (the service 403s; the form simply never
- * offers the field). Everything the page shows about status comes from the
- * UPDATE response, never from local imagination.
- */
 const INITIAL: DoctorProfileInputShape = {
   fullName: "",
   qualification: "",
@@ -66,21 +65,53 @@ export default function ProfileForm() {
     })
   }, [doctor.data, reset])
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [imageError, setImageError] = useState<string | null>(null)
+  const [imageMessage, setImageMessage] = useState<string | null>(null)
+
   const mutation = useMutation({
     mutationFn: (values: DoctorProfileInputShape) => apiUpdateDoctor(user!.id, values),
     onSuccess: (result) => {
       setBanner(
         result.verificationStatus === "PENDING_VERIFICATION"
-          ? "A credential changed. Your listing is hidden from the public site until the clinic re-verifies you (§5.2)."
-          : "Profile updated.",
+          ? "A credential changed. Your listing is hidden from the public site until the clinic re-verifies you."
+          : "Profile updated successfully.",
       )
       setFormError(null)
-      // The public directory (and the Overview tab) reads this same row; a
-      // changed credential can silently unmount a doctor from §26.
       void queryClient.invalidateQueries({ queryKey: ["public", "doctor"] })
       void queryClient.invalidateQueries({ queryKey: ["public", "doctors"] })
       void queryClient.invalidateQueries({ queryKey: ["doctor", user!.id] })
       void queryClient.invalidateQueries({ queryKey: ["admin"] })
+    },
+  })
+
+  const uploadImage = useMutation({
+    mutationFn: (file: File) => apiUploadDoctorProfileImage(user!.id, file),
+    onSuccess: () => {
+      setImageError(null)
+      setImageMessage("Profile photo updated.")
+      void queryClient.invalidateQueries({ queryKey: ["doctor", user!.id] })
+      void queryClient.invalidateQueries({ queryKey: ["public", "doctor"] })
+      void queryClient.invalidateQueries({ queryKey: ["public", "doctors"] })
+    },
+    onError: (err) => {
+      setImageMessage(null)
+      setImageError(err instanceof ApiError ? err.message : "Failed to upload profile photo.")
+    },
+  })
+
+  const removeImage = useMutation({
+    mutationFn: () => apiDeleteDoctorProfileImage(user!.id),
+    onSuccess: () => {
+      setImageError(null)
+      setImageMessage("Profile photo removed.")
+      void queryClient.invalidateQueries({ queryKey: ["doctor", user!.id] })
+      void queryClient.invalidateQueries({ queryKey: ["public", "doctor"] })
+      void queryClient.invalidateQueries({ queryKey: ["public", "doctors"] })
+    },
+    onError: (err) => {
+      setImageMessage(null)
+      setImageError(err instanceof ApiError ? err.message : "Failed to remove profile photo.")
     },
   })
 
@@ -107,76 +138,123 @@ export default function ProfileForm() {
   })
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Your profile</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Verified as a doctor at this clinic.</p>
-      </div>
+    <div className="space-y-8">
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Profile</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Your profile</h1>
+        <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">
+          Manage your public listing details and credentials. Credential changes require clinic re-verification.
+        </p>
+      </section>
 
       {banner !== null && (
-        <Alert>
+        <Alert className="rounded-2xl border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
           <CheckCircle2 />
           <AlertTitle>Saved</AlertTitle>
           <AlertDescription>{banner}</AlertDescription>
         </Alert>
       )}
 
-      <form onSubmit={onSubmit} noValidate className="space-y-6">
-        <fieldset className="space-y-4 rounded-xl border bg-card p-6">
-          <legend className="px-1 text-sm font-semibold">Descriptive details</legend>
-          <TextInput
-            label="Full name"
-            name="fullName"
-            error={errors.fullName?.message}
-            registration={register("fullName")}
-          />
-          <TextInput
-            label="Specialization"
-            name="specialization"
-            error={errors.specialization?.message}
-            registration={register("specialization")}
-          />
-          <TextInput
-            label="Experience"
-            name="experience"
-            error={errors.experience?.message}
-            registration={register("experience")}
-          />
-          <TextInput
-            label="Practice / clinic association"
-            name="clinicAssociation"
-            error={errors.clinicAssociation?.message}
-            registration={register("clinicAssociation")}
-          />
-        </fieldset>
+      <Card className="rounded-3xl border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-xl text-slate-950">Profile photo</CardTitle>
+          <CardDescription>JPG, PNG, or WebP. Max 2 MB. A default avatar is shown when no photo is uploaded.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4">
+              <DoctorAvatar src={doctor.data.profileImageUrl} name={doctor.data.fullName} className="size-20 text-xl ring-4 ring-slate-50" />
+              <div>
+                <p className="font-medium text-slate-900">{doctor.data.fullName}</p>
+                <p className="text-sm text-slate-500">{doctor.data.specialization || "Doctor profile"}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  setImageMessage(null)
+                  setImageError(null)
+                  uploadImage.mutate(file)
+                  e.currentTarget.value = ""
+                }}
+              />
+              <Button type="button" variant="outline" className="bg-white" onClick={() => fileInputRef.current?.click()} disabled={uploadImage.isPending || removeImage.isPending}>
+                <ImagePlus className="size-4" aria-hidden="true" />
+                {uploadImage.isPending ? "Uploading…" : doctor.data.profileImageUrl ? "Change photo" : "Upload photo"}
+              </Button>
+              {doctor.data.profileImageUrl && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                  onClick={() => {
+                    setImageMessage(null)
+                    setImageError(null)
+                    removeImage.mutate()
+                  }}
+                  disabled={uploadImage.isPending || removeImage.isPending}
+                >
+                  <Trash2 className="size-4" aria-hidden="true" />
+                  {removeImage.isPending ? "Removing…" : "Remove"}
+                </Button>
+              )}
+            </div>
+          </div>
+          {imageMessage && <p className="mt-4 text-sm text-green-700">{imageMessage}</p>}
+          {imageError && <p className="mt-4 text-sm text-destructive" role="alert">{imageError}</p>}
+        </CardContent>
+      </Card>
 
-        <fieldset className="space-y-4 rounded-xl border bg-card p-6">
-          <legend className="px-1 text-sm font-semibold">Credentials — verified on the public listing</legend>
-          <p className="text-sm text-muted-foreground">Editing a credential puts your listing back into re-verification.</p>
-          <TextInput
-            label="Qualification"
-            name="qualification"
-            error={errors.qualification?.message}
-            registration={register("qualification")}
-          />
-          <TextInput
-            label="License number"
-            name="licenseNumber"
-            error={errors.licenseNumber?.message}
-            registration={register("licenseNumber")}
-          />
-        </fieldset>
+      <form onSubmit={onSubmit} noValidate className="space-y-6">
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex size-10 items-center justify-center rounded-xl bg-blue-50 text-primary ring-1 ring-blue-100">
+                <UserRound className="size-5" aria-hidden="true" />
+              </div>
+              <div>
+                <CardTitle className="text-xl text-slate-950">Descriptive details</CardTitle>
+                <CardDescription>Information shown on your public profile.</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <TextInput label="Full name" name="fullName" error={errors.fullName?.message} registration={register("fullName")} />
+            <TextInput label="Specialization" name="specialization" error={errors.specialization?.message} registration={register("specialization")} />
+            <TextInput label="Experience" name="experience" error={errors.experience?.message} registration={register("experience")} />
+            <TextInput label="Practice / clinic association" name="clinicAssociation" error={errors.clinicAssociation?.message} registration={register("clinicAssociation")} />
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-xl text-slate-950">Credentials</CardTitle>
+            <CardDescription>Verified on the public listing. Editing a credential puts your listing back into re-verification.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <TextInput label="Qualification" name="qualification" error={errors.qualification?.message} registration={register("qualification")} />
+            <TextInput label="License number" name="licenseNumber" error={errors.licenseNumber?.message} registration={register("licenseNumber")} />
+          </CardContent>
+        </Card>
 
         {formError !== null && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="rounded-2xl">
             <AlertTitle>Could not save</AlertTitle>
             <AlertDescription>{formError}</AlertDescription>
           </Alert>
         )}
 
-        <Button type="submit" disabled={isSubmitting || mutation.isPending}>
-          {mutation.isPending ? "Saving…" : "Save changes"}
-        </Button>
+        <div className="flex justify-end">
+          <Button type="submit" disabled={isSubmitting || mutation.isPending}>
+            {mutation.isPending ? "Saving…" : "Save changes"}
+          </Button>
+        </div>
       </form>
     </div>
   )
@@ -195,11 +273,12 @@ function TextInput({
 }) {
   const errorId = `${name}-error`
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       <Label htmlFor={name}>{label}</Label>
       <Input
         id={name}
         type="text"
+        className="bg-white"
         aria-invalid={error !== undefined}
         aria-describedby={error !== undefined ? errorId : undefined}
         {...registration}

@@ -387,6 +387,8 @@ model DoctorProfile {
   experience        String? @map("experience")
   clinicAssociation String? @map("clinic_association")
   specialization    String? @map("specialization")
+  // Descriptive public profile image (local file path/URL). Not a credential field - changing it must NOT force re-verification.
+  profileImageUrl   String? @map("profile_image_url")
 
   // Paise. null falls back to the Clinic default; the §14 reschedule price delta is computed against this, so it is required from day one even though the field is optional.
   consultationFee Int? @map("consultation_fee")

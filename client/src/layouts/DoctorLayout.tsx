@@ -1,24 +1,18 @@
+import { useState } from "react"
 import { Link, NavLink, Navigate, Outlet, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
+import { CalendarDays, ClipboardList, LayoutDashboard, LogOut, Menu, UserRound, X } from "lucide-react"
 import { useSession } from "../hooks/useSession"
 import { apiLogout } from "../lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-/**
- * §28's doctor shell (Day 31): the role guard and the tab bar around every
- * dashboard page.
- *
- * The guard is intentionally cheap-visual, not a security boundary: a DOCTOR
- * route on the server re-checks `requireRole(DOCTOR)` per request, so this page
- * navigating an impostor away is kindness, not the enforcement. A signed-in
- * non-doctor is sent to their own front door rather than shown a tab bar they
- * cannot use.
- */
 function navClass({ isActive }: { isActive: boolean }): string {
   return cn(
-    "rounded-md px-3 py-2 text-sm font-medium transition-colors",
-    isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+    "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+    isActive
+      ? "bg-blue-50 text-primary shadow-sm ring-1 ring-blue-100"
+      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
   )
 }
 
@@ -26,12 +20,15 @@ export default function DoctorLayout() {
   const { user, isLoading } = useSession()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   if (isLoading) {
     return (
-      <div className="mx-auto max-w-5xl px-6 py-10">
-        <h1 className="text-2xl font-semibold">Doctor dashboard</h1>
-        <p className="mt-2 text-sm text-muted-foreground">Loading…</p>
+      <div className="min-h-screen bg-slate-50">
+        <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+          <div className="h-8 w-48 animate-pulse rounded bg-slate-200" />
+          <div className="mt-4 h-24 animate-pulse rounded-2xl bg-white" />
+        </div>
       </div>
     )
   }
@@ -43,6 +40,8 @@ export default function DoctorLayout() {
     return <Navigate to="/" replace />
   }
 
+  const closeMobileMenu = () => setMobileMenuOpen(false)
+
   async function signOut() {
     await apiLogout()
     queryClient.removeQueries({ queryKey: ["me"] })
@@ -50,45 +49,106 @@ export default function DoctorLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:shadow"
       >
         Skip to content
       </a>
-      <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
-          <Link to="/doctor" className="font-bold text-foreground">
-            Clinic
-          </Link>
-          <nav aria-label="Doctor dashboard" className="flex flex-wrap items-center gap-1">
+
+      <header className="sticky top-0 z-20 border-b border-slate-200 bg-slate-100/90 shadow-sm backdrop-blur">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <div className="flex items-center gap-4">
+            <Link to="/" className="inline-flex items-center gap-2 text-slate-950" aria-label="City Care Clinic home" onClick={closeMobileMenu}>
+              <span className="inline-flex size-9 items-center justify-center rounded-xl bg-primary text-sm font-bold text-primary-foreground shadow-sm shadow-blue-200">
+                C
+              </span>
+              <span className="text-lg font-semibold tracking-tight">City Care Clinic</span>
+            </Link>
+            <div className="hidden h-6 w-px bg-slate-200 sm:block" aria-hidden="true" />
+            <div className="hidden sm:block">
+              <p className="text-sm font-medium text-slate-900">Doctor portal</p>
+              <p className="text-xs text-slate-500">Manage your schedule and queue</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="hidden bg-white md:inline-flex" onClick={() => void signOut()}>
+              <LogOut className="size-4" aria-hidden="true" />
+              Sign out
+            </Button>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="bg-white md:hidden"
+              aria-expanded={mobileMenuOpen}
+              aria-controls="doctor-mobile-nav"
+              aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+              onClick={() => setMobileMenuOpen((open) => !open)}
+            >
+              {mobileMenuOpen ? <X className="size-4" aria-hidden="true" /> : <Menu className="size-4" aria-hidden="true" />}
+            </Button>
+          </div>
+        </div>
+
+        <div className="border-t border-slate-100">
+          <nav aria-label="Doctor dashboard" className="mx-auto hidden max-w-6xl flex-wrap gap-1 px-4 py-2 md:flex sm:px-6">
             <NavLink to="/doctor" end className={navClass}>
+              <LayoutDashboard className="size-4" aria-hidden="true" />
               Overview
             </NavLink>
             <NavLink to="/doctor/queue" className={navClass}>
+              <ClipboardList className="size-4" aria-hidden="true" />
               Queue
             </NavLink>
             <NavLink to="/doctor/schedule" className={navClass}>
+              <CalendarDays className="size-4" aria-hidden="true" />
               Schedule
             </NavLink>
             <NavLink to="/doctor/profile" className={navClass}>
+              <UserRound className="size-4" aria-hidden="true" />
               Profile
             </NavLink>
-            <Link
-              to="/"
-              className="rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            >
-              Public site
-            </Link>
-            <Button variant="ghost" size="sm" onClick={() => void signOut()}>
-              Sign out
-            </Button>
           </nav>
+
+          {mobileMenuOpen && (
+            <nav id="doctor-mobile-nav" aria-label="Doctor dashboard mobile" className="mx-auto max-w-6xl px-4 py-3 md:hidden sm:px-6">
+              <div className="grid gap-1 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+                <NavLink to="/doctor" end className={navClass} onClick={closeMobileMenu}>
+                  <LayoutDashboard className="size-4" aria-hidden="true" />
+                  Overview
+                </NavLink>
+                <NavLink to="/doctor/queue" className={navClass} onClick={closeMobileMenu}>
+                  <ClipboardList className="size-4" aria-hidden="true" />
+                  Queue
+                </NavLink>
+                <NavLink to="/doctor/schedule" className={navClass} onClick={closeMobileMenu}>
+                  <CalendarDays className="size-4" aria-hidden="true" />
+                  Schedule
+                </NavLink>
+                <NavLink to="/doctor/profile" className={navClass} onClick={closeMobileMenu}>
+                  <UserRound className="size-4" aria-hidden="true" />
+                  Profile
+                </NavLink>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                  onClick={() => {
+                    closeMobileMenu()
+                    void signOut()
+                  }}
+                >
+                  <LogOut className="size-4" aria-hidden="true" />
+                  Sign out
+                </button>
+              </div>
+            </nav>
+          )}
         </div>
       </header>
 
-      <main id="main-content" className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      <main id="main-content" className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-10">
         <Outlet />
       </main>
     </div>

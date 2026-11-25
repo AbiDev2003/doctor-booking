@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
-import { useSearchParams, Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiVerifyEmailChange, ApiError } from "../lib/api";
+import { AuthShell } from "@/components/auth/AuthShell";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 type Outcome = { ok: true } | { ok: false; message: string };
 
@@ -39,49 +42,63 @@ export default function VerifyEmailChange() {
 
   if (missingToken) {
     return (
-      <main className="card">
-        <h1>Verification failed</h1>
-        <p role="alert">This link is missing its verification token.</p>
-        <ExpiryNote />
-      </main>
+      <AuthShell
+        title="Verification failed"
+        description="We couldn't verify this email change link."
+      >
+        <div className="space-y-4">
+          <Alert variant="destructive">
+            <AlertDescription role="alert">This link is missing its verification token.</AlertDescription>
+          </Alert>
+          <ExpiryNote />
+        </div>
+      </AuthShell>
     );
   }
 
   if (outcome === null) {
     return (
-      <main className="card">
-        <h1>Verifying your new email…</h1>
-        <p className="hint">One moment.</p>
-      </main>
+      <AuthShell
+        title="Verifying your new email…"
+        description="Please wait while we confirm your new email address."
+      >
+        <p className="text-sm text-slate-600" role="status">One moment.</p>
+      </AuthShell>
     );
   }
 
   return (
-    <main className="card">
-      <h1>{outcome.ok ? "Email address updated" : "Verification failed"}</h1>
+    <AuthShell
+      title={outcome.ok ? "Email address updated" : "Verification failed"}
+      description={outcome.ok ? "Your sign-in email has been changed." : "We couldn't verify this email change link."}
+    >
       {outcome.ok ? (
-        <>
-          <p>
-            Your account now uses the new email address. The previous address is no longer active — use the new one
-            next time you sign in.
-          </p>
-          <Link className="button-link" to="/login">
-            Back to sign in
-          </Link>
-        </>
+        <div className="space-y-4">
+          <Alert className="border-green-200 bg-green-50/70 text-green-950 [&>svg]:text-green-700">
+            <AlertDescription>
+              Your account now uses the new email address. The previous address is no longer active — use the new one
+              next time you sign in.
+            </AlertDescription>
+          </Alert>
+          <Button asChild className="w-full sm:w-auto">
+            <Link to="/login">Back to sign in</Link>
+          </Button>
+        </div>
       ) : (
-        <>
-          <p role="alert">{outcome.message}</p>
+        <div className="space-y-4">
+          <Alert variant="destructive">
+            <AlertDescription role="alert">{outcome.message}</AlertDescription>
+          </Alert>
           <ExpiryNote />
-        </>
+        </div>
       )}
-    </main>
+    </AuthShell>
   );
 }
 
 function ExpiryNote() {
   return (
-    <p className="hint">
+    <p className="text-sm leading-6 text-slate-600">
       Change links expire after 15 minutes and can only be used once. If yours has expired, request a new change from
       your profile.
     </p>
