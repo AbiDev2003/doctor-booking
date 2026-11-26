@@ -39,7 +39,7 @@
 // Which mode ran is logged at the end. Nobody should have to guess why a login
 // failed.
 
-import "dotenv/config";
+import "../src/lib/env.js";
 import bcrypt from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client.js";

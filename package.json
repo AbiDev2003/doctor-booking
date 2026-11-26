@@ -2,6 +2,7 @@
   "name": "doctor-booking",
   "private": true,
   "scripts": {
+    "build": "npm --prefix server run build",
     "dev:client": "npm --prefix client run dev",
     "dev:server": "npm --prefix server run dev",
     "db:bootstrap": "npm --prefix server run db:bootstrap",
@@ -10,5 +11,9 @@
     "db:generate": "npm --prefix server run db:generate",
     "lint": "npm --prefix client run lint && npm --prefix server run lint",
     "typecheck": "npm --prefix client run typecheck && npm --prefix server run typecheck"
+  },
+  "dependencies": {
+    "@neon/config": "^1.14.8",
+    "@neon/env": "^2.1.11"
   }
 }

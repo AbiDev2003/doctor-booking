@@ -1,10 +1,11 @@
 // Prisma CLI configuration.
 //
-// Prisma 7 no longer loads .env by itself, so the explicit `dotenv/config`
-// import is required — without it every CLI command fails with an undefined
-// DATABASE_URL. The datasource URL lives here rather than in schema.prisma
-// because v7 deprecated it in the schema.
-import "dotenv/config";
+// Prisma 7 no longer loads .env by itself, so an explicit dotenv load is
+// required — without it every CLI command fails with an undefined URL. The
+// shared loader reads Neon's root .env.local first, then server/.env.
+// The datasource URL lives here rather than in schema.prisma because v7
+// deprecated it in the schema.
+import "./src/lib/env.js";
 import { defineConfig, env } from "prisma/config";
 
 export default defineConfig({
@@ -26,6 +27,9 @@ export default defineConfig({
     seed: "tsx prisma/seed.ts",
   },
   datasource: {
-    url: env("DATABASE_URL"),
+    // Neon migrations use the direct endpoint; PgBouncer (pooled endpoint) is
+    // transaction-mode and can leave Prisma's advisory lock held. The fallback
+    // keeps local development unchanged when only DATABASE_URL is present.
+    url: process.env.DATABASE_URL_UNPOOLED ?? env("DATABASE_URL"),
   },
 });

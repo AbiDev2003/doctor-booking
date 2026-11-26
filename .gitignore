@@ -8,3 +8,4 @@ dist/
 server/src/generated/
 server/uploads/
 .DS_Store
+.neon

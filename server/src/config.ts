@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./lib/env.js";
 import { z } from "zod";
 import { DURATION_PATTERN, durationToMs } from "./lib/duration.js";
 
