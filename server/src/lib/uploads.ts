@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { v2 as cloudinary } from "cloudinary";
 import multer from "multer";
+import { config } from "../config.js";
 import { AppError } from "./appError.js";
 
 export const UPLOADS_ROOT = path.resolve(process.cwd(), "uploads");
@@ -15,6 +17,80 @@ const EXT_BY_MIME: Record<string, string> = {
   "image/png": ".png",
   "image/webp": ".webp",
 };
+
+/**
+ * Cloudinary is optional. With a complete credential set, uploads go straight
+ * to Cloudinary and the database stores the returned absolute HTTPS URL.
+ * Without it, the original local /uploads flow remains intact for development
+ * and tests. This keeps Render's ephemeral filesystem out of the picture in
+ * production while not forcing every contributor to own a Cloudinary account.
+ */
+const CLOUDINARY_CLOUD_NAME = config.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY = config.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = config.CLOUDINARY_API_SECRET;
+const CLOUDINARY_READY = Boolean(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
+
+if (CLOUDINARY_READY && CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: CLOUDINARY_API_KEY,
+    api_secret: CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+}
+
+export function isCloudinaryConfigured(): boolean {
+  return CLOUDINARY_READY;
+}
+
+function cloudinaryPublicId(doctorId: string): string {
+  return `${config.CLOUDINARY_FOLDER}/${doctorId}`;
+}
+
+export async function uploadProfileImageToCloudinary(buffer: Buffer, doctorId: string): Promise<string> {
+  if (!CLOUDINARY_READY) {
+    throw new AppError(503, "IMAGE_STORAGE_UNAVAILABLE", "Cloudinary profile image storage is not configured.");
+  }
+
+  const result = await new Promise<{ secure_url?: string }>((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        public_id: cloudinaryPublicId(doctorId),
+        resource_type: "image",
+        overwrite: true,
+        unique_filename: false,
+        invalidate: true,
+      },
+      (error, uploadResult) => {
+        if (error || !uploadResult) {
+          reject(error ?? new Error("Cloudinary upload failed."));
+          return;
+        }
+        resolve(uploadResult);
+      },
+    );
+    stream.end(buffer);
+  });
+
+  if (!result.secure_url) {
+    throw new Error("Cloudinary did not return a secure image URL.");
+  }
+  return result.secure_url;
+}
+
+export async function deleteStoredProfileImage(
+  url: string | null | undefined,
+  doctorId: string,
+): Promise<void> {
+  if (CLOUDINARY_READY && typeof url === "string" && url.startsWith("https://res.cloudinary.com/")) {
+    await cloudinary.uploader.destroy(cloudinaryPublicId(doctorId), {
+      resource_type: "image",
+      invalidate: true,
+    });
+    return;
+  }
+  deleteLocalProfileImage(url);
+}
 
 export function ensureUploadDirs(): void {
   fs.mkdirSync(DOCTOR_PROFILE_UPLOAD_DIR, { recursive: true });
@@ -45,7 +121,7 @@ export function deleteLocalProfileImage(url: string | null | undefined): void {
   }
 }
 
-const storage = multer.diskStorage({
+const localStorage = multer.diskStorage({
   destination: (req, _file, cb) => {
     const rawId = req.params.id;
     const doctorId = typeof rawId === "string" ? rawId : Array.isArray(rawId) ? rawId[0] : undefined;
@@ -64,7 +140,7 @@ const storage = multer.diskStorage({
 });
 
 export const uploadDoctorProfileImage = multer({
-  storage,
+  storage: CLOUDINARY_READY ? multer.memoryStorage() : localStorage,
   limits: { fileSize: PROFILE_IMAGE_MAX_BYTES, files: 1 },
   fileFilter: (_req, file, cb) => {
     if (!PROFILE_IMAGE_MIME_TYPES.has(file.mimetype)) {

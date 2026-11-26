@@ -43,6 +43,48 @@ Conclusion so far: the public storefront API fetch path is working. If the user 
 
 Known cosmetic issue that can look like broken data: doctor `profileImageUrl` values are still local `/uploads/doctors/...` paths. On Vercel those resolve against the frontend domain, not the Render backend, so images will not load and avatars fall back to initials.
 
+### Doctor profile migration check
+
+Compared `server/.env` local Postgres `DATABASE_URL` with deployed Neon using raw SQL over `doctor_profiles` joined to `users`:
+
+- Local and deployed rows are identical.
+- Differences: none.
+- Both Dr Asha Menon and Dr Rohit Sharma have their profile fields and local `/uploads/doctors/...` URLs in Neon.
+- Therefore the doctor profile data WAS migrated to the deployed DB.
+- The actual image binary files are NOT present in the repo or deployment:
+  - `server/uploads/` does not exist in the working tree.
+  - No doctor image files found in the repo.
+  - `GET https://city-care-clinic-api.onrender.com/uploads/doctors/...png` → `404 application/json`.
+  - `GET https://city-care-clinic-pearl.vercel.app/uploads/doctors/...png` → `404 text/plain`.
+- Render's filesystem is ephemeral anyway, so local uploads would not survive redeploys. A permanent fix requires object storage/CDN with absolute HTTPS URLs, or clearing the stale URLs so the UI consistently shows initials.
+- User chose to host real images properly with Cloudinary/S3/R2.
+- Original image files were not found anywhere on this machine.
+- No Cloudinary/AWS/S3/R2 credentials are currently present in `.env.local` or `server/.env`.
+- Next input needed from user: the actual two image files plus one of:
+  - Cloudinary: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
+  - S3/R2: access key, secret key, bucket, region/endpoint, public base URL
+- After upload, update `profile_image_url` in Neon to the returned absolute HTTPS URLs and update the server upload flow so future uploads use the same storage instead of local `/uploads`.
+
+### Cloudinary support already implemented ahead of credentials
+
+- Added `cloudinary` dependency to `server/package.json`.
+- Added optional env vars to `server/src/config.ts` and `server/.env.example`:
+  - `CLOUDINARY_CLOUD_NAME`
+  - `CLOUDINARY_API_KEY`
+  - `CLOUDINARY_API_SECRET`
+  - `CLOUDINARY_FOLDER` (default `city-care-clinic/doctors`)
+- `server/src/lib/uploads.ts` now:
+  - uses Cloudinary memory storage when all three credentials are set
+  - keeps the original local `/uploads` flow when they are absent
+  - uploads with stable `public_id = CLOUDINARY_FOLDER/<doctorId>`
+  - deletes old Cloudinary images on replace/delete
+- `server/src/routes/doctors.ts` stores the absolute Cloudinary HTTPS URL in `profile_image_url`.
+- Added `server/scripts/upload-doctor-images.ts` and npm script:
+  - `npm run images:upload-doctor-profiles -- <asha-image> <rohit-image>`
+  - writes to deployed Neon via `DATABASE_URL_UNPOOLED`
+- Typecheck and server build pass.
+- Still blocked only on: real image files + Cloudinary credentials.
+
 ## Render auto-deploy fallback implemented
 
 The user did not complete the browser-only Render GitHub credential step, so a GitHub Actions fallback was added:

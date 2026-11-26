@@ -37,7 +37,14 @@ import {
   archiveDoctor,
   unarchiveDoctor,
 } from "../services/doctors/doctor.service.js";
-import { uploadDoctorProfileImage, deleteLocalProfileImage, profileImagePublicUrl } from "../lib/uploads.js";
+import {
+  uploadDoctorProfileImage,
+  deleteLocalProfileImage,
+  deleteStoredProfileImage,
+  isCloudinaryConfigured,
+  profileImagePublicUrl,
+  uploadProfileImageToCloudinary,
+} from "../lib/uploads.js";
 import { getClinicSettings } from "../services/clinic.service.js";
 import { dispatchNotificationInBackground } from "../services/notifications/notification.service.js";
 import { durationLabel } from "../lib/duration.js";
@@ -341,6 +348,7 @@ doctorsRouter.post(
     const file = req.file;
     const rawId = req.params.id;
     const routeId = typeof rawId === "string" ? rawId : Array.isArray(rawId) ? rawId[0] : "";
+    let uploadedImageUrl: string | null = null;
     try {
       const id = doctorIdOf(req);
       requireSelfOrRole(req, id, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
@@ -348,7 +356,17 @@ doctorsRouter.post(
         throw new AppError(400, "IMAGE_REQUIRED", "A profile image file is required.");
       }
 
-      const profileImageUrl = profileImagePublicUrl(id, file.filename);
+      let profileImageUrl: string;
+      if (isCloudinaryConfigured()) {
+        if (!file.buffer) {
+          throw new AppError(500, "IMAGE_UPLOAD_FAILED", "Uploaded image buffer is missing.");
+        }
+        profileImageUrl = await uploadProfileImageToCloudinary(file.buffer, id);
+      } else {
+        profileImageUrl = profileImagePublicUrl(id, file.filename);
+      }
+      uploadedImageUrl = profileImageUrl;
+
       const result = await setDoctorProfileImage({
         actor: actorOf(req),
         doctorId: id,
@@ -357,7 +375,7 @@ doctorsRouter.post(
       });
 
       if (result.previousProfileImageUrl && result.previousProfileImageUrl !== profileImageUrl) {
-        deleteLocalProfileImage(result.previousProfileImageUrl);
+        await deleteStoredProfileImage(result.previousProfileImageUrl, id);
       }
 
       res.status(200).json({
@@ -365,7 +383,9 @@ doctorsRouter.post(
         profileImageUrl: result.profileImageUrl,
       });
     } catch (err) {
-      if (file && routeId) {
+      if (uploadedImageUrl && routeId) {
+        await deleteStoredProfileImage(uploadedImageUrl, routeId);
+      } else if (file && routeId && file.filename) {
         deleteLocalProfileImage(profileImagePublicUrl(routeId, file.filename));
       }
       next(err);
@@ -383,7 +403,7 @@ doctorsRouter.delete("/:id/profile-image", selfOrStaff, async (req, res, next) =
       ...requestMeta(req, res),
     });
     if (result.previousProfileImageUrl) {
-      deleteLocalProfileImage(result.previousProfileImageUrl);
+      await deleteStoredProfileImage(result.previousProfileImageUrl, id);
     }
     res.status(200).json({ message: "Profile image removed.", profileImageUrl: null });
   } catch (err) {

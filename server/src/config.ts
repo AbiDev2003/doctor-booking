@@ -111,6 +111,12 @@ const envSchema = z.object({
   // and the browser-verify path carries conversions (§17), same fail-fast
   // shape as RAZORPAY_* above.
   RAZORPAY_WEBHOOK_SECRET: optionalSecret,
+  // Doctor profile photos. All three Cloudinary values must be set together;
+  // when they are absent the server keeps its original local /uploads flow.
+  CLOUDINARY_CLOUD_NAME: optionalSecret,
+  CLOUDINARY_API_KEY: optionalSecret,
+  CLOUDINARY_API_SECRET: optionalSecret,
+  CLOUDINARY_FOLDER: z.preprocess(blankAsUndefined, z.string().min(1).default("city-care-clinic/doctors")),
 })
   // The owner is a single row, so HALF of it is not a valid configuration, in
   // either direction: an email with no name fails at the `users.full_name` NOT
@@ -172,7 +178,21 @@ const envSchema = z.object({
   .refine((env) => env.NODE_ENV !== "production" || env.RESEND_API_KEY !== undefined, {
     path: ["RESEND_API_KEY"],
     message: "required when NODE_ENV=production — there is no console email transport in production",
-  });
+  })
+  // A half-configured Cloudinary client would either upload nowhere or silently
+  // keep writing local /uploads paths on a host with an ephemeral filesystem.
+  .refine(
+    (env) => {
+      const configured = [env.CLOUDINARY_CLOUD_NAME, env.CLOUDINARY_API_KEY, env.CLOUDINARY_API_SECRET].filter(
+        (value) => value !== undefined,
+      ).length;
+      return configured === 0 || configured === 3;
+    },
+    {
+      path: ["CLOUDINARY_CLOUD_NAME"],
+      message: "CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET must be set together",
+    },
+  );
 
 const parsed = envSchema.safeParse(process.env);
 
