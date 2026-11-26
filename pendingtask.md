@@ -85,21 +85,22 @@ Compared `server/.env` local Postgres `DATABASE_URL` with deployed Neon using ra
 - Typecheck and server build pass.
 - Still blocked only on: real image files + Cloudinary credentials.
 
-## Render auto-deploy: native connection active, fallback removed
+## Render auto-deploy: native trigger disabled, single Actions trigger active
 
-A GitHub Actions fallback was temporarily added while Render's GitHub webhook was missing:
+A GitHub Actions fallback was temporarily removed after one native Render `new_commit` deploy appeared:
 
-- `.github/workflows/render-deploy.yml` triggered on `main` pushes and called Render API with `commitId: github.sha`.
-- Encrypted repository secret `RENDER_API_KEY` was added using the available GitHub credential and Render CLI API key. The value was never stored in the repo.
+- On commit `7a9643a`, Render produced BOTH:
+  - `dep-dc45tv29lscs73dtj8rg` — trigger `new_commit`, status `live`
+  - `dep-dc45u036ul8s73fe4de0` — trigger `api`
+- That single `new_commit` deploy turned out to be a one-time effect of saving Render's GitHub settings, not reliable push-triggered auto-deploy.
+- The follow-up cleanup commit `5f936dc` and empty verification commit `77c0566` produced NO native Render deploy. The GitHub repo hooks list is empty; Render's native connection is not firing on later pushes.
 
-On commit `7a9643a`, Render produced BOTH:
+Final state now:
 
-- `dep-dc45tv29lscs73dtj8rg` — trigger `new_commit`, status `live`
-- `dep-dc45u036ul8s73fe4de0` — trigger `api`
-
-That proves native Render Git auto-deploy is now active. The GitHub Actions workflow is therefore redundant and should be removed to avoid duplicate builds; the secret should also be deleted.
-
-Final desired state: plain `git push origin main` triggers Vercel natively and Render natively, with no manual deploy and no duplicate fallback workflow.
+- Render service has `autoDeploy: "no"` and `autoDeployTrigger: "off"` (verified via Render API).
+- `.github/workflows/render-deploy.yml` was restored. It triggers on every push to `main` and `workflow_dispatch`, and calls `POST /v1/services/srv-dc42lu8u01pc73emqong/deploys` with `commitId: github.sha`.
+- Encrypted repository secret `RENDER_API_KEY` was restored. The value is not stored in the repo.
+- Plain `git push origin main` should trigger Vercel natively and exactly one Render `api` deploy via Actions, with no manual deploy and no duplicate `new_commit` deploy.
 
 ---
 
@@ -235,26 +236,17 @@ Neon Git hook is not needed. Render pre-deploy runs `npx prisma migrate deploy`,
 
 ---
 
-## Current blocker: Render Git auto-deploy not fully connected
+## Resolved: Render Git auto-deploy investigation
 
-Render shows:
+At first, Render displayed `autoDeploy: "yes"`, `autoDeployTrigger: "commit"`, branch `main`, repo `https://github.com/AbiDev2003/doctor-booking`, but push `84f3802` did not create a deploy.
 
-- `autoDeploy: "yes"`
-- `autoDeployTrigger: "commit"`
-- branch `main`
-- repo `https://github.com/AbiDev2003/doctor-booking`
+Investigation findings:
 
-However, push `84f3802` did **not** create a new Render deploy. Vercel reacted to that same push, but Render did not.
-
-Investigation result:
-
-- Render deploy history stayed at previous API-triggered deploy `dep-dc42u27f3r2c73a4tro0`, commit `f5803a0`.
-- No newer Render deploy for `84f3802`.
+- Render deploy history stayed at API-triggered `dep-dc42u27f3r2c73a4tro0` (commit `f5803a0`).
 - `GET /build-sources` returned `[]`.
-- Attempted `POST /build-sources` with the exact Git/build config returned:
-  - `400 build source reuse is not enabled for this workspace`
-- Render docs confirm automatic deploys require a connected Git provider; a plain repo URL alone does not create the webhook.
-- Render CLI/API token cannot complete GitHub OAuth. This needs a one-time browser action.
+- `POST /build-sources` failed with `400 build source reuse is not enabled for this workspace`.
+- The GitHub repo hooks list is empty, so Render's native GitHub webhook is not reliably firing on later pushes.
+- A single `new_commit` deploy appeared only when Render GitHub settings were saved; the following commits did not trigger native deploys.
 
 Render deploy IDs already seen:
 
@@ -262,35 +254,7 @@ Render deploy IDs already seen:
 - `dep-dc42miajnfac73bb5qhg` — fixed live deploy
 - `dep-dc42u27f3r2c73a4tro0` — env/CORS update live deploy
 
----
-
-## Paused pending task: one-time Render GitHub connection
-
-User chose **Connect in Render (Recommended)** and native Render Git auto-deploy is now confirmed active via the `new_commit` deploy for `7a9643a`. No browser action remains pending for auto-deploy.
-
-Do this later in the browser:
-
-1. Open `https://dashboard.render.com/u/settings#account-security`
-2. Go to **Account Security → Git Deployment Credentials**
-3. Click **Add credential → GitHub**
-4. Authorize Render for `AbiDev2003/doctor-booking`
-5. If repo does not appear, visit `https://github.com/apps/render/installations/new` and enable repository access for `doctor-booking`
-6. Open `https://dashboard.render.com/web/srv-dc42lu8u01pc73emqong/settings`
-7. Select/re-save GitHub repo:
-   - Repo: `AbiDev2003/doctor-booking`
-   - Branch: `main`
-   - Root directory: `server`
-   - Auto-Deploy: **On Commit**
-8. Save settings.
-
-After the user says done:
-
-- Push a harmless empty commit to `main`, e.g. `git commit --allow-empty -m "chore: verify render auto deploy" && git push origin main`
-- Confirm Render creates a new deploy automatically with matching commit SHA.
-- Check with:
-  - `render deploys list srv-dc42lu8u01pc73emqong -o json`
-  - Expected newest deploy status should become `live`, trigger should indicate Git/commit rather than API.
-- Then delete `pendingtask.md`.
+No browser action is needed now. Native Render auto-deploy is deliberately disabled and GitHub Actions is the single reliable Render trigger.
 
 ---
 
