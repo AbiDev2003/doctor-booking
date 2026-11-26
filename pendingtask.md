@@ -85,18 +85,21 @@ Compared `server/.env` local Postgres `DATABASE_URL` with deployed Neon using ra
 - Typecheck and server build pass.
 - Still blocked only on: real image files + Cloudinary credentials.
 
-## Render auto-deploy fallback implemented
+## Render auto-deploy: native connection active, fallback removed
 
-The user did not complete the browser-only Render GitHub credential step, so a GitHub Actions fallback was added:
+A GitHub Actions fallback was temporarily added while Render's GitHub webhook was missing:
 
-- Added `.github/workflows/render-deploy.yml`.
-- It triggers on every push to `main` and on manual `workflow_dispatch`.
-- It calls Render API:
-  - `POST https://api.render.com/v1/services/srv-dc42lu8u01pc73emqong/deploys`
-  - body uses the exact `github.sha` as `commitId`.
-- Added encrypted repository secret `RENDER_API_KEY` using the available GitHub credential and the Render CLI API key. The secret value is not stored in the repo.
-- This gives automatic backend deploys without requiring the Render GitHub OAuth/webhook setup.
-- If native Render GitHub auto-deploy is connected later, remove this workflow to avoid duplicate deploys.
+- `.github/workflows/render-deploy.yml` triggered on `main` pushes and called Render API with `commitId: github.sha`.
+- Encrypted repository secret `RENDER_API_KEY` was added using the available GitHub credential and Render CLI API key. The value was never stored in the repo.
+
+On commit `7a9643a`, Render produced BOTH:
+
+- `dep-dc45tv29lscs73dtj8rg` — trigger `new_commit`, status `live`
+- `dep-dc45u036ul8s73fe4de0` — trigger `api`
+
+That proves native Render Git auto-deploy is now active. The GitHub Actions workflow is therefore redundant and should be removed to avoid duplicate builds; the secret should also be deleted.
+
+Final desired state: plain `git push origin main` triggers Vercel natively and Render natively, with no manual deploy and no duplicate fallback workflow.
 
 ---
 
@@ -263,7 +266,7 @@ Render deploy IDs already seen:
 
 ## Paused pending task: one-time Render GitHub connection
 
-User chose: **Connect in Render (Recommended)**, but later said to pause this task so we can investigate frontend data fetching first. Do not rely on this being done yet. A GitHub Actions fallback now covers auto-deploy; the browser step is only needed if we want native Render Git integration instead.
+User chose **Connect in Render (Recommended)** and native Render Git auto-deploy is now confirmed active via the `new_commit` deploy for `7a9643a`. No browser action remains pending for auto-deploy.
 
 Do this later in the browser:
 
