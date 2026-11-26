@@ -8,8 +8,8 @@ Each role gets a focused workspace: patients manage their bookings and profile, 
 
 **Live demo**
 
-- Client (web app): `https://<client-deployed-url>`
-- Server (API): `https://<server-deployed-url>`
+- Client (web app): [city-care-clinic-pearl.vercel.app](https://city-care-clinic-pearl.vercel.app)
+- Server (API): [city-care-clinic-api.onrender.com](https://city-care-clinic-api.onrender.com)
 
 ## Tech stack
 
