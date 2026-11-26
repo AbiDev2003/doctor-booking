@@ -2,6 +2,103 @@
 
 Clinic appointment booking system. React + TypeScript client, Express + TypeScript server, PostgreSQL + Prisma.
 
+City Care Clinic is a full-stack appointment booking platform for a multi-doctor clinic. Patients can browse doctors and specializations, see live availability, reserve a slot, and pay online with Razorpay or at the reception desk. Appointments can be rescheduled or cancelled under explicit rules, with email confirmations and reminders around every visit.
+
+Each role gets a focused workspace: patients manage their bookings and profile, the front desk handles check-ins and pay-at-clinic collections, doctors see their upcoming queue and schedule, and admins manage doctors, schedules, clinic settings, payments and the audit trail. Role-based access, rotating sessions, transactional booking rules and a durable history keep that workflow consistent even when several staff members act at the same time.
+
+**Live demo**
+
+- Client (web app): `https://<client-deployed-url>`
+- Server (API): `https://<server-deployed-url>`
+
+## Tech stack
+
+**Client**
+
+[![React 19](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
+[![Tailwind CSS 4](https://img.shields.io/badge/Tailwind-4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
+[![TanStack Query](https://img.shields.io/badge/TanStack-Query-FF4154?style=for-the-badge&logo=tanstack&logoColor=white)](https://tanstack.com/query)
+[![React Router 7](https://img.shields.io/badge/React_Router-7-CA4245?style=for-the-badge&logo=reactrouter&logoColor=white)](https://reactrouter.com/)
+[![Radix UI](https://img.shields.io/badge/Radix_UI-111827?style=for-the-badge&logo=radixui&logoColor=white)](https://www.radix-ui.com/)
+[![React Hook Form](https://img.shields.io/badge/React_Hook_Form-EC5990?style=for-the-badge&logo=reacthookform&logoColor=white)](https://react-hook-form.com/)
+[![Zod](https://img.shields.io/badge/Zod-3E67B1?style=for-the-badge&logo=zod&logoColor=white)](https://zod.dev/)
+
+**Server and data**
+
+[![Node.js](https://img.shields.io/badge/Node.js-5FA04E?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Express 5](https://img.shields.io/badge/Express-5-000000?style=for-the-badge&logo=express&logoColor=white)](https://expressjs.com/)
+[![Prisma 7](https://img.shields.io/badge/Prisma-7-2D3748?style=for-the-badge&logo=prisma&logoColor=white)](https://www.prisma.io/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Razorpay](https://img.shields.io/badge/Razorpay-072554?style=for-the-badge&logo=razorpay&logoColor=white)](https://razorpay.com/)
+[![Resend](https://img.shields.io/badge/Resend-000000?style=for-the-badge&logo=resend&logoColor=white)](https://resend.com/)
+
+**Tooling**
+
+[![Vitest](https://img.shields.io/badge/Vitest-6E9F18?style=for-the-badge&logo=vitest&logoColor=white)](https://vitest.dev/)
+[![ESLint](https://img.shields.io/badge/ESLint-4B32C3?style=for-the-badge&logo=eslint&logoColor=white)](https://eslint.org/)
+
+TypeScript and Zod are shared by both apps, so form shapes and API contracts stay in sync from the browser to the database boundary.
+
+## Screenshots
+
+> Drop the capture files into `docs/screenshots/` with the filenames below (or repoint these paths to hosted images) to complete this section.
+
+| Public landing page | Doctor profile and slot booking |
+| --- | --- |
+| ![City Care Clinic landing page](docs/screenshots/homepage.png) | ![Doctor profile with available slots](docs/screenshots/doctor-profile.png) |
+
+| Patient appointments | Front-desk workspace |
+| --- | --- |
+| ![Patient appointments dashboard](docs/screenshots/patient-appointments.png) | ![Staff desk with check-ins and collections](docs/screenshots/staff-dashboard.png) |
+
+## Project structure
+
+```text
+doctor-booking/
+├── client/                       # Vite + React single-page app
+│   ├── public/
+│   └── src/
+│       ├── components/           # Shared UI, auth, payment and staff widgets
+│       │   ├── auth/
+│       │   ├── payments/
+│       │   ├── staff/
+│       │   └── ui/               # Reusable primitives (button, card, dialog, ...)
+│       ├── hooks/                # Session and other client-side hooks
+│       ├── layouts/              # Public, Patient, Staff, Doctor and Admin shells
+│       ├── lib/                  # API client, money/date and formatting helpers
+│       └── pages/                # Route screens, grouped by role
+│           ├── admin/
+│           ├── doctor/
+│           ├── patient/
+│           └── staff/
+├── server/                       # Express REST API
+│   ├── prisma/
+│   │   ├── migrations/           # Versioned schema history
+│   │   └── seed.ts               # Clinic defaults and initial accounts
+│   ├── scripts/                  # Bootstrap, seeds, dev helpers, DB assertions
+│   ├── src/
+│   │   ├── jobs/                 # Reminders, auto-cancel, hold expiry, slot generation
+│   │   ├── lib/                  # Cross-cutting helpers (auth, fees, guards, mailer, ...)
+│   │   ├── middleware/           # Auth, RBAC, rate limit, request id, errors
+│   │   ├── routes/               # HTTP layer: parse, authorize, shape responses
+│   │   ├── schemas/              # Zod request/response contracts per route group
+│   │   ├── services/             # Business rules and transactions, by domain
+│   │   └── types/                # Shared TypeScript types
+│   └── tests/                    # Unit and integration suites
+└── README.md
+```
+
+Why this layout:
+
+- **Two deployable apps, one repo.** `client/` and `server/` each own a `package.json`, so the SPA can ship to static hosting while the API is deployed separately. The root only proxies the shared dev, lint and typecheck commands.
+- **Client: pages → layouts → components.** Pages own route-level data and actions, layouts own role navigation and chrome, and `components/ui` holds small reusable primitives. Role folders keep patient, staff, doctor and admin screens from bleeding into one another.
+- **Server: thin routes, domain services.** Routes parse input with Zod, enforce auth/RBAC and shape responses; services own transactions, state transitions, booking guards and payment/refund policies. HTTP concerns stay out of the rules, which both routes and background jobs can reuse.
+- **Schemas next to routes.** One Zod file per route group keeps validation, and the types derived from it, beside the endpoint that uses them.
+- **Jobs are first-class.** Reminders, auto-cancel and hold expiry live in `src/jobs/` instead of being hidden in routes, and call the same services the API does.
+- **Database changes are versioned.** Schema history lives in `prisma/migrations`, seed data is reproducible, `db:assert` checks hand-written constraints, and one-off tooling stays in `scripts/` rather than runtime code.
+
 ## Run locally
 
 Two terminals from the repo root:
