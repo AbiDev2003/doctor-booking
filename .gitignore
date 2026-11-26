@@ -9,3 +9,7 @@ server/src/generated/
 server/uploads/
 .DS_Store
 .neon
+
+.vercel
+.env*
+!.env.example
