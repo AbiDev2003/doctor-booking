@@ -38,3 +38,17 @@ export type ReasonInputShape = z.infer<typeof reasonSchema>;
 /** Unsuspend is audited but §5.2 does not make its reason mandatory — optional here. */
 export const optionalReasonSchema = z.object({ reason: reason.optional() });
 export type OptionalReasonInputShape = z.infer<typeof optionalReasonSchema>;
+
+/** Admin review of a doctor-proposed credential change. */
+export const doctorCredentialRequestIdParamSchema = z.object({
+  id: z.uuid("Invalid credential change request id"),
+});
+
+export const adminDoctorCredentialRequestsQuerySchema = z.object({
+  status: z.enum(["PENDING", "APPROVED", "REJECTED"]).default("PENDING"),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export type AdminDoctorCredentialRequestsQueryShape = z.infer<
+  typeof adminDoctorCredentialRequestsQuerySchema
+>;

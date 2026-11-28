@@ -20,6 +20,7 @@ const FIELDS = [
   { key: "minLeadMinutes", label: "Minimum lead (minutes)", min: 0, max: 10080 },
   { key: "reminderLeadMinutes", label: "Reminder lead (minutes)", min: 0, max: 10080 },
   { key: "maxActiveBookingsPerPatient", label: "Max active bookings / patient", min: 1, max: 100 },
+  { key: "unclosedBookingReminderMinutes", label: "Unclosed follow-up (minutes after slot end)", min: 1, max: 10080 },
 ] as const
 
 export default function Settings() {

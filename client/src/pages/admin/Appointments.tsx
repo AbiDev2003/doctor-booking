@@ -1,9 +1,11 @@
 import { useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { apiAdminAppointments, apiDeskQueue, apiPublicClinic, apiStaffDoctors, ApiError } from "@/lib/api"
-import type { AppointmentStatus, DeskAppointment } from "@/lib/api"
-import { clinicToday, formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
+import { apiAdminAppointments, apiDeskQueue, apiPublicClinic, ApiError } from "@/lib/api"
+import type { DeskAppointment } from "@/lib/api"
+import { clinicToday, formatTimeRange } from "@/lib/clinicDate"
 import { AppointmentActions } from "@/components/staff/appointment-actions"
+import { AppointmentHistory } from "@/components/appointment-history"
 import { AppointmentStatusBadge } from "@/components/appointment-status-badge"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { Button } from "@/components/ui/button"
@@ -11,23 +13,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-const SELECT_CLASS =
-  "h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 sm:w-auto"
-
-const STATUSES: AppointmentStatus[] = [
-  "PENDING",
-  "CONFIRMED",
-  "ARRIVED",
-  "COMPLETED",
-  "CANCELLED",
-  "REJECTED",
-  "NO_SHOW",
-]
-
 type Mode = "day" | "history"
 
 export default function Appointments() {
-  const [mode, setMode] = useState<Mode>("day")
+  const [searchParams] = useSearchParams()
+  const wantsHistory =
+    ["scope", "from", "to", "search"].some((key) => searchParams.has(key)) ||
+    searchParams.get("status") === "NEEDS_ATTENTION"
+  const [mode, setMode] = useState<Mode>(wantsHistory ? "history" : "day")
 
   return (
     <div className="space-y-8">
@@ -47,7 +40,12 @@ export default function Appointments() {
         </div>
       </section>
 
-      {mode === "day" ? <DayView /> : <HistoryView />}
+      {mode === "day" ? <DayView /> : (
+        <AppointmentHistory
+          fetchAppointments={apiAdminAppointments}
+          queryKeyPrefix={["admin", "appointments"]}
+        />
+      )}
     </div>
   )
 }
@@ -122,103 +120,6 @@ function DayView() {
             )}
           </div>
         ))}
-      </CardContent>
-    </Card>
-  )
-}
-
-function HistoryView() {
-  const [doctorId, setDoctorId] = useState("")
-  const [status, setStatus] = useState<AppointmentStatus | "">("")
-  const [date, setDate] = useState("")
-
-  const doctors = useQuery({ queryKey: ["staff", "doctors"], queryFn: ({ signal }) => apiStaffDoctors(signal) })
-  const appointments = useQuery({
-    queryKey: ["admin", "appointments", doctorId, status, date],
-    queryFn: ({ signal }) =>
-      apiAdminAppointments(
-        {
-          ...(doctorId !== "" && { doctorId }),
-          ...(status !== "" && { status }),
-          ...(date !== "" && { date }),
-          limit: 100,
-        },
-        signal,
-      ),
-  })
-
-  return (
-    <Card className="rounded-3xl border-slate-200 shadow-sm">
-      <CardHeader>
-        <CardTitle className="text-xl text-slate-950">History</CardTitle>
-        <CardDescription>Filter past and current appointments across doctors.</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          <div className="space-y-2">
-            <Label htmlFor="history-doctor">Doctor</Label>
-            <select id="history-doctor" className={SELECT_CLASS} value={doctorId} onChange={(event) => setDoctorId(event.target.value)}>
-              <option value="">All doctors</option>
-              {doctors.data?.doctors.map((doctor) => (
-                <option key={doctor.id} value={doctor.id}>
-                  {doctor.fullName}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="history-status">Status</Label>
-            <select id="history-status" className={SELECT_CLASS} value={status} onChange={(event) => setStatus(event.target.value as AppointmentStatus | "")}>
-              <option value="">All statuses</option>
-              {STATUSES.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="history-date">Date</Label>
-            <Input id="history-date" type="date" className="bg-white" value={date} onChange={(event) => setDate(event.target.value)} />
-          </div>
-        </div>
-
-        {appointments.isPending && <PageLoading label="Loading appointments…" />}
-        {appointments.isError && (
-          <PageError
-            title="Appointments could not be loaded"
-            message={appointments.error instanceof ApiError ? appointments.error.message : undefined}
-            onRetry={() => void appointments.refetch()}
-          />
-        )}
-        {appointments.data?.appointments.length === 0 && <EmptyState title="No appointments match" />}
-        {appointments.data !== undefined && appointments.data.appointments.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="border-b border-slate-200 text-left text-slate-500">
-                <tr>
-                  <th scope="col" className="py-3 pr-3 font-medium">When</th>
-                  <th scope="col" className="py-3 pr-3 font-medium">Patient</th>
-                  <th scope="col" className="py-3 pr-3 font-medium">Doctor</th>
-                  <th scope="col" className="py-3 font-medium">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {appointments.data.appointments.map((appointment) => (
-                  <tr key={appointment.id} className="align-top">
-                    <td className="py-3 pr-3 text-slate-600">
-                      <div className="font-medium text-slate-900">{formatSlotDate(appointment.slotDate)}</div>
-                      <div>{formatTimeRange(appointment.startTime, appointment.endTime)}</div>
-                    </td>
-                    <td className="py-3 pr-3 text-slate-900">{appointment.patientName}</td>
-                    <td className="py-3 pr-3 text-slate-600">{appointment.doctorName}</td>
-                    <td className="py-3"><AppointmentStatusBadge status={appointment.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </CardContent>
     </Card>
   )

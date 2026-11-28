@@ -1,6 +1,7 @@
 import { $Enums } from "../../generated/prisma/client.js";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../lib/prisma.js";
+import { appointmentActionFlags, paymentSummaryFor } from "../../lib/appointmentActionFlags.js";
 import { localDateTimeToUtc, utcToLocalDateTime } from "../../lib/time.js";
 import { getClinicSettings } from "../clinic.service.js";
 import { findPatientIds } from "../patients/patientSearch.service.js";
@@ -17,6 +18,7 @@ import type {
   AdminRefundDto,
   AdminRefundsDto,
 } from "../../schemas/admin.js";
+import type { DeskPatientDto } from "../../schemas/staff.js";
 
 /**
  * plan.md §29 — the admin dashboard's read models (Day 33).
@@ -87,29 +89,18 @@ function clinicDateRange(date: string, timeZone: string): { start: Date; endExcl
   };
 }
 
-function paymentSummary(appointment: LoadedAppointment): AdminAppointmentDto["payment"] {
-  let outstandingPaise = 0;
-  let paidPaise = 0;
-  let method: $Enums.PaymentMethod | null = null;
-
-  for (const payment of appointment.payments) {
-    if (payment.status === $Enums.PaymentStatus.PENDING) {
-      outstandingPaise += payment.amountPaise;
-    } else if (payment.status === $Enums.PaymentStatus.PAID) {
-      paidPaise += payment.amountPaise;
-      method ??= payment.method;
-    }
-  }
-
+function toPatientDto(row: LoadedAppointment): DeskPatientDto {
   return {
-    status: outstandingPaise > 0 ? "PENDING" : paidPaise > 0 ? "PAID" : "NONE",
-    outstandingPaise,
-    paidPaise,
-    method,
+    id: row.patientId,
+    fullName: row.patient.fullName,
+    phone: row.patient.patientProfile?.phone ?? "",
+    email: row.patient.email,
+    isProvisional: row.patient.patientProfile?.isProvisional ?? false,
   };
 }
 
-function toAppointmentDto(row: LoadedAppointment): AdminAppointmentDto {
+function toAppointmentDto(row: LoadedAppointment, now: Date): AdminAppointmentDto {
+  const payment = paymentSummaryFor(row);
   return {
     id: row.id,
     doctorId: row.doctorId,
@@ -123,11 +114,15 @@ function toAppointmentDto(row: LoadedAppointment): AdminAppointmentDto {
     feeAmount: row.feeAmount,
     bookingTime: row.bookingTime.toISOString(),
     createdAt: row.createdAt.toISOString(),
+    patient: toPatientDto(row),
+    slotStartsAt: row.slot.startAt.toISOString(),
+    slotEndsAt: row.slot.endAt.toISOString(),
     patientName: row.patient.fullName,
     patientPhone: row.patient.patientProfile?.phone ?? "",
     patientEmail: row.patient.email,
     isProvisional: row.patient.patientProfile?.isProvisional ?? false,
-    payment: paymentSummary(row),
+    payment,
+    ...appointmentActionFlags(row, now, payment),
   };
 }
 
@@ -148,6 +143,7 @@ export async function getAdminOverview(now: Date = new Date()): Promise<AdminOve
     pendingRefunds,
     failedNotifications,
     pendingNotifications,
+    unclosedPast,
   ] = await Promise.all([
     prisma.appointment.groupBy({
       by: ["status"],
@@ -191,6 +187,12 @@ export async function getAdminOverview(now: Date = new Date()): Promise<AdminOve
     }),
     prisma.notification.count({ where: { status: $Enums.NotificationStatus.FAILED } }),
     prisma.notification.count({ where: { status: $Enums.NotificationStatus.PENDING } }),
+    prisma.appointment.count({
+      where: {
+        status: $Enums.AppointmentStatus.CONFIRMED,
+        slot: { endAt: { lte: now } },
+      },
+    }),
   ]);
 
   const byStatus = new Map(statusGroups.map((row) => [row.status, row._count._all]));
@@ -223,6 +225,7 @@ export async function getAdminOverview(now: Date = new Date()): Promise<AdminOve
       cancelled: count($Enums.AppointmentStatus.CANCELLED),
       rejected: count($Enums.AppointmentStatus.REJECTED),
       noShow: count($Enums.AppointmentStatus.NO_SHOW),
+      unclosedPast,
     },
     money: {
       collectedPaise: collected._sum.amountPaise ?? 0,
@@ -337,20 +340,53 @@ export async function listAdminPatients(input: {
   return { patients };
 }
 
-/** GET /admin/appointments — a filterable read over every clinic booking. */
-export async function listAdminAppointments(input: {
+/**
+ * The shared, filterable, desk-shaped read over every booking.
+ *
+ * Both the admin History route and the staff History route call this function;
+ * the role gates live in the routes, and the action flags come from the one
+ * shared helper, so the two dashboards cannot disagree about what is closeable.
+ */
+export async function listClinicAppointmentHistory(input: {
   readonly date?: string | undefined;
+  readonly from?: string | undefined;
+  readonly to?: string | undefined;
+  readonly scope?: "all" | "upcoming" | "past" | "needsAttention" | undefined;
   readonly status?: $Enums.AppointmentStatus | undefined;
   readonly doctorId?: string | undefined;
+  readonly search?: string | undefined;
   readonly limit: number;
 }): Promise<AdminAppointmentsDto> {
   const clinic = await getClinicSettings();
-  const range = input.date === undefined ? null : clinicDateRange(input.date, clinic.timezone);
+  const now = new Date();
+  const dateRange = input.date === undefined ? null : clinicDateRange(input.date, clinic.timezone);
+  const fromRange = input.from === undefined ? null : clinicDateRange(input.from, clinic.timezone);
+  const toRange = input.to === undefined ? null : clinicDateRange(input.to, clinic.timezone);
 
+  const startAt: Prisma.DateTimeFilter = {};
+  if (dateRange !== null) {
+    startAt.gte = dateRange.start;
+    startAt.lt = dateRange.endExclusive;
+  }
+  if (fromRange !== null) startAt.gte = fromRange.start;
+  if (toRange !== null) startAt.lt = toRange.endExclusive;
+
+  const slotWhere: Prisma.SlotWhereInput = {};
+  if (Object.keys(startAt).length > 0) slotWhere.startAt = startAt;
+  if (input.scope === "upcoming") slotWhere.endAt = { gt: now };
+  if (input.scope === "past" || input.scope === "needsAttention") slotWhere.endAt = { lte: now };
+
+  const patientIds =
+    input.search === undefined || input.search.trim() === ""
+      ? null
+      : await findPatientIds(input.search, input.limit);
+
+  const status = input.scope === "needsAttention" ? $Enums.AppointmentStatus.CONFIRMED : input.status;
   const where: Prisma.AppointmentWhereInput = {
-    ...(input.status !== undefined && { status: input.status }),
+    ...(status !== undefined && { status }),
     ...(input.doctorId !== undefined && { doctorId: input.doctorId }),
-    ...(range !== null && { slot: { startAt: { gte: range.start, lt: range.endExclusive } } }),
+    ...(Object.keys(slotWhere).length > 0 && { slot: slotWhere }),
+    ...(patientIds !== null && { patientId: { in: patientIds } }),
   };
 
   const rows = await prisma.appointment.findMany({
@@ -360,8 +396,11 @@ export async function listAdminAppointments(input: {
     select: APPOINTMENT_SELECT,
   });
 
-  return { appointments: rows.map(toAppointmentDto) };
+  return { appointments: rows.map((row) => toAppointmentDto(row, now)) };
 }
+
+/** Historical name kept for the admin route; same behaviour as the shared read. */
+export const listAdminAppointments = listClinicAppointmentHistory;
 
 /** GET /admin/payments — every payment in the clinic, newest first. */
 export async function listAdminPayments(input: {

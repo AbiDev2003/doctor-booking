@@ -24,6 +24,7 @@ import Reschedule from "./pages/patient/Reschedule.tsx";
 import Payments from "./pages/patient/Payments.tsx";
 import StaffLayout from "./layouts/StaffLayout.tsx";
 import StaffToday from "./pages/staff/Today.tsx";
+import StaffHistory from "./pages/staff/History.tsx";
 import StaffAppointments from "./pages/staff/Appointments.tsx";
 import StaffPatients from "./pages/staff/Patients.tsx";
 import StaffPayments from "./pages/staff/Payments.tsx";
@@ -36,6 +37,7 @@ import AdminStaff from "./pages/admin/Staff.tsx";
 import AdminPatients from "./pages/admin/Patients.tsx";
 import AdminAppointments from "./pages/admin/Appointments.tsx";
 import AdminSchedule from "./pages/admin/Schedule.tsx";
+import AdminScheduleRequests from "./pages/admin/ScheduleRequests.tsx";
 import AdminPayments from "./pages/admin/Payments.tsx";
 import AdminNotifications from "./pages/admin/Notifications.tsx";
 import AdminAudit from "./pages/admin/Audit.tsx";
@@ -87,6 +89,7 @@ export default function App() {
       {/* §16/§29 staff front desk (Day 32). */}
       <Route path="/staff" element={<StaffLayout />}>
         <Route index element={<StaffToday />} />
+        <Route path="history" element={<StaffHistory />} />
         <Route path="appointments" element={<StaffAppointments />} />
         <Route path="patients" element={<StaffPatients />} />
         <Route path="payments" element={<StaffPayments />} />
@@ -103,6 +106,7 @@ export default function App() {
         <Route path="patients" element={<AdminPatients />} />
         <Route path="appointments" element={<AdminAppointments />} />
         <Route path="schedule" element={<AdminSchedule />} />
+        <Route path="schedule-requests" element={<AdminScheduleRequests />} />
         <Route path="payments" element={<AdminPayments />} />
         <Route path="notifications" element={<AdminNotifications />} />
         <Route path="audit" element={<AdminAudit />} />

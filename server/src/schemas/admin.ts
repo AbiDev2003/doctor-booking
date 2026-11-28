@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { $Enums } from "../generated/prisma/client.js";
 import type { AppointmentDto } from "./appointments.js";
+import { appointmentHistoryQuerySchema } from "./appointmentHistory.js";
+import type { DeskAppointmentActions, DeskPatientDto, DeskPaymentSummary } from "./staff.js";
 
 /**
  * plan.md §29 — the admin dashboard's request and response shapes (Day 33).
@@ -11,7 +13,6 @@ import type { AppointmentDto } from "./appointments.js";
  * feed is the one list that needs a cursor (Day 20 already built it).
  */
 
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "must be YYYY-MM-DD, e.g. 2026-10-09");
 const limit = z.coerce.number().int().min(1).max(100).default(50);
 
 export const adminPatientsQuerySchema = z.object({
@@ -21,12 +22,8 @@ export const adminPatientsQuerySchema = z.object({
 
 export type AdminPatientsQueryShape = z.infer<typeof adminPatientsQuerySchema>;
 
-export const adminAppointmentsQuerySchema = z.object({
-  date: date.optional(),
-  status: z.enum(["CONFIRMED", "ARRIVED", "COMPLETED", "CANCELLED", "REJECTED", "NO_SHOW", "PENDING"]).optional(),
-  doctorId: z.uuid("Invalid doctor id").optional(),
-  limit,
-});
+/** The admin route keeps its historical schema name; the shape is shared with staff History. */
+export const adminAppointmentsQuerySchema = appointmentHistoryQuerySchema;
 
 export type AdminAppointmentsQueryShape = z.infer<typeof adminAppointmentsQuerySchema>;
 
@@ -65,6 +62,8 @@ export interface AdminOverviewDto {
     readonly cancelled: number;
     readonly rejected: number;
     readonly noShow: number;
+    /** CONFIRMED bookings whose slot has already ended — attendance still open. */
+    readonly unclosedPast: number;
   };
   readonly money: {
     readonly collectedPaise: number;
@@ -182,18 +181,16 @@ export interface AdminNotificationsDto {
   readonly notifications: readonly AdminNotificationDto[];
 }
 
-/** An appointment row with the patient and money summary the admin needs. */
-export interface AdminAppointmentDto extends AppointmentDto {
+/** A desk-shaped appointment row: the History view can drive the same actions. */
+export interface AdminAppointmentDto extends AppointmentDto, DeskAppointmentActions {
+  readonly patient: DeskPatientDto;
+  readonly slotStartsAt: string;
+  readonly slotEndsAt: string;
   readonly patientName: string;
   readonly patientPhone: string;
   readonly patientEmail: string | null;
   readonly isProvisional: boolean;
-  readonly payment: {
-    readonly status: "PENDING" | "PAID" | "NONE";
-    readonly outstandingPaise: number;
-    readonly paidPaise: number;
-    readonly method: $Enums.PaymentMethod | null;
-  };
+  readonly payment: DeskPaymentSummary;
 }
 
 export interface AdminAppointmentsDto {

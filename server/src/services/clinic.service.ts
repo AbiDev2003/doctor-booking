@@ -38,6 +38,7 @@ export interface ClinicSettings {
   readonly minLeadMinutes: number;
   readonly reminderLeadMinutes: number;
   readonly maxActiveBookingsPerPatient: number;
+  readonly unclosedBookingReminderMinutes: number;
 }
 
 export async function getClinicSettings(): Promise<ClinicSettings> {
@@ -54,6 +55,7 @@ export async function getClinicSettings(): Promise<ClinicSettings> {
       minLeadMinutes: true,
       reminderLeadMinutes: true,
       maxActiveBookingsPerPatient: true,
+      unclosedBookingReminderMinutes: true,
     },
   });
 
@@ -72,12 +74,19 @@ export interface ClinicSettingsPatch {
   readonly minLeadMinutes?: number | undefined;
   readonly reminderLeadMinutes?: number | undefined;
   readonly maxActiveBookingsPerPatient?: number | undefined;
+  readonly unclosedBookingReminderMinutes?: number | undefined;
 }
 
 /** The §20 before/after snapshot of the tunables, cast to JSON-friendly objects. */
 type SchedulingTunables = Pick<
   ClinicSettings,
-  "bookingHorizonDays" | "cancelCutoffMinutes" | "holdDurationMinutes" | "minLeadMinutes" | "reminderLeadMinutes" | "maxActiveBookingsPerPatient"
+  | "bookingHorizonDays"
+  | "cancelCutoffMinutes"
+  | "holdDurationMinutes"
+  | "minLeadMinutes"
+  | "reminderLeadMinutes"
+  | "maxActiveBookingsPerPatient"
+  | "unclosedBookingReminderMinutes"
 >;
 
 function snapshotTunables(settings: SchedulingTunables): Record<string, number> {
@@ -88,6 +97,7 @@ function snapshotTunables(settings: SchedulingTunables): Record<string, number> 
     minLeadMinutes: settings.minLeadMinutes,
     reminderLeadMinutes: settings.reminderLeadMinutes,
     maxActiveBookingsPerPatient: settings.maxActiveBookingsPerPatient,
+    unclosedBookingReminderMinutes: settings.unclosedBookingReminderMinutes,
   };
 }
 
@@ -133,7 +143,7 @@ export async function updateClinicSettings(input: UpdateClinicSettingsInput): Pr
 
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.clinic.findFirst({
-      select: { id: true, bookingHorizonDays: true, cancelCutoffMinutes: true, holdDurationMinutes: true, minLeadMinutes: true, reminderLeadMinutes: true, maxActiveBookingsPerPatient: true },
+      select: { id: true, bookingHorizonDays: true, cancelCutoffMinutes: true, holdDurationMinutes: true, minLeadMinutes: true, reminderLeadMinutes: true, maxActiveBookingsPerPatient: true, unclosedBookingReminderMinutes: true },
     });
     if (!row) {
       throw new AppError(500, "CLINIC_NOT_CONFIGURED", "Clinic configuration is missing — run the database seed");
@@ -148,6 +158,7 @@ export async function updateClinicSettings(input: UpdateClinicSettingsInput): Pr
         ...(input.patch.minLeadMinutes !== undefined && { minLeadMinutes: input.patch.minLeadMinutes }),
         ...(input.patch.reminderLeadMinutes !== undefined && { reminderLeadMinutes: input.patch.reminderLeadMinutes }),
         ...(input.patch.maxActiveBookingsPerPatient !== undefined && { maxActiveBookingsPerPatient: input.patch.maxActiveBookingsPerPatient }),
+        ...(input.patch.unclosedBookingReminderMinutes !== undefined && { unclosedBookingReminderMinutes: input.patch.unclosedBookingReminderMinutes }),
       },
       select: {
         id: true,
@@ -161,6 +172,7 @@ export async function updateClinicSettings(input: UpdateClinicSettingsInput): Pr
         minLeadMinutes: true,
         reminderLeadMinutes: true,
         maxActiveBookingsPerPatient: true,
+      unclosedBookingReminderMinutes: true,
       },
     });
 

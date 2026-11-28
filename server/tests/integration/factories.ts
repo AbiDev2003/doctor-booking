@@ -34,12 +34,14 @@ export function createClinic(overrides: {
   name?: string;
   timezone?: string;
   defaultConsultationFee?: number;
+  maxActiveBookingsPerPatient?: number;
 } = {}) {
   return prisma.clinic.create({
     data: {
       name: overrides.name ?? `Test Clinic ${uniqueSuffix()}`,
       timezone: overrides.timezone ?? CLINIC_TIMEZONE,
       defaultConsultationFee: overrides.defaultConsultationFee ?? 50_000,
+      maxActiveBookingsPerPatient: overrides.maxActiveBookingsPerPatient ?? 6,
     },
   });
 }

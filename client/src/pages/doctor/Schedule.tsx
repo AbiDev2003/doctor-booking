@@ -7,6 +7,7 @@ import {
   apiCreateScheduleWindow,
   apiCreateUnavailability,
   apiDeleteScheduleWindow,
+  apiMyScheduleRequests,
   apiMySchedules,
   apiMyUnavailabilities,
   apiPublicClinic,
@@ -16,9 +17,14 @@ import {
 } from "../../lib/api"
 import type {
   CreateScheduleWindowInput,
+  DoctorScheduleChangeRequest,
+  DoctorScheduleChangeType,
   DoctorUnavailability,
   MaterializeStats,
+  ScheduleChangeSubmissionResult,
+  ScheduleMutationResponse,
   ScheduleWindow,
+  UnavailabilityMutationResponse,
   Weekday,
 } from "../../lib/api"
 import { clinicToday, formatSlotDate, formatTimeRange } from "../../lib/clinicDate"
@@ -70,10 +76,24 @@ const WEEKDAY_LABEL: Record<Weekday, string> = {
 const SELECT_CLASS =
   "h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
+const CHANGE_LABEL: Record<DoctorScheduleChangeType, string> = {
+  WINDOW_CREATE: "New weekly window",
+  WINDOW_UPDATE: "Weekly window edit",
+  WINDOW_DELETE: "Weekly window removal",
+  UNAVAILABILITY_CREATE: "Time off",
+  UNAVAILABILITY_DELETE: "Time-off removal",
+}
+
 function materializedNote(stats: MaterializeStats | null): string {
   if (stats === null) return ""
   if (stats.created > 0) return ` ${stats.created} new slot${stats.created === 1 ? "" : "s"} generated.`
   return " No new slots were needed."
+}
+
+function isProposal(
+  result: ScheduleMutationResponse | UnavailabilityMutationResponse | { message: string },
+): result is ScheduleChangeSubmissionResult {
+  return "scheduleRequest" in result
 }
 
 export default function Schedule() {
@@ -91,6 +111,8 @@ export function ScheduleEditor({
   description?: string
 }) {
   const queryClient = useQueryClient()
+  const { user } = useSession()
+  const isDoctor = user?.role === "DOCTOR"
 
   const [notice, setNotice] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
@@ -113,6 +135,14 @@ export function ScheduleEditor({
     enabled: doctorId !== "",
   })
   const clinic = useQuery({ queryKey: ["public", "clinic"], queryFn: apiPublicClinic })
+  // Admin/STAFF render this same editor with a doctorId prop; only the signed-in
+  // doctor may read their own submissions, so the queue query is role-gated.
+  const requests = useQuery({
+    queryKey: ["doctor", "schedule-requests", doctorId],
+    queryFn: ({ signal }) => apiMyScheduleRequests(signal).then((result) => result.requests),
+    enabled: doctorId !== "" && isDoctor,
+  })
+  const pendingRequests = requests.data?.filter((row) => row.status === "PENDING") ?? []
 
   if (schedules.isPending || timeOff.isPending || clinic.isPending) {
     return <PageLoading label="Loading your schedule…" />
@@ -135,6 +165,7 @@ export function ScheduleEditor({
 
   function invalidateSchedule() {
     void queryClient.invalidateQueries({ queryKey: ["doctor", "schedule", doctorId] })
+    void queryClient.invalidateQueries({ queryKey: ["doctor", "schedule-requests", doctorId] })
     void queryClient.invalidateQueries({ queryKey: ["doctor", "today"] })
     void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
     void queryClient.invalidateQueries({ queryKey: ["admin"] })
@@ -142,6 +173,7 @@ export function ScheduleEditor({
 
   function invalidateTimeOff() {
     void queryClient.invalidateQueries({ queryKey: ["doctor", "unavailabilities", doctorId] })
+    void queryClient.invalidateQueries({ queryKey: ["doctor", "schedule-requests", doctorId] })
     void queryClient.invalidateQueries({ queryKey: ["doctor", "today"] })
     void queryClient.invalidateQueries({ queryKey: ["public", "availability"] })
     void queryClient.invalidateQueries({ queryKey: ["admin"] })
@@ -164,6 +196,11 @@ export function ScheduleEditor({
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Schedule</p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">{title}</h1>
         <p className="mt-3 max-w-2xl text-base leading-7 text-slate-600">{description}</p>
+        {isDoctor && (
+          <p className="mt-2 max-w-2xl text-sm text-slate-500">
+            Your changes are submitted for admin approval. Nothing live changes until an admin approves the request.
+          </p>
+        )}
       </section>
 
       {notice !== null && (
@@ -172,6 +209,33 @@ export function ScheduleEditor({
           <AlertTitle>Done</AlertTitle>
           <AlertDescription>{notice}</AlertDescription>
         </Alert>
+      )}
+
+      {isDoctor && (
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-xl text-slate-950">Changes awaiting approval</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {requests.isPending && <PageLoading label="Loading your requests…" />}
+            {requests.isError && (
+              <PageError
+                title="Your requests could not be loaded"
+                message={requests.error instanceof ApiError ? requests.error.message : undefined}
+                onRetry={() => void requests.refetch()}
+              />
+            )}
+            {!requests.isPending && !requests.isError && pendingRequests.length === 0 && (
+              <EmptyState
+                title="No pending changes"
+                description="Submitted schedule and time-off changes will appear here until an admin reviews them."
+              />
+            )}
+            {pendingRequests.map((request) => (
+              <PendingRequestRow key={request.id} request={request} />
+            ))}
+          </CardContent>
+        </Card>
       )}
 
       <Tabs defaultValue="template" className="space-y-4">
@@ -183,7 +247,9 @@ export function ScheduleEditor({
         <TabsContent value="template" className="mt-4 space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <p className="max-w-xl text-sm text-muted-foreground">
-              Changes apply to dates not yet generated. Removing a window does not delete existing slots or bookings.
+              {isDoctor
+                ? "Your submissions need admin approval. They apply only to dates not yet generated; existing slots and bookings stay unchanged."
+                : "Changes apply to dates not yet generated. Removing a window does not delete existing slots or bookings."}
             </p>
             <Button size="sm" onClick={() => setCreateOpen(true)}>
               <Plus /> Add window
@@ -240,7 +306,9 @@ export function ScheduleEditor({
         <TabsContent value="timeoff" className="mt-4 space-y-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <p className="max-w-xl text-sm text-muted-foreground">
-              Mark a period you cannot work. Affected confirmed patients are flagged and can cancel with a full refund.
+              {isDoctor
+                ? "Mark a period you cannot work. Your request needs admin approval; no slots are hidden and no patients are flagged until then."
+                : "Mark a period you cannot work. Affected confirmed patients are flagged and can cancel with a full refund."}
             </p>
             <Button size="sm" onClick={() => setTimeOffOpen(true)}>
               <CalendarOff /> Mark time off
@@ -361,6 +429,25 @@ function TimeOffList({
   )
 }
 
+function PendingRequestRow({ request }: { request: DoctorScheduleChangeRequest }) {
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-medium text-slate-950">{CHANGE_LABEL[request.type]}</p>
+        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900">Pending</span>
+      </div>
+      <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
+        {request.details.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Reason: {request.reason} · Submitted {new Date(request.requestedAt).toLocaleString()}
+      </p>
+    </div>
+  )
+}
+
 function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
   return (
     <div className="space-y-1">
@@ -416,7 +503,11 @@ function CreateScheduleDialog({
         maxPatients: Number(maxPatients),
         ...(reason.trim() === "" ? {} : { reason: reason.trim() }),
       })
-      onDone(`Window added.${materializedNote(result.materialized)}`)
+      onDone(
+        isProposal(result)
+          ? "Window request submitted for admin approval. Your live schedule is unchanged."
+          : `Window added.${materializedNote(result.materialized)}`,
+      )
       onClose()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.")
@@ -540,7 +631,11 @@ function EditScheduleDialog({
     }
     try {
       const result = await mutation.mutateAsync()
-      onDone(`Window updated.${materializedNote(result.materialized)}`)
+      onDone(
+        isProposal(result)
+          ? "Window edit submitted for admin approval. Existing slots and bookings are unchanged."
+          : `Window updated.${materializedNote(result.materialized)}`,
+      )
       onClose()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.")
@@ -654,7 +749,11 @@ function DeleteScheduleDialog({
     }
     try {
       const result = await mutation.mutateAsync()
-      onDone(`Window removed.${materializedNote(result.materialized)}`)
+      onDone(
+        isProposal(result)
+          ? "Window removal submitted for admin approval. The window stays active until approved."
+          : `Window removed.${materializedNote(result.materialized)}`,
+      )
       onClose()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.")
@@ -736,9 +835,11 @@ function CreateTimeOffDialog({
     try {
       const result = await mutation.mutateAsync()
       onDone(
-        result.affectedCount > 0
-          ? `Time off saved. ${result.affectedCount} confirmed booking${result.affectedCount === 1 ? "" : "s"} flagged — affected patients can cancel with a full refund.`
-          : "Time off saved. No confirmed bookings were affected.",
+        isProposal(result)
+          ? "Time off submitted for admin approval. No slots are hidden and no patients are flagged until approved."
+          : result.affectedCount > 0
+            ? `Time off saved. ${result.affectedCount} confirmed booking${result.affectedCount === 1 ? "" : "s"} flagged — affected patients can cancel with a full refund.`
+            : "Time off saved. No confirmed bookings were affected.",
       )
       onClose()
     } catch (err) {
@@ -841,8 +942,12 @@ function RemoveTimeOffDialog({
       return
     }
     try {
-      await mutation.mutateAsync()
-      onDone("Time off removed. The window is bookable again.")
+      const result = await mutation.mutateAsync()
+      onDone(
+        isProposal(result)
+          ? "Time-off removal submitted for admin approval. The window stays active until approved."
+          : "Time off removed. The window is bookable again.",
+      )
       onClose()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Please try again.")

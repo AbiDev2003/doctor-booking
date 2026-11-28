@@ -60,6 +60,42 @@ enum DoctorVerificationStatus {
   @@map("doctor_verification_status")
 }
 
+/**
+ * A doctor's self-service credential edits are proposals, not direct writes.
+ * The live profile stays as it was (and stays bookable) until an ADMIN applies
+ * the proposed values; rejected requests remain for the audit trail.
+ */
+enum DoctorCredentialChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@map("doctor_credential_change_status")
+}
+
+/**
+ * A doctor's self-service schedule and time-off edits are proposals, not
+ * immediate writes. Multiple proposals may be pending, but submissions are
+ * rate-limited and conflicting proposals are refused.
+ */
+enum DoctorScheduleChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+
+  @@map("doctor_schedule_change_status")
+}
+
+enum DoctorScheduleChangeType {
+  WINDOW_CREATE
+  WINDOW_UPDATE
+  WINDOW_DELETE
+  UNAVAILABILITY_CREATE
+  UNAVAILABILITY_DELETE
+
+  @@map("doctor_schedule_change_type")
+}
+
 enum AuthTokenPurpose {
   EMAIL_VERIFICATION
   PASSWORD_RESET
@@ -220,6 +256,10 @@ enum NotificationType {
   DOCTOR_VERIFIED
   DOCTOR_SUSPENDED_OR_ARCHIVED
   DOCTOR_STAFF_ACTION
+  DOCTOR_CREDENTIAL_CHANGE_REQUESTED
+  DOCTOR_SCHEDULE_CHANGE_REQUESTED
+  DOCTOR_SCHEDULE_CHANGE_APPROVED
+  DOCTOR_SCHEDULE_CHANGE_REJECTED
   // Appointments (§8, §12–§14)
   APPOINTMENT_BOOKED
   APPOINTMENT_REJECTED
@@ -237,6 +277,8 @@ enum NotificationType {
   // Reminders (§18)
   APPOINTMENT_REMINDER
   REMINDER
+  // Staff follow-up for a booking still CONFIRMED after its slot ended.
+  APPOINTMENT_ATTENDANCE_FOLLOW_UP
 
   @@map("notification_type")
 }
@@ -260,8 +302,9 @@ model Clinic {
   cancelCutoffMinutes         Int @default(60) @map("cancel_cutoff_minutes")
   holdDurationMinutes         Int @default(10) @map("hold_duration_minutes")
   minLeadMinutes              Int @default(0) @map("min_lead_minutes")
-  reminderLeadMinutes         Int @default(120) @map("reminder_lead_minutes")
-  maxActiveBookingsPerPatient Int @default(3) @map("max_active_bookings_per_patient")
+  reminderLeadMinutes            Int @default(120) @map("reminder_lead_minutes")
+  maxActiveBookingsPerPatient    Int @default(6) @map("max_active_bookings_per_patient")
+  unclosedBookingReminderMinutes Int @default(180) @map("unclosed_booking_reminder_minutes")
 
   // accessTokenTtlMinutes is deliberately NOT a column: ACCESS_TOKEN_TTL is the single source. Duplicating one setting into the database gives it two sources that can disagree.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -322,6 +365,12 @@ model User {
   appointmentHistory    AppointmentHistory[]
   doctorSubjects        DoctorHistory[]        @relation("DoctorHistoryDoctor")
   doctorHistoryActions  DoctorHistory[]        @relation("DoctorHistoryActor")
+  credentialChangeRequests DoctorCredentialChangeRequest[] @relation("DoctorCredentialChangeDoctor")
+  credentialChangesRequested DoctorCredentialChangeRequest[] @relation("DoctorCredentialChangeRequester")
+  credentialChangesReviewed DoctorCredentialChangeRequest[] @relation("DoctorCredentialChangeReviewer")
+  scheduleChangeRequests    DoctorScheduleChangeRequest[] @relation("DoctorScheduleChangeDoctor")
+  scheduleChangesRequested  DoctorScheduleChangeRequest[] @relation("DoctorScheduleChangeRequester")
+  scheduleChangesReviewed   DoctorScheduleChangeRequest[] @relation("DoctorScheduleChangeReviewer")
   auditLogs             AuditLog[]
   unavailabilities      DoctorUnavailability[] @relation("DoctorUnavailability")
   unavailabilityCreated DoctorUnavailability[] @relation("UnavailabilityCreator")
@@ -380,8 +429,11 @@ model DoctorProfile {
   suspendedAt        DateTime?                @map("suspended_at") @db.Timestamptz(3)
   suspendReason      String?                  @map("suspend_reason")
 
-  // Free text (§30), and the verification-impacting set: editing one of these resets verification to PENDING_VERIFICATION without clearing suspendedAt
-  // (§5.2). Specialization is free text on purpose — no taxonomy is imposed on the clinic.
+  // Free text (§30), and the verification-impacting set. A DOCTOR's edit creates
+  // a DoctorCredentialChangeRequest instead: these live values stay put (and the
+  // doctor stays bookable) until an ADMIN approves it. STAFF/ADMIN edits still
+  // follow §5.2 and reset verification to PENDING_VERIFICATION without clearing
+  // suspendedAt. Specialization is free text on purpose — no taxonomy is imposed.
   qualification     String? @map("qualification")
   licenseNumber     String? @map("license_number")
   experience        String? @map("experience")
@@ -397,6 +449,92 @@ model DoctorProfile {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("doctor_profiles")
+}
+
+// ---------------------------------------------------------------------------
+// DoctorCredentialChangeRequest — doctor-proposed credential edits (approval)
+// ---------------------------------------------------------------------------
+
+/// One proposal per doctor at a time. The live DoctorProfile is untouched until
+/// an ADMIN approves the row, so a credential edit never hides a bookable doctor.
+model DoctorCredentialChangeRequest {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  doctorId String @map("doctor_id") @db.Uuid
+  doctor   User   @relation("DoctorCredentialChangeDoctor", fields: [doctorId], references: [id], onDelete: Restrict)
+
+  status DoctorCredentialChangeStatus @default(PENDING) @map("status")
+
+  /// Only the five credential fields, with their proposed values.
+  requestedChanges Json @map("requested_changes")
+  /// The live values at submission time, kept so an admin can compare.
+  previousValues   Json @map("previous_values")
+
+  requestedById   String @map("requested_by_id") @db.Uuid
+  requestedBy     User   @relation("DoctorCredentialChangeRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  requestedByName String @map("requested_by_name")
+  requestedAt     DateTime @default(now()) @map("requested_at") @db.Timestamptz(3)
+
+  reviewedById   String?   @map("reviewed_by_id") @db.Uuid
+  reviewedBy     User?     @relation("DoctorCredentialChangeReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedByName String?   @map("reviewed_by_name")
+  reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote     String?   @map("review_note")
+
+  @@index([doctorId, requestedAt], map: "doctor_credential_requests_doctor_requested_idx")
+  @@index([status, requestedAt], map: "doctor_credential_requests_status_requested_idx")
+  @@unique([doctorId], where: raw("(status = 'PENDING'::doctor_credential_change_status)"), map: "doctor_credential_requests_one_pending_per_doctor_unique")
+  @@map("doctor_credential_requests")
+}
+
+// ---------------------------------------------------------------------------
+// DoctorScheduleChangeRequest — doctor-proposed schedule/time-off edits (approval)
+// ---------------------------------------------------------------------------
+
+/// Multiple proposals may be pending. The live schedule and bookings are not
+/// touched until an ADMIN approves a row; submissions are rate-limited and
+/// conflicting proposals are refused by the service.
+model DoctorScheduleChangeRequest {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  doctorId String @map("doctor_id") @db.Uuid
+  doctor   User   @relation("DoctorScheduleChangeDoctor", fields: [doctorId], references: [id], onDelete: Restrict)
+
+  type   DoctorScheduleChangeType   @map("type")
+  status DoctorScheduleChangeStatus @default(PENDING) @map("status")
+
+  /// The live row a WINDOW_UPDATE/DELETE or UNAVAILABILITY_DELETE would touch.
+  /// Kept as a plain id (no FK) so a rejected proposal never blocks normal CRUD.
+  scheduleId       String? @map("schedule_id") @db.Uuid
+  unavailabilityId String? @map("unavailability_id") @db.Uuid
+
+  /// Typed payload the approval service applies. Stored as JSON because the five
+  /// action shapes share one table and queue.
+  payload Json @map("payload")
+  /// Live values at submission time, for the admin comparison view.
+  previousValues Json? @map("previous_values")
+  /// Human-readable before/after lines shared by the admin UI and emails.
+  details Json @map("details")
+  /// Confirmed bookings a proposed time-off window would affect at submission.
+  affectedPreview Int? @map("affected_preview")
+
+  reason String @map("reason")
+
+  requestedById   String   @map("requested_by_id") @db.Uuid
+  requestedBy     User     @relation("DoctorScheduleChangeRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  requestedByName String   @map("requested_by_name")
+  requestedAt     DateTime @default(now()) @map("requested_at") @db.Timestamptz(3)
+
+  reviewedById   String?   @map("reviewed_by_id") @db.Uuid
+  reviewedBy     User?     @relation("DoctorScheduleChangeReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedByName String?   @map("reviewed_by_name")
+  reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(3)
+  reviewNote     String?   @map("review_note")
+
+  @@index([doctorId, status, requestedAt], map: "doctor_schedule_requests_doctor_status_requested_idx")
+  @@index([status, requestedAt], map: "doctor_schedule_requests_status_requested_idx")
+  @@index([requestedById, requestedAt], map: "doctor_schedule_requests_requester_requested_idx")
+  @@map("doctor_schedule_requests")
 }
 
 // ---------------------------------------------------------------------------
@@ -1071,6 +1209,7 @@ model Notification {
   // two MVP reliability requirements, so a silently deleted dedupe index means
   // patients are emailed twice for one appointment.
   @@unique([appointmentId, slotId], where: raw("(type = 'REMINDER'::notification_type)"), map: "notifications_reminder_once_per_appointment_slot_unique")
+  @@unique([appointmentId, recipient], where: raw("(type = 'APPOINTMENT_ATTENDANCE_FOLLOW_UP'::notification_type)"), map: "notifications_followup_once_per_appointment_recipient_unique")
   @@map("notifications")
 
   // No other type is constrained: repeated events legitimately send more than

@@ -18,6 +18,10 @@ import {
   listDoctorUnavailabilities,
   removeDoctorUnavailability,
 } from "../services/doctors/unavailability.service.js";
+import {
+  submitUnavailabilityCreateRequest,
+  submitUnavailabilityDeleteRequest,
+} from "../services/schedules/scheduleChangeRequest.service.js";
 import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
@@ -82,18 +86,33 @@ unavailabilitiesRouter.get("/", selfOrStaff, async (req, res, next) => {
 });
 
 /**
- * POST — mark a doctor unavailable. The scheduled doctor is the body's
- * `doctorId`, so ownership is decided here the same way schedules POST does;
- * the service re-runs the §12 cascade inside the disruption's transaction and
- * reports how many existing CONFIRMED bookings were flagged.
+ * POST — mark a doctor unavailable. ADMIN/STAFF write immediately and the
+ * service re-runs the §12 cascade inside the disruption's transaction. A
+ * DOCTOR's request is stored as a proposal: no slots are hidden and no patient
+ * is flagged until approval.
  */
 unavailabilitiesRouter.post("/", selfOrStaff, async (req, res, next) => {
   try {
     const parsed = createUnavailabilitySchema.parse(req.body);
     requireSelfOrRole(req, parsed.doctorId, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
+    const actor = actorOf(req);
+
+    if (actor.role === $Enums.UserRole.DOCTOR) {
+      const proposal = await submitUnavailabilityCreateRequest({
+        actor,
+        doctorId: parsed.doctorId,
+        date: parsed.date,
+        startTime: parsed.startTime,
+        endTime: parsed.endTime,
+        reason: parsed.reason,
+        ...requestMeta(req, res),
+      });
+      res.status(202).json(proposal);
+      return;
+    }
 
     const result = await createDoctorUnavailability({
-      actor: actorOf(req),
+      actor,
       doctorId: parsed.doctorId,
       date: parsed.date,
       startTime: parsed.startTime,
@@ -111,15 +130,28 @@ unavailabilitiesRouter.post("/", selfOrStaff, async (req, res, next) => {
 /**
  * DELETE — remove one disruption (reopening the hidden slots through the read
  * model). The owning doctor is on the row, so the service enforces ownership;
- * this route's job is the gate and the mandatory reason.
+ * a DOCTOR's removal stays pending until an admin approves it.
  */
 unavailabilitiesRouter.delete("/:id", selfOrStaff, async (req, res, next) => {
   try {
     const { id } = unavailabilityIdParamSchema.parse(req.params);
     const { reason } = removeUnavailabilitySchema.parse(req.body);
+    const actor = actorOf(req);
+
+    if (actor.role === $Enums.UserRole.DOCTOR) {
+      const proposal = await submitUnavailabilityDeleteRequest({
+        actor,
+        doctorId: actor.id,
+        unavailabilityId: id,
+        reason,
+        ...requestMeta(req, res),
+      });
+      res.status(202).json(proposal);
+      return;
+    }
 
     await removeDoctorUnavailability({
-      actor: actorOf(req),
+      actor,
       unavailabilityId: id,
       reason,
       ...requestMeta(req, res),

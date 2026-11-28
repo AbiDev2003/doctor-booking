@@ -8,6 +8,7 @@ import {
   assertNoDuplicateForSlot,
   assertPatientSeatCap,
   assertSlotBookableForBooking,
+  capRelevantAppointmentWhere,
 } from "../src/lib/bookingGuard.js";
 import type { BookabilityContext, BookabilitySlot } from "../src/lib/availability.js";
 
@@ -63,6 +64,18 @@ describe("ACTIVE_BOOKING_STATUSES", () => {
       $Enums.AppointmentStatus.CONFIRMED,
       $Enums.AppointmentStatus.ARRIVED,
     ]);
+  });
+});
+
+describe("capRelevantAppointmentWhere", () => {
+  it("counts only active statuses with a slot that has not ended", () => {
+    const where = capRelevantAppointmentWhere("patient-1", NOW);
+    const status = where.status as { in: readonly string[] };
+    const slotFilter = where.slot as { endAt: { gt: Date } };
+
+    assert.equal(where.patientId, "patient-1");
+    assert.deepEqual([...status.in], [...ACTIVE_BOOKING_STATUSES]);
+    assert.equal(slotFilter.endAt.gt, NOW);
   });
 });
 

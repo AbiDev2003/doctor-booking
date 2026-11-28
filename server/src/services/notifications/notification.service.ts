@@ -57,6 +57,30 @@ export async function queueNotification(
   return row;
 }
 
+/**
+ * The idempotency read for once-per-appointment events. The follow-up reminder
+ * also has a DB partial unique index; this check avoids the duplicate insert in
+ * the common case, and the index catches two overlapping scheduler runs.
+ */
+export async function hasNotification(
+  client: DbClient,
+  input: {
+    readonly type: $Enums.NotificationType;
+    readonly recipient: string;
+    readonly appointmentId: string;
+  },
+): Promise<boolean> {
+  const row = await client.notification.findFirst({
+    where: {
+      type: input.type,
+      recipient: input.recipient,
+      appointmentId: input.appointmentId,
+    },
+    select: { id: true },
+  });
+  return row !== null;
+}
+
 export interface DispatchOptions {
   /** Injected by tests and DoD scripts so no real email leaves the machine. */
   readonly mailer?: Mailer | undefined;

@@ -1,8 +1,10 @@
 import { $Enums } from "../../generated/prisma/client.js";
 import type { Prisma } from "../../generated/prisma/client.js";
+import { config } from "../../config.js";
 import { prisma, isUniqueConstraintViolation } from "../../lib/prisma.js";
 import type { DbClient } from "../../lib/prisma.js";
 import { AppError } from "../../lib/appError.js";
+import { doctorCredentialChangeRequestedEmail } from "../../lib/emailTemplates.js";
 import { generateToken, hashToken, getAccountClaimExpiry } from "../../lib/auth.js";
 import { assertDoctorAction, isBookable } from "../../lib/doctorState.js";
 import type { DoctorAction } from "../../lib/doctorState.js";
@@ -11,7 +13,10 @@ import { maskContact } from "../../lib/privacy.js";
 import { logger } from "../../lib/logger.js";
 import { writeAudit } from "../audit.service.js";
 import { revokeAllSessions } from "../auth/auth.service.js";
-import { queueNotification } from "../notifications/notification.service.js";
+import {
+  dispatchNotificationInBackground,
+  queueNotification,
+} from "../notifications/notification.service.js";
 import { materializeSlots } from "../slots/slotGeneration.service.js";
 import {
   applyUnavailabilityCascade,
@@ -80,6 +85,14 @@ const CREDENTIAL_FIELDS = [
   "clinicAssociation",
   "specialization",
 ] as const;
+
+const CREDENTIAL_FIELD_LABELS: Record<(typeof CREDENTIAL_FIELDS)[number], string> = {
+  qualification: "Qualification",
+  licenseNumber: "License number",
+  experience: "Experience",
+  clinicAssociation: "Practice / clinic association",
+  specialization: "Specialization",
+};
 
 type CredentialField = (typeof CREDENTIAL_FIELDS)[number];
 
@@ -688,8 +701,11 @@ export interface UpdateDoctorProfileInput extends RequestMeta {
 }
 
 export interface UpdateDoctorProfileResult {
-  /** PENDING_VERIFICATION when a credential moved; unchanged otherwise (§5.2). */
+  /** PENDING_VERIFICATION after a STAFF/ADMIN credential write; otherwise unchanged. */
   readonly verificationStatus: $Enums.DoctorVerificationStatus;
+  /** True only when the doctor proposed credentials for admin approval. */
+  readonly credentialChangeSubmitted: boolean;
+  readonly credentialChangeRequestId: string | null;
 }
 
 interface LoadedDoctor {
@@ -730,22 +746,22 @@ async function materializeAfterStateChange(doctorId: string): Promise<void> {
 /**
  * §5.2's field split, enforced on every edit:
  *
- * - **Credential change** (any of `CREDENTIAL_FIELDS`) → status is forced to
- *   `PENDING_VERIFICATION`, by ANY actor — self, STAFF or ADMIN — and
- *   `suspendedAt` is deliberately NOT touched (§5.2: editing a suspended
- *   doctor's credentials must not silently un-suspend them). Existing
- *   appointments are untouched by construction: this function moves a status,
- *   never a booking (the hide-from-new-bookings half is Phase 4's listing
- *   filter, applied through `isBookable`).
+ * - **Credential change by the doctor** → a `DoctorCredentialChangeRequest`
+ *   is created and the live profile is untouched. The doctor keeps their
+ *   current verification status, public credentials and bookability; only an
+ *   ADMIN applying the request writes the new values. The admins are notified
+ *   by email with the doctor's identifying details and the proposed changes.
+ * - **Credential change by STAFF/ADMIN** → still a direct §5.2 write: status
+ *   moves to `PENDING_VERIFICATION` and `suspendedAt` is deliberately NOT
+ *   touched. Existing appointments are never changed here.
  * - **Descriptive change only** (name, fee) → status does not move.
  * - **Either kind on an ARCHIVED or REJECTED doctor** → refused by the matrix
  *   before any write: ARCHIVED restores only through UNARCHIVE, REJECTED is
  *   terminal (§5).
  *
- * The `updateMany` re-check inside the transaction closes the window between
+ * The guarded profile update inside the transaction closes the race between
  * the matrix read and the write: an archive committed in that window makes
- * the count 0, and because the user-name update is in the same transaction,
- * no half-edit can land on a doctor the plan says is untouchable.
+ * the row unwritable, and the user-name update commits in the same transaction.
  *
  * `consultationFee` is ADMIN/STAFF-only (checked at the top): money is clinic
  * configuration, and a doctor may not set their own price — §5.2's "STAFF may
@@ -757,7 +773,7 @@ export async function updateDoctorProfile(
 ): Promise<UpdateDoctorProfileResult> {
   const target = await prisma.user.findUnique({
     where: { id: input.doctorId },
-    select: { role: true, fullName: true, doctorProfile: true },
+    select: { role: true, fullName: true, email: true, doctorProfile: true },
   });
   if (!target || target.role !== $Enums.UserRole.DOCTOR || !target.doctorProfile) {
     throw new AppError(404, "DOCTOR_NOT_FOUND", "Doctor not found");
@@ -805,27 +821,42 @@ export async function updateDoctorProfile(
   const action: DoctorAction = credentialChanged ? "EDIT_CREDENTIALS" : "EDIT_PROFILE";
   assertDoctorAction(profile, action, input.actor);
 
-  const nextStatus = credentialChanged ? S.PENDING_VERIFICATION : profile.verificationStatus;
-  if (credentialChanged) {
+  const credentialChangeIsProposal =
+    credentialChanged && input.actor.role === $Enums.UserRole.DOCTOR;
+
+  const nextStatus =
+    credentialChanged && !credentialChangeIsProposal
+      ? S.PENDING_VERIFICATION
+      : profile.verificationStatus;
+  if (credentialChanged && !credentialChangeIsProposal) {
     after.verificationStatus = S.PENDING_VERIFICATION;
   }
 
-  await prisma.$transaction(async (tx) => {
-    const profileData: Prisma.DoctorProfileUpdateManyMutationInput = { ...changedCredentials };
-    if (credentialChanged) {
-      profileData.verificationStatus = S.PENDING_VERIFICATION;
-      // suspendedAt absent BY RULE — see the doc comment. This is the line §5.2
-      // exists to keep: nothing else in this function may add it to `data`.
-    }
+  // A proposal never writes credential values to the live profile. Descriptive
+  // and money fields keep their existing behaviour for every role.
+  const profileData: Prisma.DoctorProfileUpdateManyMutationInput = {
+    ...(!credentialChangeIsProposal ? changedCredentials : {}),
+    ...(feeChanged && input.patch.consultationFee !== undefined
+      ? { consultationFee: input.patch.consultationFee }
+      : {}),
+    ...(credentialChanged && !credentialChangeIsProposal
+      ? { verificationStatus: S.PENDING_VERIFICATION }
+      : {}),
+  };
 
-    const updated = await tx.doctorProfile.updateMany({
-      where: {
-        userId: input.doctorId,
-        verificationStatus: { notIn: [S.ARCHIVED, S.REJECTED] },
-      },
-      data: profileData,
-    });
-    if (updated.count !== 1) {
+  let credentialChangeRequestId: string | null = null;
+  const queuedAdminEmails: { readonly notificationId: string; readonly email: string; readonly fullName: string }[] = [];
+
+  await prisma.$transaction(async (tx) => {
+    const writable = {
+      userId: input.doctorId,
+      verificationStatus: { notIn: [S.ARCHIVED, S.REJECTED] },
+    };
+    const matched =
+      Object.keys(profileData).length > 0
+        ? (await tx.doctorProfile.updateMany({ where: writable, data: profileData })).count
+        : await tx.doctorProfile.count({ where: writable });
+    if (matched !== 1) {
       const current = await tx.doctorProfile.findUnique({
         where: { userId: input.doctorId },
         select: { verificationStatus: true },
@@ -846,8 +877,78 @@ export async function updateDoctorProfile(
       });
     }
 
-    const eventType = credentialChanged ? "CREDENTIALS_UPDATED" : "PROFILE_UPDATED";
-    const auditAction = credentialChanged ? "DOCTOR_CREDENTIALS_UPDATED" : "DOCTOR_PROFILE_UPDATED";
+    if (credentialChangeIsProposal) {
+      const pending = await tx.doctorCredentialChangeRequest.findFirst({
+        where: { doctorId: input.doctorId, status: $Enums.DoctorCredentialChangeStatus.PENDING },
+        select: { id: true },
+      });
+      if (pending !== null) {
+        throw new AppError(
+          409,
+          "CREDENTIAL_CHANGE_PENDING",
+          "A credential change is already awaiting admin approval.",
+        );
+      }
+
+      const request = await tx.doctorCredentialChangeRequest.create({
+        data: {
+          doctorId: input.doctorId,
+          status: $Enums.DoctorCredentialChangeStatus.PENDING,
+          requestedChanges: changedCredentials as Prisma.InputJsonObject,
+          previousValues: before as Prisma.InputJsonObject,
+          requestedById: input.actor.id,
+          requestedByName: input.actor.name,
+        },
+        select: { id: true },
+      });
+      credentialChangeRequestId = request.id;
+
+      const admins = await tx.user.findMany({
+        where: {
+          role: $Enums.UserRole.ADMIN,
+          isDeactivated: false,
+          email: { not: null },
+        },
+        select: { email: true, fullName: true },
+      });
+      const recipients = admins
+        .filter((admin): admin is { email: string; fullName: string } =>
+          typeof admin.email === "string" && admin.email.trim().length > 0,
+        )
+        .map((admin) => ({ email: admin.email, fullName: admin.fullName }));
+      if (recipients.length === 0 && config.CLINIC_OWNER_EMAIL !== undefined) {
+        recipients.push({
+          email: config.CLINIC_OWNER_EMAIL,
+          fullName: config.CLINIC_OWNER_NAME ?? "Clinic administrator",
+        });
+      }
+
+      for (const admin of recipients) {
+        const notification = await queueNotification(tx, {
+          type: $Enums.NotificationType.DOCTOR_CREDENTIAL_CHANGE_REQUESTED,
+          recipient: admin.email,
+        });
+        queuedAdminEmails.push({
+          notificationId: notification.id,
+          email: admin.email,
+          fullName: admin.fullName,
+        });
+      }
+    }
+
+    const eventType = credentialChangeIsProposal
+      ? "CREDENTIAL_CHANGE_REQUESTED"
+      : credentialChanged
+        ? "CREDENTIALS_UPDATED"
+        : "PROFILE_UPDATED";
+    const auditAction = credentialChangeIsProposal
+      ? "DOCTOR_CREDENTIAL_CHANGE_REQUESTED"
+      : credentialChanged
+        ? "DOCTOR_CREDENTIALS_UPDATED"
+        : "DOCTOR_PROFILE_UPDATED";
+    const metadata = credentialChangeIsProposal
+      ? { before, requested: changedCredentials }
+      : { before, after };
 
     await writeAudit(tx, {
       action: auditAction,
@@ -855,7 +956,7 @@ export async function updateDoctorProfile(
       targetId: input.doctorId,
       actor: input.actor,
       before,
-      after,
+      after: credentialChangeIsProposal ? { requested: changedCredentials } : after,
       ip: input.ip ?? null,
       requestId: input.requestId ?? null,
     });
@@ -864,13 +965,273 @@ export async function updateDoctorProfile(
       doctorId: input.doctorId,
       eventType,
       actor: input.actor,
-      metadata: { before, after },
+      metadata,
       ip: input.ip ?? null,
       requestId: input.requestId ?? null,
     });
   });
 
-  return { verificationStatus: nextStatus };
+  if (credentialChangeRequestId !== null) {
+    const phone = await prisma.patientProfile.findUnique({
+      where: { userId: input.doctorId },
+      select: { phone: true },
+    });
+    const link =
+      `${config.CLIENT_URL.replace(/\/$/, "")}/admin/doctors?credentialRequest=${encodeURIComponent(credentialChangeRequestId)}`;
+    const changeLines = CREDENTIAL_FIELDS.filter(
+      (field) => changedCredentials[field] !== undefined,
+    ).map(
+      (field) =>
+        `${CREDENTIAL_FIELD_LABELS[field]}: ${before[field] ?? "Not set"} → ${changedCredentials[field] ?? ""}`,
+    );
+
+    for (const admin of queuedAdminEmails) {
+      dispatchNotificationInBackground(
+        admin.notificationId,
+        doctorCredentialChangeRequestedEmail({
+          fullName: admin.fullName,
+          doctorName: input.patch.fullName?.trim() ?? target.fullName,
+          doctorEmail: target.email ?? "Not on file",
+          doctorPhone: phone?.phone ?? "Not on file",
+          requestId: credentialChangeRequestId,
+          changes: changeLines,
+          link,
+        }),
+      );
+    }
+  }
+
+  return {
+    verificationStatus: nextStatus,
+    credentialChangeSubmitted: credentialChangeIsProposal,
+    credentialChangeRequestId,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Doctor-proposed credential changes — admin review                   */
+/* ------------------------------------------------------------------ */
+
+export interface DoctorCredentialChangeRequestDto {
+  readonly id: string;
+  readonly doctorId: string;
+  readonly doctorName: string;
+  readonly doctorEmail: string | null;
+  readonly doctorPhone: string | null;
+  readonly status: $Enums.DoctorCredentialChangeStatus;
+  readonly requestedChanges: Record<string, string>;
+  readonly previousValues: Record<string, string | null>;
+  readonly requestedByName: string;
+  readonly requestedAt: string;
+  readonly reviewedByName: string | null;
+  readonly reviewedAt: string | null;
+  readonly reviewNote: string | null;
+}
+
+function credentialValuesFromJson(value: Prisma.JsonValue): Record<string, string> {
+  const record =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const result: Record<string, string> = {};
+  for (const field of CREDENTIAL_FIELDS) {
+    const candidate = record[field];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      result[field] = candidate.trim();
+    }
+  }
+  return result;
+}
+
+function previousValuesFromJson(value: Prisma.JsonValue): Record<string, string | null> {
+  const record =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const result: Record<string, string | null> = {};
+  for (const field of CREDENTIAL_FIELDS) {
+    const candidate = record[field];
+    result[field] = typeof candidate === "string" ? candidate : null;
+  }
+  return result;
+}
+
+function assertAdminReviewer(actor: ActorContext): void {
+  if (actor.role !== $Enums.UserRole.ADMIN) {
+    throw new AppError(403, "FORBIDDEN", "Only an admin can review credential changes");
+  }
+}
+
+/** The admin queue: newest first, with one hard limit and a status filter. */
+export async function listDoctorCredentialChangeRequests(input: {
+  readonly status?: $Enums.DoctorCredentialChangeStatus | undefined;
+  readonly limit: number;
+}): Promise<{ requests: DoctorCredentialChangeRequestDto[] }> {
+  const rows = await prisma.doctorCredentialChangeRequest.findMany({
+    ...(input.status !== undefined && { where: { status: input.status } }),
+    include: {
+      doctor: {
+        select: {
+          fullName: true,
+          email: true,
+          patientProfile: { select: { phone: true } },
+        },
+      },
+    },
+    orderBy: { requestedAt: "desc" },
+    take: input.limit,
+  });
+
+  return {
+    requests: rows.map((row) => ({
+      id: row.id,
+      doctorId: row.doctorId,
+      doctorName: row.doctor.fullName,
+      doctorEmail: row.doctor.email,
+      doctorPhone: row.doctor.patientProfile?.phone ?? null,
+      status: row.status,
+      requestedChanges: credentialValuesFromJson(row.requestedChanges),
+      previousValues: previousValuesFromJson(row.previousValues),
+      requestedByName: row.requestedByName,
+      requestedAt: row.requestedAt.toISOString(),
+      reviewedByName: row.reviewedByName,
+      reviewedAt: row.reviewedAt?.toISOString() ?? null,
+      reviewNote: row.reviewNote,
+    })),
+  };
+}
+
+export interface ReviewDoctorCredentialChangeInput extends RequestMeta {
+  readonly actor: ActorContext;
+  readonly credentialRequestId: string;
+  readonly reviewNote?: string | undefined;
+}
+
+/**
+ * Apply the proposed values to the live profile. Verification status and
+ * bookability are deliberately not touched: the doctor never went pending.
+ */
+export async function approveDoctorCredentialChangeRequest(
+  input: ReviewDoctorCredentialChangeInput,
+): Promise<{ message: string; status: $Enums.DoctorCredentialChangeStatus }> {
+  assertAdminReviewer(input.actor);
+  const row = await prisma.doctorCredentialChangeRequest.findUnique({
+    where: { id: input.credentialRequestId },
+    include: { doctor: { select: { doctorProfile: true } } },
+  });
+  if (row === null) throw new AppError(404, "CREDENTIAL_CHANGE_NOT_FOUND", "Request not found");
+  if (row.status !== $Enums.DoctorCredentialChangeStatus.PENDING) {
+    throw new AppError(409, "CREDENTIAL_CHANGE_REVIEWED", "This request has already been reviewed");
+  }
+  const profile = row.doctor.doctorProfile;
+  if (profile === null) throw new AppError(404, "DOCTOR_NOT_FOUND", "Doctor not found");
+  assertDoctorAction(profile, "EDIT_CREDENTIALS", input.actor);
+
+  const proposed = credentialValuesFromJson(row.requestedChanges);
+  if (Object.keys(proposed).length === 0) {
+    throw new AppError(409, "CREDENTIAL_CHANGE_EMPTY", "This request has no credential values to apply");
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.doctorCredentialChangeRequest.updateMany({
+      where: { id: input.credentialRequestId, status: $Enums.DoctorCredentialChangeStatus.PENDING },
+      data: {
+        status: $Enums.DoctorCredentialChangeStatus.APPROVED,
+        reviewedById: input.actor.id,
+        reviewedByName: input.actor.name,
+        reviewedAt: new Date(),
+        ...(input.reviewNote !== undefined && { reviewNote: input.reviewNote.trim() }),
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new AppError(409, "CREDENTIAL_CHANGE_REVIEWED", "This request has already been reviewed");
+    }
+
+    const updated = await tx.doctorProfile.updateMany({
+      where: {
+        userId: row.doctorId,
+        verificationStatus: { notIn: [S.ARCHIVED, S.REJECTED] },
+      },
+      data: proposed,
+    });
+    if (updated.count !== 1) {
+      throw new AppError(409, "DOCTOR_NOT_WRITABLE", "This doctor can no longer be edited");
+    }
+
+    await writeAudit(tx, {
+      action: "DOCTOR_CREDENTIAL_CHANGE_APPROVED",
+      targetType: "doctor",
+      targetId: row.doctorId,
+      actor: input.actor,
+      before: previousValuesFromJson(row.previousValues),
+      after: proposed,
+      reason: input.reviewNote ?? null,
+      ip: input.ip ?? null,
+      requestId: input.requestId,
+    });
+    await writeDoctorHistory(tx, {
+      doctorId: row.doctorId,
+      eventType: "CREDENTIAL_CHANGE_APPROVED",
+      actor: input.actor,
+      metadata: { requestId: row.id, before: previousValuesFromJson(row.previousValues), after: proposed },
+      reason: input.reviewNote ?? null,
+      ip: input.ip ?? null,
+      requestId: input.requestId,
+    });
+  });
+
+  return { message: "Credential changes applied.", status: $Enums.DoctorCredentialChangeStatus.APPROVED };
+}
+
+/** Reject without touching the live profile; the proposal stays for audit. */
+export async function rejectDoctorCredentialChangeRequest(
+  input: ReviewDoctorCredentialChangeInput,
+): Promise<{ message: string; status: $Enums.DoctorCredentialChangeStatus }> {
+  assertAdminReviewer(input.actor);
+  const reason = input.reviewNote?.trim() ?? "";
+  if (reason.length === 0) throw new AppError(422, "REASON_REQUIRED", "A reason is required");
+
+  const row = await prisma.doctorCredentialChangeRequest.findUnique({
+    where: { id: input.credentialRequestId },
+    select: { status: true, doctorId: true },
+  });
+  if (row === null) throw new AppError(404, "CREDENTIAL_CHANGE_NOT_FOUND", "Request not found");
+
+  await prisma.$transaction(async (tx) => {
+    const claimed = await tx.doctorCredentialChangeRequest.updateMany({
+      where: { id: input.credentialRequestId, status: $Enums.DoctorCredentialChangeStatus.PENDING },
+      data: {
+        status: $Enums.DoctorCredentialChangeStatus.REJECTED,
+        reviewedById: input.actor.id,
+        reviewedByName: input.actor.name,
+        reviewedAt: new Date(),
+        reviewNote: reason,
+      },
+    });
+    if (claimed.count !== 1) {
+      throw new AppError(409, "CREDENTIAL_CHANGE_REVIEWED", "This request has already been reviewed");
+    }
+
+    await writeAudit(tx, {
+      action: "DOCTOR_CREDENTIAL_CHANGE_REJECTED",
+      targetType: "doctor",
+      targetId: row.doctorId,
+      actor: input.actor,
+      reason,
+      ip: input.ip ?? null,
+      requestId: input.requestId,
+    });
+    await writeDoctorHistory(tx, {
+      doctorId: row.doctorId,
+      eventType: "CREDENTIAL_CHANGE_REJECTED",
+      actor: input.actor,
+      reason,
+      ip: input.ip ?? null,
+      requestId: input.requestId,
+    });
+  });
+
+  return { message: "Credential changes rejected.", status: $Enums.DoctorCredentialChangeStatus.REJECTED };
 }
 
 export interface SetDoctorProfileImageInput extends RequestMeta {

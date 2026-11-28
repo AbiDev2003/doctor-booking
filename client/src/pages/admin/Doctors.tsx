@@ -6,9 +6,12 @@ import { inviteDoctorSchema, type InviteDoctorInputShape } from "@shared/doctors
 import { DoctorAvatar } from "@/components/doctor-avatar"
 import { DoctorProfileDialog } from "@/components/staff/doctor-profile-dialog"
 import {
+  apiAdminCredentialRequests,
+  apiApproveCredentialRequest,
   apiArchiveDoctor,
   apiDoctorInvitations,
   apiInviteDoctor,
+  apiRejectCredentialRequest,
   apiRejectDoctor,
   apiResendDoctorInvitation,
   apiRevokeDoctorInvitation,
@@ -19,7 +22,7 @@ import {
   apiVerifyDoctor,
   ApiError,
 } from "@/lib/api"
-import type { DoctorDetail } from "@/lib/api"
+import type { DoctorCredentialChangeRequest, DoctorDetail } from "@/lib/api"
 import { applyApiErrors } from "@/lib/formErrors"
 import { EmptyState, PageError, PageLoading } from "@/components/async-state"
 import { PendingInvitationsCard } from "@/components/staff/pending-invitations"
@@ -39,13 +42,18 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
-type ReasonAction = "reject" | "suspend" | "archive" | "unarchive"
+type ReasonAction = "reject" | "suspend" | "archive" | "unarchive" | "rejectCredential"
 
 const REASON_COPY: Record<ReasonAction, { title: string; description: string; confirm: string }> = {
   reject: {
     title: "Reject doctor verification",
     description: "The doctor keeps their account but cannot be booked. The reason is audited.",
     confirm: "Reject",
+  },
+  rejectCredential: {
+    title: "Reject credential changes",
+    description: "The doctor's live profile stays unchanged. The reason is audited.",
+    confirm: "Reject changes",
   },
   suspend: {
     title: "Suspend doctor",
@@ -75,7 +83,11 @@ const REASON_COPY: Record<ReasonAction, { title: string; description: string; co
 export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }) {
   const isAdmin = mode === "admin"
   const queryClient = useQueryClient()
-  const [reasonAction, setReasonAction] = useState<{ action: ReasonAction; doctor: DoctorDetail } | null>(null)
+  const [reasonAction, setReasonAction] = useState<{
+    action: ReasonAction
+    doctor?: DoctorDetail
+    credentialRequest?: DoctorCredentialChangeRequest
+  } | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [editDoctorId, setEditDoctorId] = useState<string | null>(null)
@@ -90,11 +102,18 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
     queryFn: ({ signal }) => apiDoctorInvitations(signal).then((result) => result.invitations),
   })
 
+  const credentialRequests = useQuery({
+    queryKey: ["admin", "credential-requests", "PENDING"],
+    queryFn: ({ signal }) => apiAdminCredentialRequests("PENDING", signal).then((result) => result.requests),
+    enabled: isAdmin,
+  })
+
   const editDoctor = editDoctorId ? doctors.data?.doctors.find((d) => d.id === editDoctorId) ?? null : null
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["staff", "doctors"] })
     void queryClient.invalidateQueries({ queryKey: ["doctor-invitations"] })
+    void queryClient.invalidateQueries({ queryKey: ["admin", "credential-requests"] })
     void queryClient.invalidateQueries({ queryKey: ["admin"] })
     void queryClient.invalidateQueries({ queryKey: ["public", "doctors"] })
   }
@@ -113,16 +132,40 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
       refresh()
     },
   })
+  const approveCredentialChange = useMutation({
+    mutationFn: (id: string) => apiApproveCredentialRequest(id),
+    onSuccess: (result) => {
+      setNotice(result.message)
+      refresh()
+    },
+  })
   const reasonMutation = useMutation({
-    mutationFn: ({ action, doctor, reason }: { action: ReasonAction; doctor: DoctorDetail; reason: string }) => {
+    mutationFn: ({
+      action,
+      doctor,
+      credentialRequest,
+      reason,
+    }: {
+      action: ReasonAction
+      doctor?: DoctorDetail
+      credentialRequest?: DoctorCredentialChangeRequest
+      reason: string
+    }) => {
       switch (action) {
+        case "rejectCredential":
+          if (credentialRequest === undefined) throw new Error("Missing credential request")
+          return apiRejectCredentialRequest(credentialRequest.id, reason)
         case "reject":
+          if (doctor === undefined) throw new Error("Missing doctor")
           return apiRejectDoctor(doctor.id, reason)
         case "suspend":
+          if (doctor === undefined) throw new Error("Missing doctor")
           return apiSuspendDoctor(doctor.id, reason)
         case "archive":
+          if (doctor === undefined) throw new Error("Missing doctor")
           return apiArchiveDoctor(doctor.id, reason)
         case "unarchive":
+          if (doctor === undefined) throw new Error("Missing doctor")
           return apiUnarchiveDoctor(doctor.id, reason)
       }
     },
@@ -136,11 +179,13 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
   const actionError =
     reasonMutation.error instanceof ApiError
       ? reasonMutation.error.message
-      : verify.error instanceof ApiError
-        ? verify.error.message
-        : unsuspend.error instanceof ApiError
-          ? unsuspend.error.message
-          : undefined
+      : approveCredentialChange.error instanceof ApiError
+        ? approveCredentialChange.error.message
+        : verify.error instanceof ApiError
+          ? verify.error.message
+          : unsuspend.error instanceof ApiError
+            ? unsuspend.error.message
+            : undefined
 
   return (
     <div className="space-y-8">
@@ -170,6 +215,69 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
           <AlertTitle>Action failed</AlertTitle>
           <AlertDescription>{actionError}</AlertDescription>
         </Alert>
+      )}
+
+      {isAdmin && (
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle className="text-xl text-slate-950">Credential changes awaiting approval</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {credentialRequests.isPending && <PageLoading label="Loading credential requests…" />}
+            {credentialRequests.isError && (
+              <PageError
+                title="Credential requests could not be loaded"
+                message={credentialRequests.error instanceof ApiError ? credentialRequests.error.message : undefined}
+                onRetry={() => void credentialRequests.refetch()}
+              />
+            )}
+            {credentialRequests.data?.length === 0 && (
+              <EmptyState title="No pending credential changes" description="Doctor-submitted credential edits will appear here." />
+            )}
+            {credentialRequests.data?.map((request) => (
+              <div key={request.id} className="rounded-2xl border border-slate-200 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1 text-sm">
+                    <p className="font-medium text-slate-950">{request.doctorName}</p>
+                    <p className="text-muted-foreground">
+                      {request.doctorEmail ?? "No email"} · {request.doctorPhone ?? "No mobile on file"}
+                    </p>
+                    <p className="text-muted-foreground">
+                      Requested by {request.requestedByName} on {new Date(request.requestedAt).toLocaleString()}
+                    </p>
+                    <ul className="mt-2 space-y-1">
+                      {Object.keys(request.requestedChanges).map((field) => (
+                        <li key={field}>
+                          <span className="font-medium">{field}</span>: {request.previousValues[field] ?? "Not set"} →{" "}
+                          {request.requestedChanges[field]}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-xs text-muted-foreground">
+                      The doctor's current profile stays live and bookable until you approve.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      disabled={approveCredentialChange.isPending}
+                      onClick={() => approveCredentialChange.mutate(request.id)}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setReasonAction({ action: "rejectCredential", credentialRequest: request })}
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
 
       <Card className="rounded-3xl border-slate-200 shadow-sm">
@@ -315,6 +423,7 @@ export default function Doctors({ mode = "admin" }: { mode?: "admin" | "staff" }
             reasonMutation.mutate({
               action: reasonAction.action,
               doctor: reasonAction.doctor,
+              credentialRequest: reasonAction.credentialRequest,
               reason,
             })
           }

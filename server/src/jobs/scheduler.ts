@@ -1,6 +1,7 @@
 import { logger } from "../lib/logger.js";
 import { expireStaleHolds } from "./holdExpiry.js";
 import { sendAppointmentReminders } from "./reminders.js";
+import { sendUnclosedBookingReminders } from "./unclosedBookingReminder.js";
 import { runAutoCancel } from "./autoCancel.js";
 import { runSlotGeneration } from "./slotGenerator.js";
 
@@ -35,6 +36,14 @@ export function startScheduler(): void {
     });
   }, 60 * 1000);
   intervals.push(autoCancelInterval);
+
+  // Nudge the desk about unclosed past bookings every 5 minutes (idempotent).
+  const followUpInterval = setInterval(() => {
+    void sendUnclosedBookingReminders(new Date()).catch((err) => {
+      logger.error({ err }, "attendance follow-up interval crashed");
+    });
+  }, 5 * 60 * 1000);
+  intervals.push(followUpInterval);
 
   // Run slot generation every 5 minutes
   const slotGenInterval = setInterval(() => {

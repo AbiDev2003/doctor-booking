@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Link, NavLink, Navigate, Outlet, useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { CalendarClock, CalendarDays, CreditCard, Globe, LayoutDashboard, LogOut, Menu, Stethoscope, Users, UserRound, X } from "lucide-react"
+import { CalendarClock, CalendarDays, CreditCard, Globe, History, LayoutDashboard, LogOut, Menu, Stethoscope, Users, UserRound, X } from "lucide-react"
 import { useSession } from "../hooks/useSession"
 import { apiLogout } from "../lib/api"
 import { ROLE_HOMES, ROLE_HOME_LABELS } from "../lib/roleHome"
@@ -106,6 +106,10 @@ export default function StaffLayout() {
               <LayoutDashboard className="size-4" aria-hidden="true" />
               Today
             </NavLink>
+            <NavLink to="/staff/history" className={navClass}>
+              <History className="size-4" aria-hidden="true" />
+              History
+            </NavLink>
             <NavLink to="/staff/appointments" className={navClass}>
               <CalendarDays className="size-4" aria-hidden="true" />
               Appointments
@@ -149,6 +153,10 @@ export default function StaffLayout() {
                 <NavLink to="/staff" end className={navClass} onClick={closeMobileMenu}>
                   <LayoutDashboard className="size-4" aria-hidden="true" />
                   Today
+                </NavLink>
+                <NavLink to="/staff/history" className={navClass} onClick={closeMobileMenu}>
+                  <History className="size-4" aria-hidden="true" />
+                  History
                 </NavLink>
                 <NavLink to="/staff/appointments" className={navClass} onClick={closeMobileMenu}>
                   <CalendarDays className="size-4" aria-hidden="true" />

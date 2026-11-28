@@ -14,10 +14,12 @@ import {
   rejectAppointmentSchema,
   rescheduleAppointmentSchema,
 } from "../schemas/appointments.js";
+import { appointmentHistoryQuerySchema } from "../schemas/appointmentHistory.js";
 import { createDeskBookingSchema, deskQueueQuerySchema } from "../schemas/staff.js";
 import { bookAppointment } from "../services/appointments/booking.service.js";
 import { bookAtDesk } from "../services/staff/deskBooking.service.js";
 import { listDeskQueue } from "../services/staff/staffDesk.service.js";
+import { listClinicAppointmentHistory } from "../services/admin/adminRead.service.js";
 import {
   getPatientAppointment,
   listPatientAppointments,
@@ -39,6 +41,7 @@ import type { ActorContext } from "../services/doctors/doctor.service.js";
  * (booking Day 19; transitions Day 21).
  *
  *   POST /api/v1/appointments           create one CONFIRMED booking (201)
+ *   GET  /api/v1/appointments/history   clinic-wide History   (ADMIN, STAFF)
  *   POST /api/v1/appointments/:id/arrive    CONFIRMED → ARRIVED  (ADMIN, STAFF)
  *   POST /api/v1/appointments/:id/complete  ARRIVED  → COMPLETED (ADMIN, STAFF)
  *   POST /api/v1/appointments/:id/no-show   CONFIRMED → NO_SHOW  (ADMIN, STAFF)
@@ -121,6 +124,35 @@ appointmentsRouter.get("/desk", staffOnly, async (req, res, next) => {
   try {
     const { date } = deskQueueQuerySchema.parse(req.query);
     res.json({ queue: await listDeskQueue(date) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /history — the desk's clinic-wide appointment History (ADMIN/STAFF).
+ *
+ * The day board answers "what is happening today"; this answers "what happened
+ * on any date, and what is still open". It reuses the admin read model and the
+ * shared action flags, so staff and admin see the same rows and the same live
+ * buttons. Registered before `/:id` so the literal path is never an id.
+ */
+appointmentsRouter.get("/history", staffOnly, async (req, res, next) => {
+  try {
+    const query = appointmentHistoryQuerySchema.parse(req.query);
+    const virtualStatus = query.status === "NEEDS_ATTENTION";
+    res.json(
+      await listClinicAppointmentHistory({
+        date: query.date,
+        from: query.from,
+        to: query.to,
+        scope: query.scope ?? (virtualStatus ? "needsAttention" : undefined),
+        status: virtualStatus ? undefined : (query.status as $Enums.AppointmentStatus | undefined),
+        doctorId: query.doctorId,
+        search: query.search,
+        limit: query.limit,
+      }),
+    );
   } catch (err) {
     next(err);
   }

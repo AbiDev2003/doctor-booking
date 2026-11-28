@@ -1,14 +1,13 @@
 import { $Enums } from "../../generated/prisma/client.js";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../lib/prisma.js";
+import { appointmentActionFlags, paymentSummaryFor } from "../../lib/appointmentActionFlags.js";
 import { localDateTimeToUtc, utcToLocalDateTime, normalizePhoneToE164, DEFAULT_COUNTRY_CALLING_CODE } from "../../lib/time.js";
 import { getClinicSettings } from "../clinic.service.js";
 import { findPatientIds } from "../patients/patientSearch.service.js";
 import type {
-  DeskAppointmentActions,
   DeskAppointmentEntry,
   DeskPatientDto,
-  DeskPaymentSummary,
   DeskQueueDto,
   DeskSlotQueue,
   PatientSlotViewDto,
@@ -93,95 +92,6 @@ function clinicDateRange(date: string, timeZone: string): { start: Date; endExcl
   };
 }
 
-function statusLabel(status: $Enums.AppointmentStatus): string {
-  return status
-    .toLowerCase()
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function paymentSummary(appointment: LoadedAppointment): DeskPaymentSummary {
-  let outstandingPaise = 0;
-  let paidPaise = 0;
-  let method: $Enums.PaymentMethod | null = null;
-
-  for (const payment of appointment.payments) {
-    if (payment.status === $Enums.PaymentStatus.PENDING) {
-      outstandingPaise += payment.amountPaise;
-    } else if (payment.status === $Enums.PaymentStatus.PAID) {
-      paidPaise += payment.amountPaise;
-      method ??= payment.method;
-    }
-  }
-
-  return {
-    status: outstandingPaise > 0 ? "PENDING" : paidPaise > 0 ? "PAID" : "NONE",
-    outstandingPaise,
-    paidPaise,
-    method,
-  };
-}
-
-/**
- * The action flags, from the same rules the transition services enforce.
- *
- * `canComplete` includes the §13.1 payment wall for the same reason the service
- * refuses the transition: a visit cannot close while a receivable is pending.
- * Cancel/reschedule have no clock wall for staff (§8.5): the desk may always
- * close a booking with a reason.
- */
-function actionFlags(
-  appointment: LoadedAppointment,
-  now: Date,
-  payment: DeskPaymentSummary,
-): DeskAppointmentActions {
-  const status = appointment.status;
-  const { startAt, endAt } = appointment.slot;
-  const label = statusLabel(status);
-
-  const canArrive = status === $Enums.AppointmentStatus.CONFIRMED && now.getTime() >= startAt.getTime();
-  const canComplete = status === $Enums.AppointmentStatus.ARRIVED && payment.outstandingPaise === 0;
-  const canNoShow =
-    status === $Enums.AppointmentStatus.CONFIRMED &&
-    now.getTime() >= endAt.getTime() &&
-    payment.outstandingPaise === 0;
-  const canReject = status === $Enums.AppointmentStatus.CONFIRMED;
-  const canCancel =
-    status === $Enums.AppointmentStatus.CONFIRMED || status === $Enums.AppointmentStatus.ARRIVED;
-  const canReschedule = status === $Enums.AppointmentStatus.CONFIRMED;
-
-  return {
-    canArrive,
-    canComplete,
-    canNoShow,
-    canReject,
-    canCancel,
-    canReschedule,
-    arriveBlockedReason: canArrive
-      ? null
-      : status !== $Enums.AppointmentStatus.CONFIRMED
-        ? `Only a confirmed booking can be checked in (this one is ${label.toLowerCase()}).`
-        : "Check-in opens when the slot starts.",
-    completeBlockedReason: canComplete
-      ? null
-      : status !== $Enums.AppointmentStatus.ARRIVED
-        ? `Only an arrived booking can be completed (this one is ${label.toLowerCase()}).`
-        : "Collect or void the pending payment before completing the visit.",
-    noShowBlockedReason: canNoShow
-      ? null
-      : status !== $Enums.AppointmentStatus.CONFIRMED
-        ? `Only a confirmed booking can be marked no-show (this one is ${label.toLowerCase()}).`
-        : now.getTime() < endAt.getTime()
-          ? "No-show can be recorded after the slot ends."
-          : "Collect or void the pending payment before closing the visit.",
-    cancelBlockedReason: canCancel ? null : `This booking is already ${label.toLowerCase()}.`,
-    rescheduleBlockedReason: canReschedule
-      ? null
-      : `Only a confirmed booking can be rescheduled (this one is ${label.toLowerCase()}).`,
-  };
-}
-
 function toPatientDto(appointment: LoadedAppointment): DeskPatientDto {
   return {
     id: appointment.patient.id,
@@ -193,7 +103,7 @@ function toPatientDto(appointment: LoadedAppointment): DeskPatientDto {
 }
 
 function toEntry(appointment: LoadedAppointment, now: Date): DeskAppointmentEntry {
-  const payment = paymentSummary(appointment);
+  const payment = paymentSummaryFor(appointment);
   return {
     id: appointment.id,
     doctorId: appointment.doctorId,
@@ -211,7 +121,7 @@ function toEntry(appointment: LoadedAppointment, now: Date): DeskAppointmentEntr
     slotStartsAt: appointment.slot.startAt.toISOString(),
     slotEndsAt: appointment.slot.endAt.toISOString(),
     payment,
-    ...actionFlags(appointment, now, payment),
+    ...appointmentActionFlags(appointment, now, payment),
   };
 }
 
@@ -348,7 +258,7 @@ export async function listPatientSlotView(input: {
       status: row.status,
       bookingTime: row.bookingTime.toISOString(),
       feeAmount: row.feeAmount,
-      payment: paymentSummary(row),
+      payment: paymentSummaryFor(row),
     });
     appointmentsBySlot.set(row.slotId, list);
   }

@@ -495,3 +495,177 @@ export function appointmentReminderEmail(input: AppointmentEmailInput): EmailCon
     text: text(input.fullName, ["Your appointment is coming up soon.", "", ...details], brand),
   };
 }
+
+export interface DoctorCredentialChangeRequestedEmailInput extends BaseTemplateInput {
+  readonly doctorName: string;
+  readonly doctorEmail: string;
+  readonly doctorPhone: string;
+  readonly requestId: string;
+  readonly changes: readonly string[];
+  readonly link: string;
+}
+
+/** Admin alert: a doctor proposed credential edits; the live profile is unchanged. */
+export function doctorCredentialChangeRequestedEmail(
+  input: DoctorCredentialChangeRequestedEmailInput,
+): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details = [
+    `Doctor: ${input.doctorName}`,
+    `Doctor email: ${input.doctorEmail}`,
+    `Doctor mobile: ${input.doctorPhone}`,
+    `Request: ${input.requestId}`,
+    "",
+    "Proposed changes:",
+    ...input.changes.map((change) => `- ${change}`),
+    "",
+    "The doctor remains live and bookable. The new values are not public until you approve them.",
+  ];
+
+  return {
+    subject: `Doctor credential changes need approval - ${brand}`,
+    html: layout(
+      brand,
+      "Credential changes need approval",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>A doctor submitted credential changes for review.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>
+       ${button(input.link, "Review credential changes")}`,
+      "These values are proposals only. The doctor's current public profile stays unchanged until an admin approves them.",
+    ),
+    text: [
+      ...text(input.fullName, details, brand).split("\n"),
+      "",
+      `Review credential changes: ${input.link}`,
+    ].join("\n"),
+  };
+}
+
+export interface DoctorScheduleChangeRequestedEmailInput extends BaseTemplateInput {
+  readonly doctorName: string;
+  readonly doctorEmail: string;
+  readonly action: string;
+  readonly details: readonly string[];
+  readonly reason: string;
+  readonly requestId: string;
+  readonly note: string;
+  readonly link: string;
+}
+
+/** Admin alert: a doctor proposed a schedule/time-off change; live data is unchanged. */
+export function doctorScheduleChangeRequestedEmail(
+  input: DoctorScheduleChangeRequestedEmailInput,
+): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details = [
+    `Doctor: ${input.doctorName}`,
+    `Doctor email: ${input.doctorEmail}`,
+    `Request: ${input.requestId}`,
+    `Change: ${input.action}`,
+    "",
+    ...input.details,
+    "",
+    `Reason: ${input.reason}`,
+    "",
+    input.note,
+  ];
+
+  return {
+    subject: `Doctor schedule change needs approval - ${brand}`,
+    html: layout(
+      brand,
+      "Schedule change needs approval",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>A doctor submitted a schedule change for review.</p>
+       <ul>${details.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>
+       ${button(input.link, "Review schedule change")}`,
+      "The doctor's current schedule and existing bookings stay unchanged until you approve this request.",
+    ),
+    text: [
+      ...text(input.fullName, details, brand).split("\n"),
+      "",
+      `Review schedule change: ${input.link}`,
+    ].join("\n"),
+  };
+}
+
+export interface DoctorScheduleChangeDecidedEmailInput extends BaseTemplateInput {
+  readonly doctorName: string;
+  readonly action: string;
+  readonly details: readonly string[];
+  readonly decision: "APPROVED" | "REJECTED";
+  readonly reviewNote: string | null;
+  readonly link: string;
+}
+
+/** Doctor-facing decision notice for a submitted schedule/time-off change. */
+export function doctorScheduleChangeDecidedEmail(
+  input: DoctorScheduleChangeDecidedEmailInput,
+): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const heading = input.decision === "APPROVED" ? "Schedule change approved" : "Schedule change rejected";
+  const outcome =
+    input.decision === "APPROVED"
+      ? "Your requested change has been applied to your live schedule."
+      : "Your requested change was not applied. Your current schedule is unchanged.";
+  const details = [
+    `Change: ${input.action}`,
+    "",
+    ...input.details,
+    "",
+    outcome,
+    ...(input.reviewNote !== null && input.reviewNote.trim().length > 0 ? [`Admin note: ${input.reviewNote}`] : []),
+  ];
+
+  return {
+    subject: `${heading} - ${brand}`,
+    html: layout(
+      brand,
+      heading,
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <ul>${details.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul>
+       ${button(input.link, "View your schedule")}`,
+      "Existing slots and bookings are never silently changed by a template edit. Time off only affects bookings once approved.",
+    ),
+    text: [...text(input.fullName, details, brand).split("\n"), "", `View your schedule: ${input.link}`].join("\n"),
+  };
+}
+
+export interface AttendanceFollowUpEmailInput extends BaseTemplateInput {
+  readonly patientName: string;
+  readonly doctorName: string;
+  readonly slotDate: string;
+  readonly startTime: string;
+  readonly endTime: string;
+  readonly link: string;
+}
+
+/** One-line nudge to the desk: a booking is still CONFIRMED after its slot ended. */
+export function appointmentAttendanceFollowUpEmail(input: AttendanceFollowUpEmailInput): EmailContent {
+  const brand = input.brand ?? DEFAULT_BRAND;
+  const details = [
+    `Patient: ${input.patientName}`,
+    `Doctor: ${input.doctorName}`,
+    `Date: ${input.slotDate}`,
+    `Time: ${input.startTime} - ${input.endTime}`,
+    "This booking is still CONFIRMED and needs review.",
+  ];
+
+  return {
+    subject: `Booking needs review - ${brand}`,
+    html: layout(
+      brand,
+      "Booking needs review",
+      `<p>${escapeHtml(greeting(input.fullName))}</p>
+       <p>This booking is still CONFIRMED and needs review.</p>
+       <ul>${details.map((d) => `<li>${escapeHtml(d)}</li>`).join("")}</ul>
+       ${button(input.link, "Review booking")}`,
+      "No appointment status has been changed automatically. Please check in, complete, mark no-show or cancel as appropriate.",
+    ),
+    text: [
+      ...text(input.fullName, details, brand).split("\n"),
+      "",
+      `Review booking: ${input.link}`,
+    ].join("\n"),
+  };
+}

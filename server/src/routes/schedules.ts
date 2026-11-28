@@ -22,6 +22,12 @@ import {
   deleteScheduleWindow,
   materializeManually,
 } from "../services/schedules/schedule.service.js";
+import {
+  listMyScheduleChangeRequests,
+  submitWindowCreateRequest,
+  submitWindowDeleteRequest,
+  submitWindowUpdateRequest,
+} from "../services/schedules/scheduleChangeRequest.service.js";
 import type { ActorContext } from "../services/doctors/doctor.service.js";
 
 /**
@@ -100,17 +106,53 @@ schedulesRouter.get("/", selfOrStaff, async (req, res, next) => {
 });
 
 /**
+ * GET /requests — the signed-in doctor's own submissions, newest first.
+ * ADMIN/STAFF review everything through `/admin/doctor-schedule-requests`;
+ * this read exists so the doctor's schedule page can show what is awaiting
+ * a decision without exposing anyone else's queue.
+ */
+schedulesRouter.get("/requests", selfOrStaff, async (req, res, next) => {
+  try {
+    const actor = actorOf(req);
+    if (actor.role !== $Enums.UserRole.DOCTOR) {
+      throw new AppError(403, "FORBIDDEN", "Only a doctor can read their own schedule requests");
+    }
+    res.status(200).json(await listMyScheduleChangeRequests(actor));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * POST — create one window, then materialise the horizon (the Day 15 DoD:
- * "creating a schedule produces correct slots"). 201. A PATIENT never reaches
- * the ownership check: the role gate above refuses them first.
+ * "creating a schedule produces correct slots"). 201 for ADMIN/STAFF direct
+ * writes; 202 for a DOCTOR proposal, which changes nothing live until an admin
+ * approves it. A PATIENT never reaches the ownership check: the role gate above
+ * refuses them first.
  */
 schedulesRouter.post("/", selfOrStaff, async (req, res, next) => {
   try {
     const parsed = createScheduleSchema.parse(req.body);
     requireSelfOrRole(req, parsed.doctorId, $Enums.UserRole.ADMIN, $Enums.UserRole.STAFF);
+    const actor = actorOf(req);
+
+    if (actor.role === $Enums.UserRole.DOCTOR) {
+      const proposal = await submitWindowCreateRequest({
+        actor,
+        doctorId: parsed.doctorId,
+        weekday: parsed.weekday,
+        startTime: parsed.startTime,
+        endTime: parsed.endTime,
+        maxPatients: parsed.maxPatients,
+        reason: parsed.reason,
+        ...requestMeta(req, res),
+      });
+      res.status(202).json(proposal);
+      return;
+    }
 
     const result = await createScheduleWindow({
-      actor: actorOf(req),
+      actor,
       doctorId: parsed.doctorId,
       weekday: parsed.weekday,
       startTime: parsed.startTime,
@@ -129,15 +171,36 @@ schedulesRouter.post("/", selfOrStaff, async (req, res, next) => {
 /**
  * PATCH — edit one window. The doctorId is on the row, so ownership is the
  * service's check; this route's job is the role gate and the schema (reason
- * mandatory, at least one field, no overnight windows).
+ * mandatory, at least one field, no overnight windows). A DOCTOR's edit is
+ * stored as a proposal; ADMIN/STAFF still write immediately. Note that
+ * capacity is never doctor-editable — the proposal service refuses it.
  */
 schedulesRouter.patch("/:id", selfOrStaff, async (req, res, next) => {
   try {
     const { id } = scheduleIdParamSchema.parse(req.params);
     const patch = updateScheduleSchema.parse(req.body);
+    const actor = actorOf(req);
+
+    if (actor.role === $Enums.UserRole.DOCTOR) {
+      const proposal = await submitWindowUpdateRequest({
+        actor,
+        doctorId: actor.id,
+        scheduleId: id,
+        patch: {
+          weekday: patch.weekday,
+          startTime: patch.startTime,
+          endTime: patch.endTime,
+          maxPatients: patch.maxPatients,
+        },
+        reason: patch.reason,
+        ...requestMeta(req, res),
+      });
+      res.status(202).json(proposal);
+      return;
+    }
 
     const result = await updateScheduleWindow({
-      actor: actorOf(req),
+      actor,
       scheduleId: id,
       patch: {
         weekday: patch.weekday,
@@ -159,15 +222,29 @@ schedulesRouter.patch("/:id", selfOrStaff, async (req, res, next) => {
  * DELETE — remove one window. Reason mandatory (§20: the audit row must say
  * why a bookable thing stopped existing). Existing slots are untouched by
  * §11's rule; the response says so implicitly through the unchanged
- * `materialized` stats — no cascade runs here.
+ * `materialized` stats — no cascade runs here. A DOCTOR's removal is a
+ * proposal, so the window keeps generating slots until approval.
  */
 schedulesRouter.delete("/:id", selfOrStaff, async (req, res, next) => {
   try {
     const { id } = scheduleIdParamSchema.parse(req.params);
     const { reason } = deleteScheduleSchema.parse(req.body);
+    const actor = actorOf(req);
+
+    if (actor.role === $Enums.UserRole.DOCTOR) {
+      const proposal = await submitWindowDeleteRequest({
+        actor,
+        doctorId: actor.id,
+        scheduleId: id,
+        reason,
+        ...requestMeta(req, res),
+      });
+      res.status(202).json(proposal);
+      return;
+    }
 
     const result = await deleteScheduleWindow({
-      actor: actorOf(req),
+      actor,
       scheduleId: id,
       reason,
       ...requestMeta(req, res),

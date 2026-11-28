@@ -315,8 +315,12 @@ doctorsRouter.patch("/:id", selfOrStaff, async (req, res, next) => {
     adminSummaryStub(req, "DOCTOR_PROFILE_UPDATED", id);
 
     res.status(200).json({
-      message: "Profile updated.",
+      message: result.credentialChangeSubmitted
+        ? "Credential changes submitted for admin approval. Your current profile stays live."
+        : "Profile updated.",
       verificationStatus: result.verificationStatus,
+      credentialChangeSubmitted: result.credentialChangeSubmitted,
+      credentialChangeRequestId: result.credentialChangeRequestId,
     });
   } catch (err) {
     next(err);

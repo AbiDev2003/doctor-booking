@@ -20,8 +20,8 @@ import type { ActorContext } from "../services/doctors/doctor.service.js";
  *
  * **Scope.** The PATCH admits exactly the six scheduling tunables —
  * `bookingHorizonDays`, `cancelCutoffMinutes`, `holdDurationMinutes`,
- * `minLeadMinutes`, `reminderLeadMinutes`, `maxActiveBookingsPerPatient` —
- * and nothing else (the schema has no fields for `timezone`, `currency`,
+ * `minLeadMinutes`, `reminderLeadMinutes`, `maxActiveBookingsPerPatient`,
+ * `unclosedBookingReminderMinutes` — and nothing else (the schema has no fields for `timezone`, `currency`,
  * `name` or `defaultConsultationFee`, so those cannot be smuggled in). A
  * widened horizon re-stocks via the generator after commit (decision 10); the
  * audit row is one `CLINIC_SETTINGS_UPDATED` per request, written in the same
@@ -82,6 +82,7 @@ clinicsRouter.patch("/settings", writeGate, async (req, res, next) => {
         minLeadMinutes: parsed.minLeadMinutes,
         reminderLeadMinutes: parsed.reminderLeadMinutes,
         maxActiveBookingsPerPatient: parsed.maxActiveBookingsPerPatient,
+        unclosedBookingReminderMinutes: parsed.unclosedBookingReminderMinutes,
       },
       reason: parsed.reason,
       ...requestMeta(req, res),

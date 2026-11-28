@@ -88,6 +88,7 @@ export default function Overview() {
             <CardDescription>Queues that may need admin action.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            <QueueRow to="/admin/appointments?scope=needsAttention" label="Unclosed past bookings" count={data.appointments.unclosedPast} />
             <QueueRow to="/admin/payments?tab=refunds" label="Failed gateway refunds" count={data.refunds.failed} />
             <QueueRow to="/admin/payments?tab=refunds" label="Pending refunds" count={data.refunds.pending} />
             <QueueRow to="/admin/notifications?status=FAILED" label="Failed notifications" count={data.notifications.failed} />

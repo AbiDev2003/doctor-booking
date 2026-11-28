@@ -224,7 +224,8 @@ async function main(): Promise<void> {
       holdDurationMinutes: 10,
       minLeadMinutes: 0,
       reminderLeadMinutes: 120,
-      maxActiveBookingsPerPatient: 3,
+      maxActiveBookingsPerPatient: 6,
+      unclosedBookingReminderMinutes: 180,
       // timezone deliberately absent (see above): only `create` sets it.
     },
     create: {
@@ -238,7 +239,8 @@ async function main(): Promise<void> {
       holdDurationMinutes: 10,
       minLeadMinutes: 0,
       reminderLeadMinutes: 120,
-      maxActiveBookingsPerPatient: 3,
+      maxActiveBookingsPerPatient: 6,
+      unclosedBookingReminderMinutes: 180,
     },
   });
   console.log(`  clinic      ${clinic.name} (${clinic.timezone}, ${clinic.currency})`);

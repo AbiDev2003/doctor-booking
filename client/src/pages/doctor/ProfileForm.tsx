@@ -73,9 +73,11 @@ export default function ProfileForm() {
     mutationFn: (values: DoctorProfileInputShape) => apiUpdateDoctor(user!.id, values),
     onSuccess: (result) => {
       setBanner(
-        result.verificationStatus === "PENDING_VERIFICATION"
-          ? "A credential changed. Your listing is hidden from the public site until the clinic re-verifies you."
-          : "Profile updated successfully.",
+        result.credentialChangeSubmitted
+          ? "Credential changes sent to the clinic for approval. Your current public profile stays live and bookable until they are approved."
+          : result.verificationStatus === "PENDING_VERIFICATION"
+            ? "A credential changed. Your listing is hidden from the public site until the clinic re-verifies you."
+            : "Profile updated successfully.",
       )
       setFormError(null)
       void queryClient.invalidateQueries({ queryKey: ["public", "doctor"] })
@@ -235,7 +237,7 @@ export default function ProfileForm() {
         <Card className="rounded-3xl border-slate-200 shadow-sm">
           <CardHeader>
             <CardTitle className="text-xl text-slate-950">Credentials</CardTitle>
-            <CardDescription>Verified on the public listing. Editing a credential puts your listing back into re-verification.</CardDescription>
+            <CardDescription>Verified on the public listing. Edits are sent to the clinic for approval; your current profile stays live and bookable until they are approved.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 sm:grid-cols-2">
             <TextInput label="Qualification" name="qualification" error={errors.qualification?.message} registration={register("qualification")} />

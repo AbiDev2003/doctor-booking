@@ -62,12 +62,19 @@ if (!existsSync(prismaCli) || !existsSync(vitestCli)) {
   fail("Test dependencies are missing. Install the server dependencies before running integration tests.");
 }
 
+// prisma.config.ts prefers DATABASE_URL_UNPOOLED over DATABASE_URL. When the
+// repository-root Neon env file is present, leaving that variable untouched
+// makes `prisma migrate reset` target the production branch even though
+// TEST_DATABASE_URL passed the _test guard above. Force BOTH variables to the
+// isolated test database so the Prisma CLI and the app agree on the target.
 const testEnv = {
   ...process.env,
   DATABASE_URL: testDatabaseUrl,
+  DATABASE_URL_UNPOOLED: testDatabaseUrl,
   NODE_ENV: "test",
 };
 
+console.log(`Target test database: ${testIdentity.name}`);
 console.log("Resetting the isolated test database and applying migrations...");
 const migration = spawnSync(
   process.execPath,

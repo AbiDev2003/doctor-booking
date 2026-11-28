@@ -13,6 +13,7 @@ import {
   assertNoDuplicateForSlot,
   assertPatientSeatCap,
   assertSlotBookableForBooking,
+  capRelevantAppointmentWhere,
 } from "../../lib/bookingGuard.js";
 import { createRazorpayGateway, toGatewayOrderParams } from "../../lib/paymentGateway.js";
 import { getClinicSettings } from "../clinic.service.js";
@@ -218,9 +219,9 @@ export async function createPaymentOrder(input: CreatePaymentOrderInput): Promis
       }
     }
 
-    /* (f) §15 cap: active bookings + (still-)live holds, counted after the release. */
+    /* (f) §15 cap: future active bookings + (still-)live holds, after the release. */
     const [activeBookings, activeHolds] = await Promise.all([
-      tx.appointment.count({ where: { patientId, status: { in: [...ACTIVE_BOOKING_STATUSES] } } }),
+      tx.appointment.count({ where: capRelevantAppointmentWhere(patientId, now) }),
       tx.seatHold.count({ where: { patientId, releasedAt: null, expiresAt: { gt: now } } }),
     ]);
     assertPatientSeatCap(activeBookings + activeHolds, clinic.maxActiveBookingsPerPatient);

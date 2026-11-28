@@ -14,7 +14,7 @@ import {
   apiVoidOfflinePayment,
   ApiError,
 } from "@/lib/api"
-import type { DeskAppointment } from "@/lib/api"
+import type { AppointmentActionTarget } from "@/lib/api"
 import { addDays, clinicToday, formatSlotDate, formatTimeRange } from "@/lib/clinicDate"
 import { formatPaise } from "@/lib/money"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -53,7 +53,7 @@ export function AppointmentActions({
   appointment,
   onChanged,
 }: {
-  appointment: DeskAppointment
+  appointment: AppointmentActionTarget
   onChanged?: () => void
 }) {
   const queryClient = useQueryClient()
@@ -239,7 +239,7 @@ function CollectDialog({
   onClose,
   onCollected,
 }: {
-  appointment: DeskAppointment
+  appointment: AppointmentActionTarget
   onClose: () => void
   onCollected: () => void
 }) {
@@ -325,7 +325,7 @@ function RescheduleDialog({
   onClose,
   onMoved,
 }: {
-  appointment: DeskAppointment
+  appointment: AppointmentActionTarget
   onClose: () => void
   onMoved: () => void
 }) {

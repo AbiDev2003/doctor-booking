@@ -100,7 +100,9 @@ describe("Day 37 chunk 1: booking races and capacity", () => {
   });
 
   it("enforces the per-patient cap, counting a live seat hold as an active seat", async () => {
-    await createClinic();
+    // The service reads the first clinic row, not the one just created. Set
+    // the cap on every row so the shared test DB cannot drift with test order.
+    await prisma.clinic.updateMany({ data: { maxActiveBookingsPerPatient: 3 } });
     const doctor = await createLoginDoctor();
     const patient = await createLoginPatient();
     const token = await accessToken(patient.user.email, patient.password);
@@ -143,5 +145,46 @@ describe("Day 37 chunk 1: booking races and capacity", () => {
 
     const blockedByHold = await book(token, slots[3]!.id).expect(409);
     expect(blockedByHold.body.error.code).toBe("BOOKING_CAP_REACHED");
+  });
+
+  it("does not count past CONFIRMED bookings toward the per-patient cap", async () => {
+    // The service reads the first clinic row, not the one just created. Set
+    // the cap on every row so the shared test DB cannot drift with test order.
+    await prisma.clinic.updateMany({ data: { maxActiveBookingsPerPatient: 3 } });
+    const doctor = await createLoginDoctor();
+    const patient = await createLoginPatient();
+    const token = await accessToken(patient.user.email, patient.password);
+
+    const past = new Date();
+    past.setUTCDate(past.getUTCDate() - 2);
+    const pastDate = past.toISOString().slice(0, 10);
+    const pastSlots = await Promise.all(
+      ["09:00", "10:00", "11:00"].map((time, index) =>
+        createSlot(doctor.user.id, {
+          date: pastDate,
+          startTime: time,
+          endTime: `${String(index + 10).padStart(2, "0")}:00`,
+        }),
+      ),
+    );
+    for (const slot of pastSlots) {
+      await prisma.appointment.create({
+        data: {
+          doctorId: doctor.user.id,
+          patientId: patient.user.id,
+          slotId: slot.id,
+          status: $Enums.AppointmentStatus.CONFIRMED,
+          doctorName: doctor.user.fullName,
+          feeAmount: 0,
+          bookingTime: new Date(),
+        },
+      });
+    }
+
+    const futureSlot = await createSlot(doctor.user.id);
+    await book(token, futureSlot.id).expect(201);
+    expect(
+      await prisma.appointment.count({ where: { patientId: patient.user.id, slotId: futureSlot.id } }),
+    ).toBe(1);
   });
 });

@@ -438,9 +438,9 @@ export function apiGetDoctor(id: string, signal?: AbortSignal): Promise<{ doctor
 }
 
 /**
- * Descriptive or credential edits (§5.2). The server refuses `consultationFee`
- * from a doctor (403) and forces PENDING_VERIFICATION when a credential moved;
- * the returned status is what the page shows in its re-verification banner.
+ * Descriptive or credential edits (§5.2). A doctor's credential edit is stored
+ * as an admin-approval proposal: the live profile stays unchanged and bookable.
+ * STAFF/ADMIN edits keep the older direct-write behaviour.
  */
 export function apiUpdateDoctor(
   id: string,
@@ -450,7 +450,12 @@ export function apiUpdateDoctor(
       "fullName" | "qualification" | "licenseNumber" | "experience" | "clinicAssociation" | "specialization" | "consultationFee"
     >
   >,
-): Promise<{ verificationStatus: DoctorVerificationStatus }> {
+): Promise<{
+  message: string;
+  verificationStatus: DoctorVerificationStatus;
+  credentialChangeSubmitted: boolean;
+  credentialChangeRequestId: string | null;
+}> {
   return request(`/doctors/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
@@ -725,13 +730,53 @@ export interface CreateScheduleWindowInput {
   reason?: string;
 }
 
+/** ADMIN/STAFF write immediately; a DOCTOR gets a queued proposal instead. */
 export interface ScheduleMutationResult {
   message: string;
   schedule: ScheduleWindow;
   materialized: MaterializeStats | null;
 }
 
-export function apiCreateScheduleWindow(input: CreateScheduleWindowInput): Promise<ScheduleMutationResult> {
+export type DoctorScheduleChangeStatus = "PENDING" | "APPROVED" | "REJECTED"
+
+export type DoctorScheduleChangeType =
+  | "WINDOW_CREATE"
+  | "WINDOW_UPDATE"
+  | "WINDOW_DELETE"
+  | "UNAVAILABILITY_CREATE"
+  | "UNAVAILABILITY_DELETE"
+
+export interface ScheduleChangeSubmissionResult {
+  message: string;
+  scheduleRequest: { id: string; status: DoctorScheduleChangeStatus };
+}
+
+export type ScheduleMutationResponse = ScheduleMutationResult | ScheduleChangeSubmissionResult
+
+export interface DoctorScheduleChangeRequest {
+  id: string;
+  doctorId: string;
+  doctorName: string;
+  doctorEmail: string | null;
+  doctorPhone: string | null;
+  type: DoctorScheduleChangeType;
+  status: DoctorScheduleChangeStatus;
+  details: string[];
+  reason: string;
+  affectedPreview: number | null;
+  requestedByName: string;
+  requestedAt: string;
+  reviewedByName: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+}
+
+/** The signed-in doctor's own submissions; no doctorId is accepted by the server. */
+export function apiMyScheduleRequests(signal?: AbortSignal): Promise<{ requests: DoctorScheduleChangeRequest[] }> {
+  return request("/schedules/requests", { signal })
+}
+
+export function apiCreateScheduleWindow(input: CreateScheduleWindowInput): Promise<ScheduleMutationResponse> {
   return request("/schedules", { method: "POST", body: JSON.stringify(input) });
 }
 
@@ -747,11 +792,11 @@ export interface UpdateScheduleWindowInput {
 export function apiUpdateScheduleWindow(
   id: string,
   patch: UpdateScheduleWindowInput,
-): Promise<ScheduleMutationResult> {
+): Promise<ScheduleMutationResponse> {
   return request(`/schedules/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
 
-export function apiDeleteScheduleWindow(id: string, reason: string): Promise<ScheduleMutationResult> {
+export function apiDeleteScheduleWindow(id: string, reason: string): Promise<ScheduleMutationResponse> {
   return request(`/schedules/${encodeURIComponent(id)}`, {
     method: "DELETE",
     body: JSON.stringify({ reason }),
@@ -789,16 +834,20 @@ export interface CreateUnavailabilityInput {
   reason: string;
 }
 
-export function apiCreateUnavailability(input: CreateUnavailabilityInput): Promise<{
+export interface UnavailabilityMutationResult {
   message: string;
   unavailability: DoctorUnavailability;
   /** CONFIRMED bookings the §12 cascade flagged. */
   affectedCount: number;
-}> {
+}
+
+export type UnavailabilityMutationResponse = UnavailabilityMutationResult | ScheduleChangeSubmissionResult
+
+export function apiCreateUnavailability(input: CreateUnavailabilityInput): Promise<UnavailabilityMutationResponse> {
   return request("/unavailabilities", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function apiRemoveUnavailability(id: string, reason: string): Promise<{ message: string }> {
+export function apiRemoveUnavailability(id: string, reason: string): Promise<{ message: string } | ScheduleChangeSubmissionResult> {
   return request(`/unavailabilities/${encodeURIComponent(id)}`, {
     method: "DELETE",
     body: JSON.stringify({ reason }),
@@ -840,7 +889,13 @@ export interface DeskAppointmentActions {
   rescheduleBlockedReason: string | null;
 }
 
-export interface DeskAppointment extends Appointment, DeskAppointmentActions {
+/** Structural minimum shared by the desk day board and the admin History view. */
+export interface AppointmentActionTarget extends Appointment, DeskAppointmentActions {
+  patient: { fullName: string };
+  payment: DeskPaymentSummary;
+}
+
+export interface DeskAppointment extends AppointmentActionTarget {
   patient: DeskPatient;
   /** UTC instants, so the client can reason about "now" without the wall clock. */
   slotStartsAt: string;
@@ -1199,7 +1254,9 @@ export function apiDoctorUnavailabilities(
 export function apiCreateDoctorUnavailability(
   input: CreateUnavailabilityInput,
 ): Promise<CreateUnavailabilityResult> {
-  return apiCreateUnavailability(input);
+  // This alias is the STAFF/ADMIN desk call; only a DOCTOR gets a proposal,
+  // so the shared endpoint's union narrows to the direct result here.
+  return apiCreateUnavailability(input) as Promise<CreateUnavailabilityResult>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1218,6 +1275,7 @@ export interface ClinicSettings {
   minLeadMinutes: number
   reminderLeadMinutes: number
   maxActiveBookingsPerPatient: number
+  unclosedBookingReminderMinutes: number
 }
 
 export function apiClinicSettings(signal?: AbortSignal): Promise<{ settings: ClinicSettings }> {
@@ -1233,6 +1291,7 @@ export type ClinicSettingsPatch = Partial<
     | "minLeadMinutes"
     | "reminderLeadMinutes"
     | "maxActiveBookingsPerPatient"
+    | "unclosedBookingReminderMinutes"
   >
 >
 
@@ -1331,6 +1390,78 @@ export function apiRejectDoctor(
   })
 }
 
+export type DoctorCredentialChangeStatus = "PENDING" | "APPROVED" | "REJECTED"
+
+export interface DoctorCredentialChangeRequest {
+  id: string
+  doctorId: string
+  doctorName: string
+  doctorEmail: string | null
+  doctorPhone: string | null
+  status: DoctorCredentialChangeStatus
+  requestedChanges: Record<string, string>
+  previousValues: Record<string, string | null>
+  requestedByName: string
+  requestedAt: string
+  reviewedByName: string | null
+  reviewedAt: string | null
+  reviewNote: string | null
+}
+
+export function apiAdminCredentialRequests(
+  status: DoctorCredentialChangeStatus = "PENDING",
+  signal?: AbortSignal,
+): Promise<{ requests: DoctorCredentialChangeRequest[] }> {
+  return request(`/admin/doctor-credential-requests?status=${encodeURIComponent(status)}`, { signal })
+}
+
+export function apiApproveCredentialRequest(
+  id: string,
+  note?: string,
+): Promise<{ message: string; status: DoctorCredentialChangeStatus }> {
+  return request(`/admin/doctor-credential-requests/${encodeURIComponent(id)}/approve`, {
+    method: "POST",
+    body: JSON.stringify(note !== undefined && note !== "" ? { reason: note } : {}),
+  })
+}
+
+export function apiRejectCredentialRequest(
+  id: string,
+  reason: string,
+): Promise<{ message: string; status: DoctorCredentialChangeStatus }> {
+  return request(`/admin/doctor-credential-requests/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
+export function apiAdminScheduleRequests(
+  status: DoctorScheduleChangeStatus = "PENDING",
+  signal?: AbortSignal,
+): Promise<{ requests: DoctorScheduleChangeRequest[] }> {
+  return request(`/admin/doctor-schedule-requests?status=${encodeURIComponent(status)}`, { signal })
+}
+
+export function apiApproveScheduleRequest(
+  id: string,
+  note?: string,
+): Promise<{ message: string; status: DoctorScheduleChangeStatus }> {
+  return request(`/admin/doctor-schedule-requests/${encodeURIComponent(id)}/approve`, {
+    method: "POST",
+    body: JSON.stringify(note !== undefined && note !== "" ? { reason: note } : {}),
+  })
+}
+
+export function apiRejectScheduleRequest(
+  id: string,
+  reason: string,
+): Promise<{ message: string; status: DoctorScheduleChangeStatus }> {
+  return request(`/admin/doctor-schedule-requests/${encodeURIComponent(id)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  })
+}
+
 export function apiUnsuspendDoctor(id: string, reason?: string): Promise<{ message: string }> {
   return request(`/doctors/${encodeURIComponent(id)}/unsuspend`, {
     method: "POST",
@@ -1422,6 +1553,7 @@ export interface AdminOverview {
     cancelled: number
     rejected: number
     noShow: number
+    unclosedPast: number
   }
   money: { collectedPaise: number; outstandingPaise: number }
   doctors: { verified: number; pendingVerification: number; suspended: number; archived: number }
@@ -1460,25 +1592,59 @@ export function apiAdminPatients(
   return request(`/admin/patients${query === "" ? "" : `?${query}`}`, { signal })
 }
 
-export interface AdminAppointment extends Appointment {
+/** One row in the clinic-wide History surface shared by admin and staff. */
+export interface AppointmentHistoryRow extends AppointmentActionTarget {
+  patient: DeskPatient
+  slotStartsAt: string
+  slotEndsAt: string
   patientName: string
   patientPhone: string
   patientEmail: string | null
   isProvisional: boolean
-  payment: DeskPaymentSummary
+}
+
+/** Historical name kept for the admin page; the row shape is shared with staff. */
+export type AdminAppointment = AppointmentHistoryRow
+
+export interface AppointmentHistoryQuery {
+  date?: string
+  from?: string
+  to?: string
+  scope?: "all" | "upcoming" | "past" | "needsAttention"
+  status?: AppointmentStatus | "NEEDS_ATTENTION"
+  doctorId?: string
+  search?: string
+  limit?: number
+}
+
+function appointmentHistoryParams(input: AppointmentHistoryQuery): URLSearchParams {
+  const params = new URLSearchParams()
+  if (input.date !== undefined && input.date !== "") params.set("date", input.date)
+  if (input.from !== undefined && input.from !== "") params.set("from", input.from)
+  if (input.to !== undefined && input.to !== "") params.set("to", input.to)
+  if (input.scope !== undefined) params.set("scope", input.scope)
+  if (input.status !== undefined) params.set("status", input.status)
+  if (input.doctorId !== undefined && input.doctorId !== "") params.set("doctorId", input.doctorId)
+  if (input.search !== undefined && input.search !== "") params.set("search", input.search)
+  if (input.limit !== undefined) params.set("limit", String(input.limit))
+  return params
 }
 
 export function apiAdminAppointments(
-  input: { date?: string; status?: AppointmentStatus; doctorId?: string; limit?: number } = {},
+  input: AppointmentHistoryQuery = {},
   signal?: AbortSignal,
-): Promise<{ appointments: AdminAppointment[] }> {
-  const params = new URLSearchParams()
-  if (input.date !== undefined && input.date !== "") params.set("date", input.date)
-  if (input.status !== undefined) params.set("status", input.status)
-  if (input.doctorId !== undefined && input.doctorId !== "") params.set("doctorId", input.doctorId)
-  if (input.limit !== undefined) params.set("limit", String(input.limit))
-  const query = params.toString()
+): Promise<{ appointments: AppointmentHistoryRow[] }> {
+  const query = appointmentHistoryParams(input).toString()
   return request(`/admin/appointments${query === "" ? "" : `?${query}`}`, { signal })
+}
+
+/** GET /appointments/history — the same clinic-wide History for the front desk. */
+export function apiStaffAppointments(
+  input: AppointmentHistoryQuery = {},
+  signal?: AbortSignal,
+): Promise<{ appointments: AppointmentHistoryRow[] }> {
+  const query = appointmentHistoryParams(input).toString()
+  return request(`/appointments/history${query === "" ? "" : `?${query}`}`, { signal })
 }
 
 export interface AdminPaymentRefund {

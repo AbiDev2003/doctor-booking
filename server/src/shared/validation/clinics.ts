@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * Day 16 + Day 34: the clinic settings patch, shared with the browser.
  *
- * Scope is deliberately the SIX scheduling tunables, nothing else: `timezone`
+ * Scope is deliberately the SEVEN scheduling tunables, nothing else: `timezone`
  * (relocating a clinic is not a settings edit — it would invalidate every
  * stored `startAt`), `currency`, `name` and `defaultConsultationFee` are all
  * excluded. Everything admitted is a number the schema bounds sanely; the
@@ -24,6 +24,7 @@ export const clinicSettingsPatchSchema = z
     minLeadMinutes: z.int().min(0, "must not be negative").max(1440, "must not exceed one day"),
     reminderLeadMinutes: z.int().min(0, "must not be negative").max(1440, "must not exceed one day"),
     maxActiveBookingsPerPatient: z.int().min(1, "must be at least 1").max(100, "must not exceed 100"),
+    unclosedBookingReminderMinutes: z.int().min(1, "must be at least 1").max(10080, "must not exceed one week"),
     reason: reason.optional(),
   })
   .partial()

@@ -1,4 +1,4 @@
-import { $Enums } from "../generated/prisma/client.js";
+import { $Enums, type Prisma } from "../generated/prisma/client.js";
 import { AppError } from "./appError.js";
 import { hasStarted, isWithinHorizon, overlapsUnavailability } from "./availability.js";
 import type { BookabilityContext, BookabilitySlot } from "./availability.js";
@@ -39,6 +39,22 @@ export const ACTIVE_BOOKING_STATUSES = [
   $Enums.AppointmentStatus.CONFIRMED,
   $Enums.AppointmentStatus.ARRIVED,
 ] as const;
+
+/**
+ * The cap counts only bookings that can still become a future visit: an active
+ * status AND a slot that has not ended yet. A stale CONFIRMED/ARRIVED row whose
+ * slot is already over must not block a new booking — staff may simply not have
+ * closed attendance. This is deliberately separate from `ACTIVE_BOOKING_STATUSES`
+ * because the same-slot duplicate rule still applies to past rows (the partial
+ * unique index is unchanged).
+ */
+export function capRelevantAppointmentWhere(patientId: string, now: Date): Prisma.AppointmentWhereInput {
+  return {
+    patientId,
+    status: { in: [...ACTIVE_BOOKING_STATUSES] },
+    slot: { endAt: { gt: now } },
+  };
+}
 
 /**
  * §15's per-patient cap: `activeBookings + activeHolds < maxActiveBookingsPerPatient`.

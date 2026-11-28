@@ -10,6 +10,7 @@ import {
   assertNoDuplicateForSlot,
   assertPatientSeatCap,
   assertSlotBookableForBooking,
+  capRelevantAppointmentWhere,
 } from "../../lib/bookingGuard.js";
 import { getClinicSettings } from "../clinic.service.js";
 import { writeAudit } from "../audit.service.js";
@@ -249,9 +250,9 @@ export async function bookAtDesk(input: DeskBookingInput): Promise<DeskBookingRe
       });
       assertNoDuplicateForSlot(duplicate !== null);
 
-      /* 6. The same per-patient cap as §15 (no desk override). */
+      /* 6. The same per-patient cap as §15 (no desk override, past slots ignored). */
       const [activeBookings, activeHolds] = await Promise.all([
-        tx.appointment.count({ where: { patientId, status: { in: [...ACTIVE_BOOKING_STATUSES] } } }),
+        tx.appointment.count({ where: capRelevantAppointmentWhere(patientId, now) }),
         tx.seatHold.count({ where: { patientId, releasedAt: null, expiresAt: { gt: now } } }),
       ]);
       assertPatientSeatCap(activeBookings + activeHolds, clinic.maxActiveBookingsPerPatient);
